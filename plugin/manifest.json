@@ -1,0 +1,9 @@
+{
+  "id": "morning-os",
+  "name": "Morning OS",
+  "version": "0.1.0",
+  "minAppVersion": "1.0.0",
+  "description": "Personal Knowledge OS - Morning briefing dashboard",
+  "author": "akhil",
+  "isDesktopOnly": false
+}

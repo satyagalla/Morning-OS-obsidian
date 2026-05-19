@@ -1,0 +1,17 @@
+# Environment                                                                                                                                                             
+  .env                                                                                                                                                                      
+                                                                                                                                                                            
+  # Dependencies  
+  node_modules/
+
+  # Build output
+  plugin/main.js
+
+  # OS
+  .DS_Store
+  Thumbs.db
+  desktop.ini
+
+  # Editor
+  .vscode/
+  .idea/

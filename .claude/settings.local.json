@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:www.google.com)",
+      "WebFetch(domain:x.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:karpathy.ai)",
+      "WebFetch(domain:www.reddit.com)",
+      "WebFetch(domain:www.youtube.com)",
+      "WebFetch(domain:gist.github.com)",
+      "WebFetch(domain:obsidian.md)"
+    ]
+  }
+}
