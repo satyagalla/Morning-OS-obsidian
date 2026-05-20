@@ -1,0 +1,14 @@
+import os
+from pathlib import Path
+import yaml
+from dotenv import load_dotenv
+
+PROJECT_ROOT = Path(__file__).parent.parent
+AGENT_DIR = Path(__file__).parent
+
+load_dotenv(PROJECT_ROOT / ".env")
+
+
+def load_config() -> dict:
+    with open(AGENT_DIR / "vault_config.yaml") as f:
+        return yaml.safe_load(f)

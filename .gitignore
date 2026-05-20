@@ -1,17 +1,28 @@
 # Environment                                                                                                                                                             
-  .env                                                                                                                                                                      
-                                                                                                                                                                            
-  # Dependencies  
-  node_modules/
+.env     
+.claude/                                                                                                                                                                 
+                                                                                                                                                                        
+# Dependencies
+node_modules/
+.venv/
 
-  # Build output
-  plugin/main.js
+# Build output
+plugin/main.js
 
-  # OS
-  .DS_Store
-  Thumbs.db
-  desktop.ini
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
 
-  # Editor
-  .vscode/
-  .idea/
+# Editor
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Agent
+agent/agent.log
+agent/SPEC.md

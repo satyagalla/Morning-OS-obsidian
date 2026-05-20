@@ -1,0 +1,51 @@
+vault_path: "D:/Productivity/OS"
+output_dir: "_generated/briefs"
+feedback_dir: "_generated/feedback"
+
+llm:
+  intelligence:
+    provider: bedrock
+    model: us.anthropic.claude-sonnet-4-6
+    region: us-east-2
+  fallback:
+    provider: ollama
+    model: qwen2.5:7b
+    base_url: http://localhost:11434
+
+fields:
+  tactical_rules:
+    mode: llm
+    count: 4
+  identity_rules:
+    mode: llm
+    count: 3
+  goals:
+    mode: llm
+  hobby_tasks:
+    mode: llm
+    count: 3
+  suggestion:
+    mode: llm
+  tasks:
+    mode: direct
+  wins:
+    mode: direct
+
+sources:
+  daily_note: "Essential/Daily/{date}.md"
+  tactical_rules: "Essential/State of Mind/Tactical Rules.md"
+  emotional_rules: "Essential/State of Mind/Emotional Rules.md"
+  goals: "Essential/State of Mind/Long-term and Short-term.md"
+  technical_tasks: "Essential/Pending Tasks/Technical Tasks.md"
+  hobby_tasks: "Essential/Pending Tasks/Hobby Tasks.md"
+
+daily_note_sections:
+  red_alert: "Red alert"
+  regular: "Regular"
+  thoughts: "Thoughts"
+  pending: "Top 3 pending"
+  wins: "Wins"
+
+goals_sections:
+  short_term: "Short Term"
+  long_term: "Long Term"
