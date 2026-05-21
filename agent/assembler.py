@@ -33,12 +33,12 @@ def assemble_brief(
         hobby_tasks = llm_output["hobby_tasks"]
     else:
         count = fields["hobby_tasks"].get("count", 3)
-        hobby_tasks = (all_hobby_tasks + all_technical_tasks)[:count]
+        hobby_tasks = all_hobby_tasks[:count]
 
     if fields["suggestion"]["mode"] == "llm" and llm_output:
-        suggestion = llm_output.get("suggestion")
+        suggestion = llm_output.get("suggestions", [])
     else:
-        suggestion = None
+        suggestion = []
 
     wins = yesterday_wins
 
@@ -49,6 +49,6 @@ def assemble_brief(
         "tasks": parsed_tasks,
         "tactical_rules": tactical_rules,
         "hobby_tasks": hobby_tasks,
-        "suggestion": suggestion,
+        "suggestions": suggestion,
         "wins": wins,
     }

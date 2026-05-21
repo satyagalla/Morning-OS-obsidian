@@ -5,6 +5,8 @@ export const VIEW_TYPE_MORNING = "morning-os-view";
 
 export class MorningView extends ItemView {
   private brief: DailyBrief | null = null;
+  private wins: string[] = [];
+  private suggestionReactions: ("up" | "down" | null)[] = [];
 
   constructor(leaf: WorkspaceLeaf) {
     super(leaf);
@@ -16,6 +18,8 @@ export class MorningView extends ItemView {
 
   async onOpen() {
     await this.loadBrief();
+    await this.loadWins();
+    await this.loadSuggestionReaction();
     this.render();
   }
 
@@ -29,6 +33,53 @@ export class MorningView extends ItemView {
     } else {
       this.brief = null;
     }
+  }
+
+  private async loadWins() {
+    if (!this.brief) return;
+    const notePath = `Essential/Daily/${this.brief.date}.md`;
+    const file = this.app.vault.getAbstractFileByPath(notePath);
+    if (!(file instanceof TFile)) {
+      this.wins = this.brief.wins.slice();
+      return;
+    }
+    this.wins = this.parseWinsFromNote(await this.app.vault.read(file));
+  }
+
+  private parseWinsFromNote(content: string): string[] {
+    const lines = content.split("\n");
+    const wins: string[] = [];
+    let inWins = false;
+    for (const line of lines) {
+      const stripped = line.trim();
+      if (/^#{1,3} (?:Wins|I feel good about these after today)\s*$/i.test(stripped)) {
+        inWins = true;
+        continue;
+      }
+      if (inWins) {
+        if (/^#{1,3} /.test(stripped)) break;
+        const match = stripped.match(/^-\s*(?:\[.\]\s+)?(.*)/);
+        if (match && match[1].trim()) wins.push(match[1].trim());
+      }
+    }
+    return wins;
+  }
+
+  private async loadSuggestionReaction() {
+    if (!this.brief) return;
+    const count = this.brief.suggestions.length;
+    this.suggestionReactions = Array(count).fill(null);
+    const file = this.app.vault.getAbstractFileByPath(
+      `_generated/feedback/reactions/${this.brief.date}.json`
+    );
+    if (!(file instanceof TFile)) return;
+    try {
+      const data = JSON.parse(await this.app.vault.read(file));
+      const saved: ("up" | "down" | null)[] = data.suggestion_reactions ?? [];
+      for (let i = 0; i < count; i++) {
+        this.suggestionReactions[i] = saved[i] ?? null;
+      }
+    } catch {}
   }
 
   private render() {
@@ -123,13 +174,27 @@ export class MorningView extends ItemView {
     for (const task of tasks) {
       const row = parent.createEl("div", { cls: "morning-os-task-row" });
       const checkbox = row.createEl("input", { type: "checkbox" });
-      checkbox.addEventListener("change", () => row.toggleClass("morning-os-task-done", checkbox.checked));
       row.createEl("span", { cls: "morning-os-task-text", text: task.text });
       if (task.carried_from) {
         const days = this.daysBetween(task.carried_from, this.brief!.date);
         row.createEl("span", { cls: "morning-os-carried-badge", text: `carried ${days}d` });
       }
+      checkbox.addEventListener("change", async () => {
+        row.toggleClass("morning-os-task-done", checkbox.checked);
+        await this.toggleTaskInNote(task.text, checkbox.checked);
+      });
     }
+  }
+
+  private async toggleTaskInNote(taskText: string, checked: boolean) {
+    const notePath = `Essential/Daily/${this.brief!.date}.md`;
+    const file = this.app.vault.getAbstractFileByPath(notePath);
+    if (!(file instanceof TFile)) return;
+    const content = await this.app.vault.read(file);
+    const escaped = taskText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const regex = new RegExp(`^- \\[[xX ]\\] ${escaped}$`, "m");
+    const newContent = content.replace(regex, `- [${checked ? "x" : " "}] ${taskText}`);
+    if (newContent !== content) await this.app.vault.modify(file, newContent);
   }
 
   private renderTacticalRules(parent: HTMLElement) {
@@ -142,11 +207,55 @@ export class MorningView extends ItemView {
   }
 
   private renderSuggestion(parent: HTMLElement) {
-    if (!this.brief!.suggestion) return;
-    parent.createEl("h2", { cls: "morning-os-section-heading", text: "Suggestion" });
-    const card = parent.createEl("div", { cls: "morning-os-card morning-os-suggestion-card" });
-    card.createEl("p", { cls: "morning-os-suggestion-text", text: this.brief!.suggestion.text });
-    card.createEl("span", { cls: "morning-os-suggestion-source", text: this.brief!.suggestion.source });
+    if (!this.brief!.suggestions?.length) return;
+    parent.createEl("h2", { cls: "morning-os-section-heading", text: "Suggestions" });
+    this.brief!.suggestions.forEach((s, i) => {
+      const card = parent.createEl("div", { cls: "morning-os-card morning-os-suggestion-card" });
+      card.createEl("p", { cls: "morning-os-suggestion-text", text: s.text });
+
+      const footer = card.createEl("div", { cls: "morning-os-suggestion-footer" });
+      footer.createEl("span", { cls: "morning-os-suggestion-source", text: s.source });
+
+      const reactions = footer.createEl("div", { cls: "morning-os-suggestion-reactions" });
+      const thumbUp = reactions.createEl("button", { cls: "morning-os-reaction-btn", text: "👍" });
+      const thumbDown = reactions.createEl("button", { cls: "morning-os-reaction-btn", text: "👎" });
+
+      if (this.suggestionReactions[i] === "up") thumbUp.addClass("morning-os-reaction-active");
+      if (this.suggestionReactions[i] === "down") thumbDown.addClass("morning-os-reaction-active");
+
+      thumbUp.addEventListener("click", async () => {
+        const next = this.suggestionReactions[i] === "up" ? null : "up";
+        this.suggestionReactions[i] = next;
+        thumbUp.toggleClass("morning-os-reaction-active", next === "up");
+        thumbDown.removeClass("morning-os-reaction-active");
+        await this.writeSuggestionReactions();
+      });
+
+      thumbDown.addEventListener("click", async () => {
+        const next = this.suggestionReactions[i] === "down" ? null : "down";
+        this.suggestionReactions[i] = next;
+        thumbDown.toggleClass("morning-os-reaction-active", next === "down");
+        thumbUp.removeClass("morning-os-reaction-active");
+        await this.writeSuggestionReactions();
+      });
+    });
+  }
+
+  private async writeSuggestionReactions() {
+    const today = this.brief!.date;
+    const dir = "_generated/feedback/reactions";
+    const filePath = `${dir}/${today}.json`;
+    const payload = JSON.stringify(
+      { date: today, suggestion_reactions: this.suggestionReactions },
+      null, 2
+    );
+    const existing = this.app.vault.getAbstractFileByPath(filePath);
+    if (existing instanceof TFile) {
+      await this.app.vault.modify(existing, payload);
+    } else {
+      try { await this.app.vault.createFolder(dir); } catch {}
+      await this.app.vault.create(filePath, payload);
+    }
   }
 
   private renderHobbyTasks(parent: HTMLElement) {
@@ -164,11 +273,64 @@ export class MorningView extends ItemView {
     const section = parent.createEl("div", { cls: "morning-os-wins" });
     section.createEl("h2", { cls: "morning-os-section-heading", text: "Wins today" });
     const card = section.createEl("div", { cls: "morning-os-card" });
-    if (this.brief!.wins.length === 0) {
-      card.createEl("p", { cls: "morning-os-empty-state", text: "Fill this before sleep." });
+
+    const list = card.createEl("div", { cls: "morning-os-wins-list" });
+    this.renderWinsList(list);
+
+    const inputRow = card.createEl("div", { cls: "morning-os-wins-input-row" });
+    const input = inputRow.createEl("input", {
+      type: "text",
+      cls: "morning-os-wins-input",
+      placeholder: "Add a win...",
+    });
+    const addBtn = inputRow.createEl("button", { cls: "morning-os-wins-add-btn", text: "Add" });
+
+    const addWin = async () => {
+      const text = input.value.trim();
+      if (!text) return;
+      await this.appendWinToNote(text);
+      this.wins.push(text);
+      input.value = "";
+      list.empty();
+      this.renderWinsList(list);
+    };
+
+    addBtn.addEventListener("click", addWin);
+    input.addEventListener("keydown", (e: KeyboardEvent) => {
+      if (e.key === "Enter") addWin();
+    });
+  }
+
+  private renderWinsList(parent: HTMLElement) {
+    if (this.wins.length === 0) {
+      parent.createEl("p", { cls: "morning-os-empty-state", text: "Fill this before sleep." });
     } else {
-      for (const win of this.brief!.wins) card.createEl("p", { text: win });
+      for (const win of this.wins) {
+        parent.createEl("p", { cls: "morning-os-wins-item", text: win });
+      }
     }
+  }
+
+  private async appendWinToNote(winText: string) {
+    const notePath = `Essential/Daily/${this.brief!.date}.md`;
+    const file = this.app.vault.getAbstractFileByPath(notePath);
+    if (!(file instanceof TFile)) return;
+    let content = await this.app.vault.read(file);
+    const winsMatch = content.match(/^#{1,3} (?:Wins|I feel good about these after today)\s*$/im);
+    if (!winsMatch) {
+      content = content.trimEnd() + `\n\n## Wins\n- ${winText}\n`;
+    } else {
+      const headerEnd = winsMatch.index! + winsMatch[0].length;
+      const afterHeader = content.slice(headerEnd);
+      const nextSection = afterHeader.search(/\n#{1,3} /);
+      if (nextSection === -1) {
+        content = content.trimEnd() + `\n- ${winText}`;
+      } else {
+        const insertPos = headerEnd + nextSection;
+        content = content.slice(0, insertPos).trimEnd() + `\n- ${winText}` + content.slice(insertPos);
+      }
+    }
+    await this.app.vault.modify(file, content);
   }
 
   private daysBetween(dateStr: string, todayStr: string): number {

@@ -26,3 +26,6 @@ __pycache__/
 # Agent
 agent/agent.log
 agent/SPEC.md
+
+# Mock data
+mock-data/

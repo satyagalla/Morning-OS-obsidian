@@ -32,20 +32,24 @@ Respond in this EXACT JSON format (no other text):
 {{
   "tactical_rules": ["rule1", "rule2", "rule3"],
   "identity_rules": ["rule1", "rule2", "rule3"],
-  "suggestion": {{"text": "...", "source": "vault/path/to/note"}} or null,
+  "suggestions": [
+    {{"text": "...", "source": "vault/path/to/note"}},
+    {{"text": "...", "source": "vault/path/to/note"}},
+    {{"text": "...", "source": "vault/path/to/note"}}
+  ],
   "hobby_tasks": ["task1", "task2", "task3"],
   "goals": {{
-    "short_term": ["actionable goal 1", "actionable goal 2"],
-    "long_term": ["framed goal 1", "framed goal 2"]
+    "short_term": ["goal1", "goal2"],
+    "long_term": ["goal1", "goal2"]
   }}
 }}
 
 Rules for your response:
-- tactical_rules: Pick 3-5 from the tactical list that are DIRECTLY relevant to today's tasks. Copy them verbatim.
-- identity_rules: Pick exactly 3 from the emotional rules that resonate with today's situation. Copy verbatim.
-- suggestion: Point out a stale carried task with a specific actionable idea to lower activation energy, OR connect a goal to a task, OR surface a pattern (e.g., avoidance). Keep to 1-2 sentences. Source = vault file path that inspired it. Null if nothing insightful.
-- hobby_tasks: Pick 2-3 items from technical/hobby backlog that feel light, exploratory, fun. Good for evening downtime.
-- goals: Rephrase the raw goals into today-relevant actionable framing. Keep the same count as input."""
+- tactical_rules: Pick 3-5 from the tactical list that are DIRECTLY relevant to today's tasks. Copy them VERBATIM — do not rephrase or generate new rules.
+- identity_rules: Pick exactly 3 from the emotional rules list. Copy them VERBATIM — do not rephrase or generate new rules.
+- suggestions: Generate exactly 3 short insights (1-2 sentences each). This is the ONLY field where you may generate new text. Each suggestion should point out a stale carried task, connect a goal to a task, or surface a pattern (e.g., avoidance). Source = the vault file path most relevant to the insight.
+- hobby_tasks: Pick 2-3 items from the Hobby Tasks list provided. Copy them VERBATIM — do not generate new tasks. If both lists are empty, return [].
+- goals: Copy the short_term and long_term goals VERBATIM — do not rephrase or generate new goals. Keep the same count as input."""
 
 FALLBACK_SYSTEM = "You extract structured data from markdown files. Return valid JSON only, no explanation or markdown fencing."
 

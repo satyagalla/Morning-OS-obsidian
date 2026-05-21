@@ -44,20 +44,23 @@ def compute_feedback(today_tasks: dict, config: dict) -> dict | None:
                 days = (date.today() - date.fromisoformat(task["carried_from"])).days
                 days_carried[task_text] = days
 
-    suggestion = yesterday_brief.get("suggestion")
-    suggestion_resolved = None
-    if suggestion and suggestion.get("text"):
-        suggestion_resolved = any(
-            _fuzzy_match(r, word)
-            for r in resolved
-            for word in suggestion["text"].split("'") if len(word) > 10
-        )
+    suggestions = yesterday_brief.get("suggestions", [])
+    suggestions_resolved = []
+    for s in suggestions:
+        if s and s.get("text"):
+            hit = any(
+                _fuzzy_match(r, word)
+                for r in resolved
+                for word in s["text"].split() if len(word) > 10
+            )
+            if hit:
+                suggestions_resolved.append(s["text"])
 
     reactions_dir = feedback_dir / "reactions"
     reaction_file = reactions_dir / f"{yesterday}.json"
-    user_reaction = None
+    user_reactions = None
     if reaction_file.exists():
-        user_reaction = json.loads(reaction_file.read_text(encoding="utf-8"))
+        user_reactions = json.loads(reaction_file.read_text(encoding="utf-8"))
 
     feedback = {
         "date": yesterday,
@@ -65,16 +68,16 @@ def compute_feedback(today_tasks: dict, config: dict) -> dict | None:
             "tactical_rules_shown": yesterday_brief.get("tactical_rules", []),
             "identity_rules_shown": yesterday_brief.get("identity", {}).get("rules", []),
             "hobby_tasks_shown": yesterday_brief.get("hobby_tasks", []),
-            "suggestion": suggestion,
+            "suggestions": suggestions,
         },
         "outcomes": {
-            "suggestion_task_resolved": suggestion_resolved,
+            "suggestions_resolved": suggestions_resolved,
             "carried_tasks_resolved": resolved,
             "carried_tasks_still_open": still_open,
             "days_carried_before_resolve": days_carried,
             "new_tasks_added": len(today_all_texts) - len(still_open),
         },
-        "user_reaction": user_reaction,
+        "user_reactions": user_reactions,
     }
 
     feedback_dir.mkdir(parents=True, exist_ok=True)

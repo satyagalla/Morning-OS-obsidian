@@ -23,6 +23,6 @@ export interface DailyBrief {
   };
   tactical_rules: string[];
   hobby_tasks: string[];
-  suggestion: Suggestion | null;
+  suggestions: Suggestion[];
   wins: string[];
 }
