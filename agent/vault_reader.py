@@ -1,3 +1,7 @@
+"""Reads and parses vault markdown files into plain Python dicts/lists.
+Falls back to the local LLM if section parsing yields no results.
+Never writes to the vault — read-only.
+"""
 import json
 import re
 import logging

@@ -1,3 +1,6 @@
+"""Entry point for the briefing agent. Orchestrates the full pipeline:
+read vault → compute feedback → detect carries → call LLM → assemble brief → write JSON.
+"""
 import json
 import logging
 import re

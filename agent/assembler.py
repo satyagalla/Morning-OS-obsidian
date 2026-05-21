@@ -1,3 +1,9 @@
+"""Combines raw parsed vault data with LLM output into the final brief dict.
+All field counts and modes are read from vault_config.yaml — nothing is hardcoded here.
+LLM output is used only when fields[x].mode == 'llm' and the LLM call succeeded.
+"""
+
+
 def assemble_brief(
     date_str: str,
     parsed_tasks: dict,

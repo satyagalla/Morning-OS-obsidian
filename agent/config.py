@@ -1,3 +1,4 @@
+"""Loads vault_config.yaml and .env into a single config dict used throughout the agent."""
 import os
 from pathlib import Path
 import yaml

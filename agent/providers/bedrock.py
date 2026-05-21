@@ -1,3 +1,6 @@
+"""AWS Bedrock provider — uses boto3 Converse API. Requires AWS credentials in environment
+or ~/.aws/credentials with access to the configured Bedrock model and region.
+"""
 import boto3
 from .base import LLMProvider
 

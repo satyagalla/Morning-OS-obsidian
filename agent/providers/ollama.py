@@ -1,3 +1,6 @@
+"""Ollama provider — calls a locally running Ollama server via HTTP.
+Used as the fallback LLM for markdown parse recovery. Requires Ollama running at base_url.
+"""
 import requests
 from .base import LLMProvider
 

@@ -1,3 +1,8 @@
+"""Computes and persists feedback for yesterday's brief.
+Runs at the start of each agent run — compares yesterday's tasks against today's
+to record what was resolved, what's still open, and how long carried tasks took.
+Also reads user reactions (👍/👎) written by the plugin from _generated/feedback/reactions/.
+"""
 import json
 from pathlib import Path
 from datetime import date, timedelta

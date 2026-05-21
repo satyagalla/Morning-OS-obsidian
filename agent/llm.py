@@ -1,3 +1,7 @@
+"""LLMClient with two named slots: intelligence (main briefing call) and fallback
+(used when markdown parsing yields nothing). Providers are loaded dynamically by name
+from vault_config.yaml — swap the provider key to change backends without touching code.
+"""
 import importlib
 from .providers.base import LLMProvider
 

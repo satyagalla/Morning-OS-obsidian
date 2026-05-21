@@ -1,3 +1,7 @@
+"""All LLM prompt strings for the briefing agent.
+Counts (tactical_rules_count, identity_rules_count, etc.) are injected at call time
+from vault_config.yaml — never hardcoded here.
+"""
 INTELLIGENCE_SYSTEM = """You are a personal productivity assistant. You help a user with ADHD stay focused by selecting the most relevant rules and generating actionable suggestions. Be concise and direct. Do not be preachy or generic. Your picks must be specific to today's tasks."""
 
 INTELLIGENCE_USER = """Here is my situation today:

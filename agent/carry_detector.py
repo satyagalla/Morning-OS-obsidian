@@ -1,3 +1,7 @@
+"""Detects carried-over tasks by fuzzy-matching today's tasks against yesterday's brief.
+`carried_from` is chain-propagated — it always points to the first day a task appeared,
+not just yesterday.
+"""
 import json
 from pathlib import Path
 from datetime import date, timedelta
