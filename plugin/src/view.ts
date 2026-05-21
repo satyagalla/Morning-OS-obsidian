@@ -135,10 +135,28 @@ export class MorningView extends ItemView {
   }
 
   private renderGoals(parent: HTMLElement) {
+    const { short_term, long_term } = this.brief!.goals;
+    const { short_term_count = 2, long_term_count = 2 } = this.brief!.meta?.goals ?? {};
+
+    const stVisible = short_term.slice(0, short_term_count);
+    const stHidden  = short_term.slice(short_term_count);
+    const ltVisible = long_term.slice(0, long_term_count);
+    const ltHidden  = long_term.slice(long_term_count);
+
     const wrap = parent.createEl("div", { cls: "morning-os-goals-wrap" });
+
     const toggle = wrap.createEl("div", { cls: "morning-os-goals-toggle" });
     toggle.createEl("span", { cls: "morning-os-goals-toggle-label", text: "Goals" });
-    toggle.createEl("span", { cls: "morning-os-goals-toggle-hint", text: "hover to reveal" });
+
+    const preview = toggle.createEl("div", { cls: "morning-os-goals-preview" });
+    for (const item of stVisible)
+      preview.createEl("span", { cls: "morning-os-goals-preview-pill morning-os-goals-pill-short", text: item });
+    for (const item of ltVisible)
+      preview.createEl("span", { cls: "morning-os-goals-preview-pill morning-os-goals-pill-long", text: item });
+
+    const hasHidden = stHidden.length > 0 || ltHidden.length > 0;
+    if (hasHidden)
+      toggle.createEl("span", { cls: "morning-os-goals-toggle-hint", text: `+${stHidden.length + ltHidden.length} more` });
 
     const panel = wrap.createEl("div", { cls: "morning-os-goals-panel" });
     const grid = panel.createEl("div", { cls: "morning-os-goals-grid" });
@@ -146,12 +164,12 @@ export class MorningView extends ItemView {
     const short = grid.createEl("div", { cls: "morning-os-goals-col" });
     short.createEl("h2", { text: "Short-term" });
     const sl = short.createEl("div", { cls: "morning-os-card" }).createEl("ul");
-    for (const item of this.brief!.goals.short_term) sl.createEl("li", { text: item });
+    for (const item of short_term) sl.createEl("li", { text: item });
 
     const long = grid.createEl("div", { cls: "morning-os-goals-col" });
     long.createEl("h2", { text: "Long-term" });
     const ll = long.createEl("div", { cls: "morning-os-card" }).createEl("ul");
-    for (const item of this.brief!.goals.long_term) ll.createEl("li", { text: item });
+    for (const item of long_term) ll.createEl("li", { text: item });
   }
 
   private renderTasks(parent: HTMLElement) {

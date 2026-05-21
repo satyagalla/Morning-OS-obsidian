@@ -91,6 +91,33 @@
   font-size: 0.72em;
   color: var(--text-faint);
   font-style: italic;
+  white-space: nowrap;
+  margin-left: auto;
+}
+
+.morning-os-goals-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1;
+}
+
+.morning-os-goals-preview-pill {
+  font-size: 0.82em;
+  padding: 3px 10px;
+  border-radius: 6px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.morning-os-goals-pill-short {
+  background: rgba(var(--color-blue-rgb), 0.12);
+  color: var(--color-blue);
+}
+
+.morning-os-goals-pill-long {
+  background: rgba(var(--color-purple-rgb), 0.12);
+  color: var(--color-purple);
 }
 
 .morning-os-goals-panel {

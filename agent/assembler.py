@@ -50,8 +50,15 @@ def assemble_brief(
 
     wins = yesterday_wins
 
+    goals_config = fields["goals"]
+    goals_meta = {
+        "short_term_count": goals_config.get("short_term_count", 2),
+        "long_term_count": goals_config.get("long_term_count", 2),
+    }
+
     return {
         "date": date_str,
+        "meta": {"goals": goals_meta},
         "identity": {"rules": identity_rules},
         "goals": goals,
         "tasks": parsed_tasks,

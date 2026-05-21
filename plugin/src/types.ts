@@ -10,6 +10,12 @@ export interface Suggestion {
 
 export interface DailyBrief {
   date: string;
+  meta: {
+    goals: {
+      short_term_count: number;
+      long_term_count: number;
+    };
+  };
   identity: {
     rules: string[];
   };

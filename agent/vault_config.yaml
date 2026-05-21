@@ -35,7 +35,9 @@ fields:
     count: 3       # number of identity pills shown in the strip
 
   goals:
-    mode: llm      # goals passed verbatim through LLM (no rephrasing — see prompts.py)
+    mode: llm
+    short_term_count: 2  # shown inline in the bar; remaining visible on hover
+    long_term_count: 1      # goals passed verbatim through LLM (no rephrasing — see prompts.py)
 
   hobby_tasks:
     mode: llm      # LLM picks from Hobby Tasks.md — verbatim, no generation
