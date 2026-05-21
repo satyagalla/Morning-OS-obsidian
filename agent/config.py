@@ -11,5 +11,5 @@ load_dotenv(PROJECT_ROOT / ".env")
 
 
 def load_config() -> dict:
-    with open(AGENT_DIR / "vault_config.yaml") as f:
+    with open(AGENT_DIR / "vault_config.yaml", encoding="utf-8") as f:
         return yaml.safe_load(f)

@@ -193,7 +193,8 @@ export class MorningView extends ItemView {
     if (!(file instanceof TFile)) return;
     const content = await this.app.vault.read(file);
     const escaped = taskText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const regex = new RegExp(`^- \\[[xX ]\\] ${escaped}$`, "m");
+    // matches both "- [ ] task", "- [x] task", and plain "- task"
+    const regex = new RegExp(`^- (?:\\[[xX ]\\] )?${escaped}$`, "m");
     const newContent = content.replace(regex, `- [${checked ? "x" : " "}] ${taskText}`);
     if (newContent !== content) await this.app.vault.modify(file, newContent);
   }
