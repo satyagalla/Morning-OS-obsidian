@@ -78,6 +78,7 @@ def run():
             if t["carried_from"]
         ]
 
+        fields = config["fields"]
         prompt = INTELLIGENCE_USER.format(
             red_alert_tasks="\n".join(f"- {t['text']}" for t in tasks_with_carry["red_alert"]),
             regular_tasks="\n".join(f"- {t['text']}" for t in tasks_with_carry["regular"]),
@@ -86,9 +87,13 @@ def run():
             emotional_rules="\n".join(f"- {r}" for r in emotional_rules),
             short_term_goals="\n".join(f"- {g}" for g in goals["short_term"]),
             long_term_goals="\n".join(f"- {g}" for g in goals["long_term"]),
-            technical_tasks="\n".join(f"- {t}" for t in technical_tasks[:15]),
+            technical_tasks="\n".join(f"- {t}" for t in technical_tasks[:fields["technical_tasks"].get("count", 5)]),
             hobby_tasks="\n".join(f"- {t}" for t in hobby_tasks_raw) if hobby_tasks_raw else "None",
             yesterday_wins="\n".join(f"- {w}" for w in yesterday_wins) if yesterday_wins else "None",
+            tactical_rules_count=fields["tactical_rules"].get("count", 4),
+            identity_rules_count=fields["identity_rules"].get("count", 3),
+            suggestion_count=fields["suggestion"].get("count", 3),
+            hobby_tasks_count=fields["hobby_tasks"].get("count", 3),
         )
 
         try:

@@ -9,10 +9,10 @@ Regular: {regular_tasks}
 ## Carried Tasks (been putting off)
 {carried_summary}
 
-## All Tactical Rules (pick 3-5 most relevant for TODAY's specific tasks)
+## All Tactical Rules (pick {tactical_rules_count} most relevant for TODAY's specific tasks)
 {tactical_rules}
 
-## All Emotional/Identity Rules (pick exactly 3 as today's identity affirmations)
+## All Emotional/Identity Rules (pick exactly {identity_rules_count} as today's identity affirmations)
 {emotional_rules}
 
 ## Goals (rephrase into actionable daily framing)
@@ -30,14 +30,10 @@ Long-term: {long_term_goals}
 
 Respond in this EXACT JSON format (no other text):
 {{
-  "tactical_rules": ["rule1", "rule2", "rule3"],
-  "identity_rules": ["rule1", "rule2", "rule3"],
-  "suggestions": [
-    {{"text": "...", "source": "vault/path/to/note"}},
-    {{"text": "...", "source": "vault/path/to/note"}},
-    {{"text": "...", "source": "vault/path/to/note"}}
-  ],
-  "hobby_tasks": ["task1", "task2", "task3"],
+  "tactical_rules": ["rule1", "rule2"],
+  "identity_rules": ["rule1", "rule2"],
+  "suggestions": [{{"text": "...", "source": "vault/path/to/note"}}],
+  "hobby_tasks": ["task1", "task2"],
   "goals": {{
     "short_term": ["goal1", "goal2"],
     "long_term": ["goal1", "goal2"]
@@ -45,10 +41,10 @@ Respond in this EXACT JSON format (no other text):
 }}
 
 Rules for your response:
-- tactical_rules: Pick 3-5 from the tactical list that are DIRECTLY relevant to today's tasks. Copy them VERBATIM — do not rephrase or generate new rules.
-- identity_rules: Pick exactly 3 from the emotional rules list. Copy them VERBATIM — do not rephrase or generate new rules.
-- suggestions: Generate exactly 3 short insights (1-2 sentences each). This is the ONLY field where you may generate new text. Each suggestion should point out a stale carried task, connect a goal to a task, or surface a pattern (e.g., avoidance). Source = the vault file path most relevant to the insight.
-- hobby_tasks: Pick 2-3 items from the Hobby Tasks list provided. Copy them VERBATIM — do not generate new tasks. If both lists are empty, return [].
+- tactical_rules: Pick {tactical_rules_count} from the tactical list that are DIRECTLY relevant to today's tasks. Copy them VERBATIM — do not rephrase or generate new rules.
+- identity_rules: Pick exactly {identity_rules_count} from the emotional rules list. Copy them VERBATIM — do not rephrase or generate new rules.
+- suggestions: Generate exactly {suggestion_count} short insights (1-2 sentences each). This is the ONLY field where you may generate new text. Each suggestion should point out a stale carried task, connect a goal to a task, or surface a pattern (e.g., avoidance). Source = the vault file path most relevant to the insight.
+- hobby_tasks: Pick {hobby_tasks_count} items from the Hobby Tasks list provided. Copy them VERBATIM — do not generate new tasks. If the list is empty, return [].
 - goals: Copy the short_term and long_term goals VERBATIM — do not rephrase or generate new goals. Keep the same count as input."""
 
 FALLBACK_SYSTEM = "You extract structured data from markdown files. Return valid JSON only, no explanation or markdown fencing."
