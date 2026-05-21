@@ -26,6 +26,9 @@ fields:
     count: 3
   suggestion:
     mode: llm
+  technical_tasks:
+    mode: direct
+    count: 5
   tasks:
     mode: direct
   wins:

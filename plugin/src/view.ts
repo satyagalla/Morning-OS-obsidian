@@ -109,6 +109,7 @@ export class MorningView extends ItemView {
     this.renderTacticalRules(right);
     this.renderSuggestion(right);
 
+    this.renderPendingTasks(wrapper);
     this.renderHobbyTasks(wrapper);
     this.renderWins(wrapper);
   }
@@ -255,6 +256,23 @@ export class MorningView extends ItemView {
     } else {
       try { await this.app.vault.createFolder(dir); } catch {}
       await this.app.vault.create(filePath, payload);
+    }
+  }
+
+  private renderPendingTasks(parent: HTMLElement) {
+    const tasks = this.brief!.technical_tasks ?? [];
+    const count = tasks.length;
+    const wrap = parent.createEl("div", { cls: "morning-os-pending-wrap" });
+    const toggle = wrap.createEl("div", { cls: "morning-os-pending-toggle" });
+    toggle.createEl("span", { cls: "morning-os-pending-label", text: "Pending tasks" });
+    toggle.createEl("span", { cls: "morning-os-pending-count", text: `${count}` });
+
+    const panel = wrap.createEl("div", { cls: "morning-os-pending-panel" });
+    if (count === 0) {
+      panel.createEl("p", { cls: "morning-os-empty-state", text: "No pending technical tasks." });
+    } else {
+      const list = panel.createEl("ul", { cls: "morning-os-pending-list" });
+      for (const item of tasks) list.createEl("li", { text: item });
     }
   }
 

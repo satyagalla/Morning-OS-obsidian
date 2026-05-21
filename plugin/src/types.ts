@@ -22,6 +22,7 @@ export interface DailyBrief {
     regular: Task[];
   };
   tactical_rules: string[];
+  technical_tasks: string[];
   hobby_tasks: string[];
   suggestions: Suggestion[];
   wins: string[];

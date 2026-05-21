@@ -48,6 +48,7 @@ def assemble_brief(
         "goals": goals,
         "tasks": parsed_tasks,
         "tactical_rules": tactical_rules,
+        "technical_tasks": all_technical_tasks[:config["fields"].get("technical_tasks", {}).get("count", 5)],
         "hobby_tasks": hobby_tasks,
         "suggestions": suggestion,
         "wins": wins,
