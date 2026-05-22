@@ -5,6 +5,7 @@ import { spawnAgent, parseRunTime } from "./agent-runner";
 
 export default class MorningOSPlugin extends Plugin {
   settings: MorningOSSettings;
+  settingTab: MorningOSSettingTab;
   private agentRunning = false;
 
   async onload() {
@@ -28,7 +29,8 @@ export default class MorningOSPlugin extends Plugin {
       callback: () => this.triggerAgent(),
     });
 
-    this.addSettingTab(new MorningOSSettingTab(this.app, this));
+    this.settingTab = new MorningOSSettingTab(this.app, this);
+    this.addSettingTab(this.settingTab);
 
     // Check every minute whether it's time for the daily auto-run
     this.registerInterval(window.setInterval(() => this.maybeAutoRun(), 60_000));
@@ -69,7 +71,10 @@ export default class MorningOSPlugin extends Plugin {
       const today = this.todayStr();
       this.settings.agentLastRunDate = today;
       await this.saveData(this.settings);
+      this.settings.settingsChangedSinceRun = false;
+      await this.saveData(this.settings);
       new Notice("Morning OS: brief ready ✓");
+      this.settingTab.clearDirty();
       this.refreshView();
     } catch (err) {
       console.error("Morning OS agent error:", err);

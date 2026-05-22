@@ -68,6 +68,9 @@ export interface MorningOSSettings {
   hobbyTasksCount: number;
   suggestionCount: number;
   technicalTasksCount: number;
+
+  // Dirty flag — true when settings changed since last agent run
+  settingsChangedSinceRun: boolean;
 }
 
 export const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
@@ -134,6 +137,8 @@ export const DEFAULT_SETTINGS: MorningOSSettings = {
   hobbyTasksCount: 3,
   suggestionCount: 3,
   technicalTasksCount: 5,
+
+  settingsChangedSinceRun: false,
 };
 
 const PROVIDERS = {
@@ -146,15 +151,54 @@ const PROVIDERS = {
 
 export class MorningOSSettingTab extends PluginSettingTab {
   plugin: MorningOSPlugin;
+  private dirtySections = new Set<string>();
 
   constructor(app: App, plugin: MorningOSPlugin) {
     super(app, plugin);
     this.plugin = plugin;
   }
 
-  private async save(update: Partial<MorningOSSettings>) {
+  private async save(update: Partial<MorningOSSettings>, section?: string) {
     Object.assign(this.plugin.settings, update);
+    this.plugin.settings.settingsChangedSinceRun = true;
     await this.plugin.saveData(this.plugin.settings);
+    if (section) {
+      this.dirtySections.add(section);
+      this.markSectionDirty(section);
+      this.showRunBanner();
+    }
+  }
+
+  clearDirty() {
+    this.dirtySections.clear();
+    this.containerEl.querySelectorAll("h3[data-dirty]").forEach((el) => {
+      (el as HTMLElement).removeAttribute("data-dirty");
+    });
+    this.hideRunBanner();
+  }
+
+  private markSectionDirty(section: string) {
+    this.containerEl.querySelectorAll("h3").forEach((el) => {
+      if (el.textContent === section) (el as HTMLElement).setAttribute("data-dirty", "true");
+    });
+  }
+
+  private showRunBanner() {
+    const existing = this.containerEl.querySelector(".mos-run-banner");
+    if (!existing) {
+      const banner = this.containerEl.querySelector(".mos-run-banner-slot");
+      if (banner) banner.setAttribute("data-visible", "true");
+    }
+  }
+
+  private hideRunBanner() {
+    const banner = this.containerEl.querySelector(".mos-run-banner-slot");
+    if (banner) banner.removeAttribute("data-visible");
+  }
+
+  private sectionHeading(containerEl: HTMLElement, text: string) {
+    const h = containerEl.createEl("h3", { text });
+    if (this.dirtySections.has(text)) h.setAttribute("data-dirty", "true");
   }
 
   display(): void {
@@ -171,7 +215,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
   }
 
   private renderAgentSection(containerEl: HTMLElement) {
-    containerEl.createEl("h3", { text: "Briefing agent" });
+    this.sectionHeading(containerEl, "Briefing agent");
 
     new Setting(containerEl)
       .setName("Repo path")
@@ -193,6 +237,13 @@ export class MorningOSSettingTab extends PluginSettingTab {
           .onChange(async (value) => { await this.save({ agentRunTime: value.trim() }); })
       );
 
+    // Banner slot — visible only when settingsChangedSinceRun
+    const bannerSlot = containerEl.createEl("div", { cls: "mos-run-banner-slot" });
+    bannerSlot.createEl("span", { text: "⚠ Settings changed — run the agent to apply them." });
+    if (this.plugin.settings.settingsChangedSinceRun) {
+      bannerSlot.setAttribute("data-visible", "true");
+    }
+
     new Setting(containerEl)
       .setName("Run agent now")
       .setDesc("Manually trigger the briefing agent.")
@@ -209,6 +260,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
             try {
               await this.plugin.triggerAgent();
               btn.setButtonText("Done ✓");
+              this.clearDirty();
             } catch {
               btn.setButtonText("Failed ✗");
             } finally {
@@ -219,7 +271,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
   }
 
   private renderAISection(containerEl: HTMLElement) {
-    containerEl.createEl("h3", { text: "AI provider" });
+    this.sectionHeading(containerEl, "AI provider");
 
     new Setting(containerEl)
       .setName("Provider")
@@ -234,7 +286,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
               intelligenceModel: PROVIDER_DEFAULT_MODELS[value] ?? "",
               intelligenceRegion: value === "bedrock" ? (this.plugin.settings.awsRegion || "us-east-2") : "",
               intelligenceBaseUrl: value === "ollama" ? (this.plugin.settings.intelligenceBaseUrl || "http://localhost:11434") : "",
-            });
+            }, "AI provider");
             this.display();
           })
       );
@@ -245,7 +297,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
       .addText((text) =>
         text
           .setValue(this.plugin.settings.intelligenceModel)
-          .onChange(async (value) => { await this.save({ intelligenceModel: value }); })
+          .onChange(async (value) => { await this.save({ intelligenceModel: value }, "AI provider"); })
       );
 
     const p = this.plugin.settings.intelligenceProvider;
@@ -256,7 +308,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
         .addText((text) =>
           text
             .setValue(this.plugin.settings.awsAccessKeyId)
-            .onChange(async (value) => { await this.save({ awsAccessKeyId: value }); })
+            .onChange(async (value) => { await this.save({ awsAccessKeyId: value }, "AI provider"); })
         );
       new Setting(containerEl)
         .setName("AWS Secret Access Key")
@@ -264,7 +316,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
           text.inputEl.type = "password";
           text
             .setValue(this.plugin.settings.awsSecretAccessKey)
-            .onChange(async (value) => { await this.save({ awsSecretAccessKey: value }); });
+            .onChange(async (value) => { await this.save({ awsSecretAccessKey: value }, "AI provider"); });
         });
       new Setting(containerEl)
         .setName("AWS Region")
@@ -272,7 +324,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
         .addText((text) =>
           text
             .setValue(this.plugin.settings.awsRegion)
-            .onChange(async (value) => { await this.save({ awsRegion: value, intelligenceRegion: value }); })
+            .onChange(async (value) => { await this.save({ awsRegion: value, intelligenceRegion: value }, "AI provider"); })
         );
     }
 
@@ -283,7 +335,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
           text.inputEl.type = "password";
           text
             .setValue(this.plugin.settings.openaiApiKey)
-            .onChange(async (value) => { await this.save({ openaiApiKey: value }); });
+            .onChange(async (value) => { await this.save({ openaiApiKey: value }, "AI provider"); });
         });
     }
 
@@ -294,7 +346,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
           text.inputEl.type = "password";
           text
             .setValue(this.plugin.settings.geminiApiKey)
-            .onChange(async (value) => { await this.save({ geminiApiKey: value }); });
+            .onChange(async (value) => { await this.save({ geminiApiKey: value }, "AI provider"); });
         });
     }
 
@@ -305,7 +357,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
           text.inputEl.type = "password";
           text
             .setValue(this.plugin.settings.groqApiKey)
-            .onChange(async (value) => { await this.save({ groqApiKey: value }); });
+            .onChange(async (value) => { await this.save({ groqApiKey: value }, "AI provider"); });
         });
     }
 
@@ -317,13 +369,13 @@ export class MorningOSSettingTab extends PluginSettingTab {
           text
             .setPlaceholder("http://localhost:11434")
             .setValue(this.plugin.settings.intelligenceBaseUrl)
-            .onChange(async (value) => { await this.save({ intelligenceBaseUrl: value }); })
+            .onChange(async (value) => { await this.save({ intelligenceBaseUrl: value }, "AI provider"); })
         );
     }
   }
 
   private renderFallbackSection(containerEl: HTMLElement) {
-    containerEl.createEl("h3", { text: "Fallback AI" });
+    this.sectionHeading(containerEl, "Fallback AI");
     containerEl.createEl("p", {
       cls: "setting-item-description",
       text: "Used only when the vault parser finds no tasks or goals. Ollama (local) is recommended here to avoid extra cloud costs.",
@@ -340,7 +392,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
               fallbackProvider: value,
               fallbackModel: PROVIDER_DEFAULT_MODELS[value] ?? "",
               fallbackBaseUrl: value === "ollama" ? (this.plugin.settings.fallbackBaseUrl || "http://localhost:11434") : "",
-            });
+            }, "Fallback AI");
             this.display();
           })
       );
@@ -350,7 +402,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
       .addText((text) =>
         text
           .setValue(this.plugin.settings.fallbackModel)
-          .onChange(async (value) => { await this.save({ fallbackModel: value }); })
+          .onChange(async (value) => { await this.save({ fallbackModel: value }, "Fallback AI"); })
       );
 
     if (this.plugin.settings.fallbackProvider === "ollama") {
@@ -360,13 +412,13 @@ export class MorningOSSettingTab extends PluginSettingTab {
           text
             .setPlaceholder("http://localhost:11434")
             .setValue(this.plugin.settings.fallbackBaseUrl)
-            .onChange(async (value) => { await this.save({ fallbackBaseUrl: value }); })
+            .onChange(async (value) => { await this.save({ fallbackBaseUrl: value }, "Fallback AI"); })
         );
     }
   }
 
   private renderPathsSection(containerEl: HTMLElement) {
-    containerEl.createEl("h3", { text: "Vault paths" });
+    this.sectionHeading(containerEl, "Vault paths");
     containerEl.createEl("p", {
       cls: "setting-item-description",
       text: "All paths are relative to your vault root. Change these only if your vault structure differs from the defaults.",
@@ -379,7 +431,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
         text
           .setPlaceholder("Essential/Daily")
           .setValue(this.plugin.settings.dailyNoteDir)
-          .onChange(async (value) => { await this.save({ dailyNoteDir: value }); })
+          .onChange(async (value) => { await this.save({ dailyNoteDir: value }, "Vault paths"); })
       );
 
     new Setting(containerEl)
@@ -389,7 +441,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
         text
           .setPlaceholder("_generated/briefs")
           .setValue(this.plugin.settings.briefsDir)
-          .onChange(async (value) => { await this.save({ briefsDir: value }); })
+          .onChange(async (value) => { await this.save({ briefsDir: value }, "Vault paths"); })
       );
 
     new Setting(containerEl)
@@ -399,7 +451,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
         text
           .setPlaceholder("_generated/feedback")
           .setValue(this.plugin.settings.feedbackDir)
-          .onChange(async (value) => { await this.save({ feedbackDir: value }); })
+          .onChange(async (value) => { await this.save({ feedbackDir: value }, "Vault paths"); })
       );
 
     new Setting(containerEl)
@@ -407,7 +459,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
       .addText((text) =>
         text
           .setValue(this.plugin.settings.sourceTacticalRules)
-          .onChange(async (value) => { await this.save({ sourceTacticalRules: value }); })
+          .onChange(async (value) => { await this.save({ sourceTacticalRules: value }, "Vault paths"); })
       );
 
     new Setting(containerEl)
@@ -415,7 +467,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
       .addText((text) =>
         text
           .setValue(this.plugin.settings.sourceEmotionalRules)
-          .onChange(async (value) => { await this.save({ sourceEmotionalRules: value }); })
+          .onChange(async (value) => { await this.save({ sourceEmotionalRules: value }, "Vault paths"); })
       );
 
     new Setting(containerEl)
@@ -423,7 +475,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
       .addText((text) =>
         text
           .setValue(this.plugin.settings.sourceGoals)
-          .onChange(async (value) => { await this.save({ sourceGoals: value }); })
+          .onChange(async (value) => { await this.save({ sourceGoals: value }, "Vault paths"); })
       );
 
     new Setting(containerEl)
@@ -431,7 +483,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
       .addText((text) =>
         text
           .setValue(this.plugin.settings.sourceTechnicalTasks)
-          .onChange(async (value) => { await this.save({ sourceTechnicalTasks: value }); })
+          .onChange(async (value) => { await this.save({ sourceTechnicalTasks: value }, "Vault paths"); })
       );
 
     new Setting(containerEl)
@@ -439,12 +491,12 @@ export class MorningOSSettingTab extends PluginSettingTab {
       .addText((text) =>
         text
           .setValue(this.plugin.settings.sourceHobbyTasks)
-          .onChange(async (value) => { await this.save({ sourceHobbyTasks: value }); })
+          .onChange(async (value) => { await this.save({ sourceHobbyTasks: value }, "Vault paths"); })
       );
   }
 
   private renderHeadingsSection(containerEl: HTMLElement) {
-    containerEl.createEl("h3", { text: "Section headings" });
+    this.sectionHeading(containerEl, "Section headings");
     containerEl.createEl("p", {
       cls: "setting-item-description",
       text: "The ## heading names used in your daily note and goals file. Must match exactly (case-insensitive).",
@@ -456,7 +508,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
       .addText((text) =>
         text
           .setValue(this.plugin.settings.sectionRedAlert)
-          .onChange(async (value) => { await this.save({ sectionRedAlert: value }); })
+          .onChange(async (value) => { await this.save({ sectionRedAlert: value }, "Section headings"); })
       );
 
     new Setting(containerEl)
@@ -464,7 +516,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
       .addText((text) =>
         text
           .setValue(this.plugin.settings.sectionRegular)
-          .onChange(async (value) => { await this.save({ sectionRegular: value }); })
+          .onChange(async (value) => { await this.save({ sectionRegular: value }, "Section headings"); })
       );
 
     new Setting(containerEl)
@@ -473,7 +525,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
       .addText((text) =>
         text
           .setValue(this.plugin.settings.sectionWins)
-          .onChange(async (value) => { await this.save({ sectionWins: value }); })
+          .onChange(async (value) => { await this.save({ sectionWins: value }, "Section headings"); })
       );
 
     new Setting(containerEl)
@@ -482,7 +534,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
       .addText((text) =>
         text
           .setValue(this.plugin.settings.sectionThoughts)
-          .onChange(async (value) => { await this.save({ sectionThoughts: value }); })
+          .onChange(async (value) => { await this.save({ sectionThoughts: value }, "Section headings"); })
       );
 
     new Setting(containerEl)
@@ -491,7 +543,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
       .addText((text) =>
         text
           .setValue(this.plugin.settings.sectionPending)
-          .onChange(async (value) => { await this.save({ sectionPending: value }); })
+          .onChange(async (value) => { await this.save({ sectionPending: value }, "Section headings"); })
       );
 
     new Setting(containerEl)
@@ -500,7 +552,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
       .addText((text) =>
         text
           .setValue(this.plugin.settings.goalsShortTerm)
-          .onChange(async (value) => { await this.save({ goalsShortTerm: value }); })
+          .onChange(async (value) => { await this.save({ goalsShortTerm: value }, "Section headings"); })
       );
 
     new Setting(containerEl)
@@ -508,12 +560,12 @@ export class MorningOSSettingTab extends PluginSettingTab {
       .addText((text) =>
         text
           .setValue(this.plugin.settings.goalsLongTerm)
-          .onChange(async (value) => { await this.save({ goalsLongTerm: value }); })
+          .onChange(async (value) => { await this.save({ goalsLongTerm: value }, "Section headings"); })
       );
   }
 
   private renderCountsSection(containerEl: HTMLElement) {
-    containerEl.createEl("h3", { text: "How many items to show" });
+    this.sectionHeading(containerEl, "How many items to show");
 
     const count = (name: string, key: keyof MorningOSSettings) => {
       new Setting(containerEl)
@@ -526,7 +578,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
             .setValue(String(this.plugin.settings[key]))
             .onChange(async (value) => {
               const n = parseInt(value, 10);
-              if (!isNaN(n) && n >= 0) await this.save({ [key]: n } as Partial<MorningOSSettings>);
+              if (!isNaN(n) && n >= 0) await this.save({ [key]: n } as Partial<MorningOSSettings>, "How many items to show");
             });
         });
     };
@@ -541,24 +593,20 @@ export class MorningOSSettingTab extends PluginSettingTab {
   }
 
   private renderModesSection(containerEl: HTMLElement) {
-    containerEl.createEl("h3", { text: "AI vs direct mode" });
+    this.sectionHeading(containerEl, "AI vs direct mode");
     containerEl.createEl("p", {
       cls: "setting-item-description",
       text: "When on, the AI picks and filters items for that field. When off, items are taken verbatim from your vault files in order.",
     });
 
-    const toggle = (
-      name: string,
-      desc: string,
-      key: keyof MorningOSSettings,
-    ) => {
+    const toggle = (name: string, desc: string, key: keyof MorningOSSettings) => {
       new Setting(containerEl)
         .setName(name)
         .setDesc(desc)
         .addToggle((t) =>
           t
             .setValue(this.plugin.settings[key] as boolean)
-            .onChange(async (value) => { await this.save({ [key]: value } as Partial<MorningOSSettings>); })
+            .onChange(async (value) => { await this.save({ [key]: value } as Partial<MorningOSSettings>, "AI vs direct mode"); })
         );
     };
 

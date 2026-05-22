@@ -476,6 +476,37 @@
   font-size: 0.95em;
 }
 
+/* ── Settings dirty indicators ── */
+h3[data-dirty]::after {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-orange);
+  margin-left: 8px;
+  vertical-align: middle;
+  position: relative;
+  top: -1px;
+}
+
+.mos-run-banner-slot {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  margin: 4px 0 8px;
+  border-radius: 6px;
+  background: rgba(var(--color-orange-rgb), 0.12);
+  border: 1px solid rgba(var(--color-orange-rgb), 0.35);
+  color: var(--color-orange);
+  font-size: 0.88em;
+}
+
+.mos-run-banner-slot[data-visible] {
+  display: flex;
+}
+
 /* ── Mobile ── */
 @media (max-width: 600px) {
   .morning-os-wrapper {
