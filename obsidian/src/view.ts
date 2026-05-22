@@ -1,5 +1,6 @@
 import { ItemView, WorkspaceLeaf, TFile } from "obsidian";
 import { DailyBrief, Task } from "./types";
+import { MorningOSSettings } from "./settings";
 
 export const VIEW_TYPE_MORNING = "morning-os-view";
 
@@ -7,9 +8,11 @@ export class MorningView extends ItemView {
   private brief: DailyBrief | null = null;
   private wins: string[] = [];
   private suggestionReactions: ("up" | "down" | null)[] = [];
+  private settings: MorningOSSettings;
 
-  constructor(leaf: WorkspaceLeaf) {
+  constructor(leaf: WorkspaceLeaf, settings: MorningOSSettings) {
     super(leaf);
+    this.settings = settings;
   }
 
   getViewType(): string { return VIEW_TYPE_MORNING; }
@@ -28,7 +31,7 @@ export class MorningView extends ItemView {
   private async loadBrief() {
     const d = new Date();
     const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-    const file = this.app.vault.getAbstractFileByPath(`_generated/briefs/${today}.json`);
+    const file = this.app.vault.getAbstractFileByPath(`${this.settings.briefsDir}/${today}.json`);
     if (file instanceof TFile) {
       this.brief = JSON.parse(await this.app.vault.read(file));
     } else {
@@ -38,7 +41,7 @@ export class MorningView extends ItemView {
 
   private async loadWins() {
     if (!this.brief) return;
-    const notePath = `Essential/Daily/${this.brief.date}.md`;
+    const notePath = `${this.settings.dailyNoteDir}/${this.brief.date}.md`;
     const file = this.app.vault.getAbstractFileByPath(notePath);
     if (!(file instanceof TFile)) {
       this.wins = this.brief.wins.slice();
@@ -53,7 +56,8 @@ export class MorningView extends ItemView {
     let inWins = false;
     for (const line of lines) {
       const stripped = line.trim();
-      if (/^#{1,3} (?:Wins|I feel good about these after today)\s*$/i.test(stripped)) {
+      const winsRe = new RegExp(`^#{1,3} (?:${this.settings.sectionWins}|I feel good about these after today)\\s*$`, "i");
+      if (winsRe.test(stripped)) {
         inWins = true;
         continue;
       }
@@ -71,7 +75,7 @@ export class MorningView extends ItemView {
     const count = this.brief.suggestions.length;
     this.suggestionReactions = Array(count).fill(null);
     const file = this.app.vault.getAbstractFileByPath(
-      `_generated/feedback/reactions/${this.brief.date}.json`
+      `${this.settings.feedbackDir}/reactions/${this.brief.date}.json`
     );
     if (!(file instanceof TFile)) return;
     try {
@@ -207,7 +211,7 @@ export class MorningView extends ItemView {
   }
 
   private async toggleTaskInNote(taskText: string, checked: boolean) {
-    const notePath = `Essential/Daily/${this.brief!.date}.md`;
+    const notePath = `${this.settings.dailyNoteDir}/${this.brief!.date}.md`;
     const file = this.app.vault.getAbstractFileByPath(notePath);
     if (!(file instanceof TFile)) return;
     const content = await this.app.vault.read(file);
@@ -264,7 +268,7 @@ export class MorningView extends ItemView {
 
   private async writeSuggestionReactions() {
     const today = this.brief!.date;
-    const dir = "_generated/feedback/reactions";
+    const dir = `${this.settings.feedbackDir}/reactions`;
     const filePath = `${dir}/${today}.json`;
     const payload = JSON.stringify(
       { date: today, suggestion_reactions: this.suggestionReactions },
@@ -350,13 +354,14 @@ export class MorningView extends ItemView {
   }
 
   private async appendWinToNote(winText: string) {
-    const notePath = `Essential/Daily/${this.brief!.date}.md`;
+    const notePath = `${this.settings.dailyNoteDir}/${this.brief!.date}.md`;
     const file = this.app.vault.getAbstractFileByPath(notePath);
     if (!(file instanceof TFile)) return;
     let content = await this.app.vault.read(file);
-    const winsMatch = content.match(/^#{1,3} (?:Wins|I feel good about these after today)\s*$/im);
+    const winsHeaderRe = new RegExp(`^#{1,3} (?:${this.settings.sectionWins}|I feel good about these after today)\\s*$`, "im");
+    const winsMatch = content.match(winsHeaderRe);
     if (!winsMatch) {
-      content = content.trimEnd() + `\n\n## Wins\n- ${winText}\n`;
+      content = content.trimEnd() + `\n\n## ${this.settings.sectionWins}\n- ${winText}\n`;
     } else {
       const headerEnd = winsMatch.index! + winsMatch[0].length;
       const afterHeader = content.slice(headerEnd);

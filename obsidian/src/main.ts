@@ -1,9 +1,14 @@
 import { Plugin, WorkspaceLeaf } from "obsidian";
 import { MorningView, VIEW_TYPE_MORNING } from "./view";
+import { MorningOSSettings, DEFAULT_SETTINGS, MorningOSSettingTab } from "./settings";
 
 export default class MorningOSPlugin extends Plugin {
+  settings: MorningOSSettings;
+
   async onload() {
-    this.registerView(VIEW_TYPE_MORNING, (leaf) => new MorningView(leaf));
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+
+    this.registerView(VIEW_TYPE_MORNING, (leaf) => new MorningView(leaf, this.settings));
 
     this.addRibbonIcon("sun", "Morning OS", () => {
       this.activateView();
@@ -16,6 +21,8 @@ export default class MorningOSPlugin extends Plugin {
         this.activateView();
       },
     });
+
+    this.addSettingTab(new MorningOSSettingTab(this.app, this));
   }
 
   async activateView() {
