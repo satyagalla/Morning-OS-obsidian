@@ -1,5 +1,5 @@
-# Absolute path to your Obsidian vault root
-vault_path: "D:/Productivity/OS"
+# Replace with the absolute path to your Obsidian vault root
+vault_path: "D:/path/to/your/vault"
 
 # Relative to vault_path — where the agent writes daily brief JSONs
 output_dir: "_generated/briefs"

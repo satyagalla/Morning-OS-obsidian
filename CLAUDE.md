@@ -7,14 +7,14 @@ A multi-agent system that organizes an Obsidian vault automatically and delivers
 
 ## Commands
 
-All plugin commands run from `plugin/`:
+All plugin commands run from `obsidian/`:
 
 ```bash
 npm run dev        # watch mode with inline sourcemaps
 npm run build      # type-check + production bundle (minified, no sourcemaps)
 ```
 
-Build output is `plugin/main.js`. After building, copy `main.js`, `manifest.json`, and `styles/styles.css` to the installed vault plugin directory: `D:\Productivity\OS\.obsidian\plugins\morning-os\`.
+Build output is `obsidian/main.js`. After building, copy `main.js`, `manifest.json`, and `styles/styles.css` to the installed vault plugin directory: `D:\Productivity\OS\.obsidian\plugins\morning-os\`.
 
 Run the briefing agent from the repo root:
 
@@ -73,12 +73,12 @@ Hardware: RTX 3060 6GB — runs Qwen 2.5 7B Q4 comfortably.
 - `config.py` — loads `vault_config.yaml` + `.env`
 - `vault_config.yaml` — single source of truth for all paths, LLM config, field modes, and counts
 
-## Plugin Source Structure (`plugin/`)
+## Plugin Source Structure (`obsidian/`)
 
-- `plugin/src/main.ts` — registers `MorningView`, ribbon icon, and command
-- `plugin/src/view.ts` — `MorningView extends ItemView`; reads today's JSON, renders all sections; writes back to daily note on task completion and win entry; writes reaction JSON on thumbs up/down
-- `plugin/src/types.ts` — `DailyBrief` TypeScript interface (canonical schema definition)
-- `plugin/styles/styles.css` — all styling via Obsidian CSS vars; no external dependencies
+- `obsidian/src/main.ts` — registers `MorningView`, ribbon icon, and command
+- `obsidian/src/view.ts` — `MorningView extends ItemView`; reads today's JSON, renders all sections; writes back to daily note on task completion and win entry; writes reaction JSON on thumbs up/down
+- `obsidian/src/types.ts` — `DailyBrief` TypeScript interface (canonical schema definition)
+- `obsidian/styles/styles.css` — all styling via Obsidian CSS vars; no external dependencies
 
 ### UI Layout (60/40 two-column body)
 
@@ -104,7 +104,7 @@ The plugin is mostly read-only but writes back to the vault in three cases:
 
 ## Brief Schema (`_generated/briefs/YYYY-MM-DD.json`)
 
-Canonical definition is `plugin/src/types.ts`. Summary:
+Canonical definition is `obsidian/src/types.ts`. Summary:
 
 ```json
 {
