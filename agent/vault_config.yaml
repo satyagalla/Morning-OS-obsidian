@@ -31,7 +31,7 @@ fields:
     count: 4       # number of rules shown in the brief
 
   identity_rules:
-    mode: llm      # LLM picks identity affirmations resonant with today's situation
+    mode: direct      # LLM picks identity affirmations resonant with today's situation
     count: 3       # number of identity pills shown in the strip
 
   goals:
