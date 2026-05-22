@@ -53,22 +53,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Copy and fill in credentials:
-
-```bash
-cp .env.example .env
-# Edit .env — add your provider's API key
-```
-
-Edit `agent/vault_config.yaml` — set `vault_path` to the absolute path of your Obsidian vault root.
-
-Test it:
-
-```bash
-python -m agent
-```
-
-This writes `_generated/briefs/YYYY-MM-DD.json` inside your vault.
+Edit `agent/vault_config.yaml` — set `vault_path` to the absolute path of your Obsidian vault root. This is the only file you ever edit outside Obsidian.
 
 ---
 
@@ -90,20 +75,17 @@ Copy the output files to your vault's plugin directory:
 
 Then in Obsidian:
 1. Settings → Community plugins → enable **Morning OS**
-2. Settings → Morning OS — configure each path to match your vault structure
-3. Click the sun icon in the ribbon or run **Open Morning Dashboard** from the command palette
+2. Settings → Morning OS → **Briefing agent** — set the repo path and your preferred daily run time
+3. Settings → Morning OS → **AI provider** — choose your provider and enter your API key
+4. Click the sun icon in the ribbon or run **Open Morning Dashboard** from the command palette
 
----
-
-## Automating the Agent (Windows)
-
-Point Windows Task Scheduler at `agent\run.bat` with a daily trigger at your preferred time. The script activates the virtualenv and runs the agent relative to its own location, so it works from any install path.
+The plugin runs the agent automatically at the configured time each day. Use **Run agent now** in Settings or the command palette to trigger it on demand.
 
 ---
 
 ## Vault Structure
 
-The agent expects this folder layout (configurable in `vault_config.yaml`):
+The agent expects this folder layout (all paths configurable in Obsidian Settings → Morning OS):
 
 ```
 Essential/
@@ -144,20 +126,23 @@ Daily note format (`Essential/Daily/YYYY-MM-DD.md`):
 
 ## LLM Providers
 
-| Provider | Config value | Required env var |
+| Provider | Config value | Credential |
 |---|---|---|
-| AWS Bedrock | `bedrock` | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION` |
-| OpenAI | `openai` | `OPENAI_API_KEY` |
-| Google Gemini | `gemini` | `GEMINI_API_KEY` |
-| Groq | `groq` | `GROQ_API_KEY` |
+| AWS Bedrock | `bedrock` | Access Key ID + Secret Key (set in Obsidian Settings) |
+| OpenAI | `openai` | API key (set in Obsidian Settings) |
+| Google Gemini | `gemini` | API key (set in Obsidian Settings) |
+| Groq | `groq` | API key (set in Obsidian Settings) |
 | Ollama (local) | `ollama` | none — requires Ollama running at `localhost:11434` |
-
-Switch providers by editing `llm.intelligence.provider` in `agent/vault_config.yaml`.
 
 ---
 
 ## Configuration
 
-All agent behavior (paths, LLM provider, field counts) is controlled from `agent/vault_config.yaml`.
+Everything is configured from **Obsidian Settings → Morning OS**:
 
-All plugin paths (briefs dir, daily note dir, reactions dir, wins header) are configurable from the plugin's Settings tab in Obsidian.
+- **Briefing agent** — repo path, daily run time, manual run button
+- **AI provider / Fallback AI** — provider, model, credentials
+- **Vault paths** — all source file and output folder paths
+- **Section headings** — heading names used in your daily note and goals file
+- **How many items to show** — counts for each field
+- **AI vs direct mode** — per-field toggle between AI-picked and verbatim-from-vault

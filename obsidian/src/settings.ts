@@ -1,4 +1,5 @@
-import { App, PluginSettingTab, Setting } from "obsidian";
+import { App, PluginSettingTab, Setting, Notice } from "obsidian";
+import { spawnAgent } from "./agent-runner";
 import type MorningOSPlugin from "./main";
 
 export interface MorningOSSettings {
@@ -24,6 +25,11 @@ export interface MorningOSSettings {
   // Goals file section headings
   goalsShortTerm: string;
   goalsLongTerm: string;
+
+  // Agent runner
+  agentRepoPath: string;
+  agentRunTime: string;
+  agentLastRunDate: string;
 
   // Field modes (true = llm, false = direct)
   modeTacticalRules: boolean;
@@ -117,6 +123,10 @@ export const DEFAULT_SETTINGS: MorningOSSettings = {
   geminiApiKey: "",
   groqApiKey: "",
 
+  agentRepoPath: "",
+  agentRunTime: "07:00",
+  agentLastRunDate: "",
+
   tacticalRulesCount: 4,
   identityRulesCount: 3,
   goalsShortTermCount: 2,
@@ -151,12 +161,61 @@ export class MorningOSSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
+    this.renderAgentSection(containerEl);
     this.renderAISection(containerEl);
     this.renderFallbackSection(containerEl);
     this.renderPathsSection(containerEl);
     this.renderHeadingsSection(containerEl);
     this.renderCountsSection(containerEl);
     this.renderModesSection(containerEl);
+  }
+
+  private renderAgentSection(containerEl: HTMLElement) {
+    containerEl.createEl("h3", { text: "Briefing agent" });
+
+    new Setting(containerEl)
+      .setName("Repo path")
+      .setDesc("Absolute path to the Morning OS repo folder (the one that contains the agent/ directory).")
+      .addText((text) =>
+        text
+          .setPlaceholder("C:/path/to/Morning-OS")
+          .setValue(this.plugin.settings.agentRepoPath)
+          .onChange(async (value) => { await this.save({ agentRepoPath: value.trim() }); })
+      );
+
+    new Setting(containerEl)
+      .setName("Daily run time")
+      .setDesc("Time to automatically run the agent each day (24h format, e.g. 07:00).")
+      .addText((text) =>
+        text
+          .setPlaceholder("07:00")
+          .setValue(this.plugin.settings.agentRunTime)
+          .onChange(async (value) => { await this.save({ agentRunTime: value.trim() }); })
+      );
+
+    new Setting(containerEl)
+      .setName("Run agent now")
+      .setDesc("Manually trigger the briefing agent.")
+      .addButton((btn) =>
+        btn
+          .setButtonText("Run")
+          .onClick(async () => {
+            if (!this.plugin.settings.agentRepoPath) {
+              new Notice("Set the repo path first.");
+              return;
+            }
+            btn.setButtonText("Running…");
+            btn.setDisabled(true);
+            try {
+              await this.plugin.triggerAgent();
+              btn.setButtonText("Done ✓");
+            } catch {
+              btn.setButtonText("Failed ✗");
+            } finally {
+              setTimeout(() => { btn.setButtonText("Run"); btn.setDisabled(false); }, 3000);
+            }
+          })
+      );
   }
 
   private renderAISection(containerEl: HTMLElement) {

@@ -28,6 +28,13 @@ export class MorningView extends ItemView {
 
   async onClose() {}
 
+  async refresh() {
+    await this.loadBrief();
+    await this.loadWins();
+    await this.loadSuggestionReaction();
+    this.render();
+  }
+
   private async loadBrief() {
     const d = new Date();
     const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
