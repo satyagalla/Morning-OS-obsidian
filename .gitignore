@@ -1,5 +1,9 @@
 # Dependencies
 node_modules/
+obsidian/
+
+# Legacy Python agent (ported to TypeScript)
+agent/
 
 # Environment
 .env
