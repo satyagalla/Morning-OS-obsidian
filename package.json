@@ -8,7 +8,7 @@
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production"
   },
   "keywords": [],
-  "author": "Akhil Satya Galla",
+  "author": "Satya Akhil Galla",
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^20.0.0",
