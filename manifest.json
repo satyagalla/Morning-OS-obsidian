@@ -3,7 +3,7 @@
   "name": "Morning OS",
   "version": "0.1.0",
   "minAppVersion": "1.0.0",
-  "description": "Daily briefing dashboard that surfaces tasks, goals, and AI insights from your Obsidian vault",
+  "description": "Daily briefing dashboard that surfaces tasks, goals, and AI insights from your vault.",
   "author": "Satya Akhil Galla",
   "authorUrl": "https://github.com/satyagalla",
   "isDesktopOnly": false

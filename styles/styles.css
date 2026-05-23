@@ -183,8 +183,9 @@
   margin-top: 0;
 }
 
-.morning-os-red-heading {
-  color: var(--text-error) !important;
+.morning-os .morning-os-red-heading,
+.morning-os-wrapper .morning-os-red-heading {
+  color: var(--text-error);
 }
 
 /* ── Cards ── */
@@ -403,7 +404,7 @@
 }
 
 .morning-os-hobby-list li::before {
-  content: none !important;
+  content: none;
 }
 
 /* ── Wins ── */
