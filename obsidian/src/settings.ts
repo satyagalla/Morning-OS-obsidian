@@ -1,5 +1,4 @@
-import { App, PluginSettingTab, Setting, Notice } from "obsidian";
-import { spawnAgent } from "./agent-runner";
+import { App, PluginSettingTab, Setting } from "obsidian";
 import type MorningOSPlugin from "./main";
 
 export interface MorningOSSettings {
@@ -27,7 +26,6 @@ export interface MorningOSSettings {
   goalsLongTerm: string;
 
   // Agent runner
-  agentRepoPath: string;
   agentRunTime: string;
   agentLastRunDate: string;
 
@@ -45,12 +43,6 @@ export interface MorningOSSettings {
   intelligenceProvider: string;
   intelligenceModel: string;
   intelligenceRegion: string;
-  intelligenceBaseUrl: string;
-
-  // Fallback LLM
-  fallbackProvider: string;
-  fallbackModel: string;
-  fallbackBaseUrl: string;
 
   // Credentials
   awsAccessKeyId: string;
@@ -78,7 +70,6 @@ export const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
   openai: "gpt-4o",
   gemini: "gemini-2.0-flash",
   groq: "llama-3.3-70b-versatile",
-  ollama: "qwen2.5:7b",
 };
 
 export const DEFAULT_SETTINGS: MorningOSSettings = {
@@ -113,11 +104,6 @@ export const DEFAULT_SETTINGS: MorningOSSettings = {
   intelligenceProvider: "bedrock",
   intelligenceModel: "us.anthropic.claude-sonnet-4-6",
   intelligenceRegion: "us-east-2",
-  intelligenceBaseUrl: "",
-
-  fallbackProvider: "ollama",
-  fallbackModel: "qwen2.5:7b",
-  fallbackBaseUrl: "http://localhost:11434",
 
   awsAccessKeyId: "",
   awsSecretAccessKey: "",
@@ -126,7 +112,6 @@ export const DEFAULT_SETTINGS: MorningOSSettings = {
   geminiApiKey: "",
   groqApiKey: "",
 
-  agentRepoPath: "",
   agentRunTime: "07:00",
   agentLastRunDate: "",
 
@@ -146,7 +131,6 @@ const PROVIDERS = {
   openai: "OpenAI",
   gemini: "Google Gemini",
   groq: "Groq",
-  ollama: "Ollama (local)",
 };
 
 export class MorningOSSettingTab extends PluginSettingTab {
@@ -207,7 +191,6 @@ export class MorningOSSettingTab extends PluginSettingTab {
 
     this.renderAgentSection(containerEl);
     this.renderAISection(containerEl);
-    this.renderFallbackSection(containerEl);
     this.renderPathsSection(containerEl);
     this.renderHeadingsSection(containerEl);
     this.renderCountsSection(containerEl);
@@ -216,16 +199,6 @@ export class MorningOSSettingTab extends PluginSettingTab {
 
   private renderAgentSection(containerEl: HTMLElement) {
     this.sectionHeading(containerEl, "Briefing agent");
-
-    new Setting(containerEl)
-      .setName("Repo path")
-      .setDesc("Absolute path to the Morning OS repo folder (the one that contains the agent/ directory).")
-      .addText((text) =>
-        text
-          .setPlaceholder("C:/path/to/Morning-OS")
-          .setValue(this.plugin.settings.agentRepoPath)
-          .onChange(async (value) => { await this.save({ agentRepoPath: value.trim() }); })
-      );
 
     new Setting(containerEl)
       .setName("Daily run time")
@@ -251,10 +224,6 @@ export class MorningOSSettingTab extends PluginSettingTab {
         btn
           .setButtonText("Run")
           .onClick(async () => {
-            if (!this.plugin.settings.agentRepoPath) {
-              new Notice("Set the repo path first.");
-              return;
-            }
             btn.setButtonText("Running…");
             btn.setDisabled(true);
             try {
@@ -285,7 +254,6 @@ export class MorningOSSettingTab extends PluginSettingTab {
               intelligenceProvider: value,
               intelligenceModel: PROVIDER_DEFAULT_MODELS[value] ?? "",
               intelligenceRegion: value === "bedrock" ? (this.plugin.settings.awsRegion || "us-east-2") : "",
-              intelligenceBaseUrl: value === "ollama" ? (this.plugin.settings.intelligenceBaseUrl || "http://localhost:11434") : "",
             }, "AI provider");
             this.display();
           })
@@ -361,60 +329,6 @@ export class MorningOSSettingTab extends PluginSettingTab {
         });
     }
 
-    if (p === "ollama") {
-      new Setting(containerEl)
-        .setName("Ollama base URL")
-        .setDesc("Where Ollama is running.")
-        .addText((text) =>
-          text
-            .setPlaceholder("http://localhost:11434")
-            .setValue(this.plugin.settings.intelligenceBaseUrl)
-            .onChange(async (value) => { await this.save({ intelligenceBaseUrl: value }, "AI provider"); })
-        );
-    }
-  }
-
-  private renderFallbackSection(containerEl: HTMLElement) {
-    this.sectionHeading(containerEl, "Fallback AI");
-    containerEl.createEl("p", {
-      cls: "setting-item-description",
-      text: "Used only when the vault parser finds no tasks or goals. Ollama (local) is recommended here to avoid extra cloud costs.",
-    });
-
-    new Setting(containerEl)
-      .setName("Provider")
-      .addDropdown((dd) =>
-        dd
-          .addOptions(PROVIDERS)
-          .setValue(this.plugin.settings.fallbackProvider)
-          .onChange(async (value) => {
-            await this.save({
-              fallbackProvider: value,
-              fallbackModel: PROVIDER_DEFAULT_MODELS[value] ?? "",
-              fallbackBaseUrl: value === "ollama" ? (this.plugin.settings.fallbackBaseUrl || "http://localhost:11434") : "",
-            }, "Fallback AI");
-            this.display();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Model")
-      .addText((text) =>
-        text
-          .setValue(this.plugin.settings.fallbackModel)
-          .onChange(async (value) => { await this.save({ fallbackModel: value }, "Fallback AI"); })
-      );
-
-    if (this.plugin.settings.fallbackProvider === "ollama") {
-      new Setting(containerEl)
-        .setName("Ollama base URL")
-        .addText((text) =>
-          text
-            .setPlaceholder("http://localhost:11434")
-            .setValue(this.plugin.settings.fallbackBaseUrl)
-            .onChange(async (value) => { await this.save({ fallbackBaseUrl: value }, "Fallback AI"); })
-        );
-    }
   }
 
   private renderPathsSection(containerEl: HTMLElement) {

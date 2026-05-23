@@ -1,7 +1,16 @@
 import { Plugin, WorkspaceLeaf, Notice } from "obsidian";
 import { MorningView, VIEW_TYPE_MORNING } from "./view";
 import { MorningOSSettings, DEFAULT_SETTINGS, MorningOSSettingTab } from "./settings";
-import { spawnAgent, parseRunTime } from "./agent-runner";
+import { runAgent } from "./agent/run";
+
+function parseRunTime(timeStr: string): { hour: number; minute: number } | null {
+  const match = timeStr.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  const hour = parseInt(match[1], 10);
+  const minute = parseInt(match[2], 10);
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+  return { hour, minute };
+}
 
 export default class MorningOSPlugin extends Plugin {
   settings: MorningOSSettings;
@@ -58,16 +67,12 @@ export default class MorningOSPlugin extends Plugin {
       new Notice("Morning OS: agent is already running.");
       return;
     }
-    if (!this.settings.agentRepoPath) {
-      new Notice("Morning OS: set the repo path in Settings first.");
-      return;
-    }
 
     this.agentRunning = true;
     new Notice("Morning OS: running briefing agent…");
 
     try {
-      await spawnAgent(this.settings.agentRepoPath);
+      await runAgent(this.app, this.settings);
       const today = this.todayStr();
       this.settings.agentLastRunDate = today;
       await this.saveData(this.settings);
@@ -85,7 +90,6 @@ export default class MorningOSPlugin extends Plugin {
   }
 
   private async maybeAutoRun() {
-    if (!this.settings.agentRepoPath) return;
     if (!this.settings.agentRunTime) return;
 
     const parsed = parseRunTime(this.settings.agentRunTime);

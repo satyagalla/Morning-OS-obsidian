@@ -7,7 +7,6 @@ node_modules/
 .venv/
 
 # Build output
-plugin/main.js
 
 # OS
 .DS_Store
@@ -27,6 +26,7 @@ __pycache__/
 agent/agent.log
 agent/SPEC.md
 PUBLISH.md
+IMPLEMENT.md
 
 # Mock data
 mock-data/
