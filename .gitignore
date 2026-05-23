@@ -1,12 +1,9 @@
-# Environment                                                                                                                                                             
-.env     
-.claude/                                                                                                                                                                 
-                                                                                                                                                                        
 # Dependencies
 node_modules/
-.venv/
 
-# Build output
+# Environment
+.env
+.claude/
 
 # OS
 .DS_Store
@@ -17,16 +14,6 @@ desktop.ini
 .vscode/
 .idea/
 
-# Python
-__pycache__/
-*.pyc
-.venv/
-
-# Agent
-agent/agent.log
-agent/SPEC.md
-PUBLISH.md
+# Dev docs (not shipped)
 IMPLEMENT.md
-
-# Mock data
-mock-data/
+PUBLISH.md
