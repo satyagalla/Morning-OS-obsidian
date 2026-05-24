@@ -1,9 +1,10 @@
 import { App } from "obsidian";
 import type { MorningOSSettings } from "../settings";
+import type { TaskItem } from "./vault-reader";
 import { fuzzyMatch } from "./carry-detector";
 
 export async function computeFeedback(
-  todayTasks: { red_alert: string[]; regular: string[] },
+  todayTasks: { red_alert: TaskItem[]; regular: TaskItem[] },
   todayStr: string,
   app: App,
   settings: MorningOSSettings
@@ -25,8 +26,8 @@ export async function computeFeedback(
   }
 
   const todayAllTexts: string[] = [
-    ...todayTasks.red_alert,
-    ...todayTasks.regular,
+    ...todayTasks.red_alert.filter(t => !t.done).map(t => t.text),
+    ...todayTasks.regular.filter(t => !t.done).map(t => t.text),
   ];
 
   const yesterdayAllTasks: { text: string; carried_from?: string | null }[] = [

@@ -1,5 +1,6 @@
 import { App } from "obsidian";
 import type { MorningOSSettings } from "../settings";
+import type { TaskItem } from "./vault-reader";
 
 export interface TaskWithCarry {
   text: string;
@@ -44,7 +45,7 @@ export function fuzzyMatch(a: string, b: string): boolean {
 }
 
 export async function detectCarries(
-  todayTasks: { red_alert: string[]; regular: string[] },
+  todayTasks: { red_alert: TaskItem[]; regular: TaskItem[] },
   todayStr: string,
   app: App,
   settings: MorningOSSettings
@@ -73,15 +74,16 @@ export async function detectCarries(
   const result: CarriedTasks = { red_alert: [], regular: [] };
 
   for (const category of ["red_alert", "regular"] as const) {
-    for (const taskText of todayTasks[category]) {
+    for (const task of todayTasks[category]) {
+      if (task.done) continue;
       let carriedFrom: string | null = null;
       for (const prev of yesterdayTasks) {
-        if (fuzzyMatch(taskText, prev.text)) {
+        if (fuzzyMatch(task.text, prev.text)) {
           carriedFrom = prev.carried_from ?? yesterdayStr;
           break;
         }
       }
-      result[category].push({ text: taskText, carried_from: carriedFrom });
+      result[category].push({ text: task.text, carried_from: carriedFrom });
     }
   }
 

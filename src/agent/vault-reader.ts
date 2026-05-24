@@ -1,10 +1,15 @@
 import { App, TFile } from "obsidian";
 import type { MorningOSSettings } from "../settings";
 
+export interface TaskItem {
+  text: string;
+  done: boolean;
+}
+
 export interface ParsedTasks {
-  red_alert: string[];
-  regular: string[];
-  wins: string[];
+  red_alert: TaskItem[];
+  regular: TaskItem[];
+  wins: TaskItem[];
 }
 
 export interface ParsedGoals {
@@ -32,21 +37,29 @@ function isAnyHeader(line: string): boolean {
   return false;
 }
 
-function parseBullet(line: string): string | null {
+function parseBullet(line: string): TaskItem | null {
   if (!line) return null;
 
-  let match = line.match(/^-\s*\[.\]\s*(.*)/);
-  if (!match) match = line.match(/^-\s+(.*)/);
-  if (!match) return null;
+  const checkboxMatch = line.match(/^-\s*\[([xX ])\]\s*(.*)/);
+  let text: string;
+  let done = false;
 
-  const text = match[1].trim();
+  if (checkboxMatch) {
+    done = checkboxMatch[1] !== " ";
+    text = checkboxMatch[2].trim();
+  } else {
+    const plainMatch = line.match(/^-\s+(.*)/);
+    if (!plainMatch) return null;
+    text = plainMatch[1].trim();
+  }
+
   if (!text) return null;
   if (text.startsWith("~~") && text.endsWith("~~")) return null;
 
-  return text;
+  return { text, done };
 }
 
-function extractSection(content: string, headerName: string, variants?: string[]): string[] {
+function extractSection(content: string, headerName: string, variants?: string[]): TaskItem[] {
   const lines = content.split("\n");
   const namesToCheck = [headerName, ...(variants ?? [])];
 
@@ -63,7 +76,7 @@ function extractSection(content: string, headerName: string, variants?: string[]
 
   if (startIdx === null) return [];
 
-  const items: string[] = [];
+  const items: TaskItem[] = [];
   for (let i = startIdx; i < lines.length; i++) {
     const stripped = lines[i].trim();
     if (stripped && (stripped.startsWith("#") || isAnyHeader(stripped))) break;
@@ -78,7 +91,7 @@ function parseAllBullets(content: string): string[] {
   const items: string[] = [];
   for (const line of content.split("\n")) {
     const item = parseBullet(line.trim());
-    if (item !== null) items.push(item);
+    if (item !== null) items.push(item.text);
   }
   return items;
 }
@@ -118,7 +131,7 @@ export async function parseYesterdayWins(
   const content = await readVaultFile(path, app);
   if (content === null) return [];
 
-  return extractSection(content, settings.sectionWins, WINS_VARIANTS);
+  return extractSection(content, settings.sectionWins, WINS_VARIANTS).map(item => item.text);
 }
 
 export async function parseBulletFile(filePath: string, app: App): Promise<string[]> {
@@ -131,8 +144,8 @@ export async function parseGoals(app: App, settings: MorningOSSettings): Promise
   const content = await readVaultFile(settings.sourceGoals, app);
   if (content === null) return { short_term: [], long_term: [] };
 
-  const shortTerm = extractSection(content, settings.goalsShortTerm);
-  const longTerm = extractSection(content, settings.goalsLongTerm);
+  const shortTerm = extractSection(content, settings.goalsShortTerm).map(item => item.text);
+  const longTerm = extractSection(content, settings.goalsLongTerm).map(item => item.text);
 
   return { short_term: shortTerm, long_term: longTerm };
 }
