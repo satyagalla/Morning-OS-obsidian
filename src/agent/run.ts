@@ -37,6 +37,39 @@ export async function runAgent(app: App, settings: MorningOSSettings): Promise<v
       parseYesterdayWins(dateStr, app, settings),
     ]);
 
+  const allTaskItems = [...dailyData.red_alert, ...dailyData.regular, ...dailyData.wins];
+  const newReminders = allTaskItems
+    .filter(t => t.remind_date)
+    .map(t => ({
+      text: t.text,
+      source_date: dateStr,
+      remind_date: t.remind_date!,
+      dismissed: false,
+    }));
+
+  const remindersPath = `${settings.briefsDir}/reminders.json`;
+  let allReminders: Array<{ text: string; source_date: string; remind_date: string; dismissed: boolean }> = [];
+  const remindersExist = await app.vault.adapter.exists(remindersPath);
+  if (remindersExist) {
+    try {
+      allReminders = JSON.parse(await app.vault.adapter.read(remindersPath));
+    } catch {}
+  }
+
+  for (const nr of newReminders) {
+    const exists = allReminders.some(
+      r => r.text === nr.text && r.remind_date === nr.remind_date && r.source_date === nr.source_date
+    );
+    if (!exists) allReminders.push(nr);
+  }
+
+  await app.vault.adapter.mkdir(settings.briefsDir);
+  await app.vault.adapter.write(remindersPath, JSON.stringify(allReminders, null, 2));
+
+  const activeReminders = allReminders
+    .filter(r => !r.dismissed && r.remind_date <= dateStr)
+    .map(r => ({ text: r.text, source_date: r.source_date, remind_date: r.remind_date }));
+
   const carriedTasks = await detectCarries(
     { red_alert: dailyData.red_alert, regular: dailyData.regular },
     dateStr,
@@ -110,10 +143,9 @@ export async function runAgent(app: App, settings: MorningOSSettings): Promise<v
     technicalTasks,
     yesterdayWins,
     llmOutput,
-    settings
+    settings,
+    activeReminders
   );
-
-  await app.vault.adapter.mkdir(settings.briefsDir);
   await app.vault.adapter.write(
     `${settings.briefsDir}/${dateStr}.json`,
     JSON.stringify(brief, null, 2)

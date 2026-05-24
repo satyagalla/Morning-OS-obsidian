@@ -19,5 +19,4 @@ desktop.ini
 .idea/
 
 # Dev docs (not shipped)
-IMPLEMENT.md
-PUBLISH.md
+plans/

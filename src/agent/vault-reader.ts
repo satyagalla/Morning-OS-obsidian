@@ -4,6 +4,7 @@ import type { MorningOSSettings } from "../settings";
 export interface TaskItem {
   text: string;
   done: boolean;
+  remind_date?: string | null;
 }
 
 export interface ParsedTasks {
@@ -56,7 +57,13 @@ function parseBullet(line: string): TaskItem | null {
   if (!text) return null;
   if (text.startsWith("~~") && text.endsWith("~~")) return null;
 
-  return { text, done };
+  const remindMatch = text.match(/@remind\((\d{4}-\d{2}-\d{2})\)/);
+  const remind_date = remindMatch ? remindMatch[1] : null;
+  if (remindMatch) {
+    text = text.replace(/@remind\([^)]*\)/, "").trim();
+  }
+
+  return { text, done, remind_date };
 }
 
 function extractSection(content: string, headerName: string, variants?: string[]): TaskItem[] {

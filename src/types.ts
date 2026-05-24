@@ -8,6 +8,12 @@ export interface Suggestion {
   source: string;
 }
 
+export interface Reminder {
+  text: string;
+  source_date: string;
+  remind_date: string;
+}
+
 export interface DailyBrief {
   date: string;
   meta: {
@@ -32,4 +38,5 @@ export interface DailyBrief {
   hobby_tasks: string[];
   suggestions: Suggestion[];
   wins: string[];
+  reminders?: Reminder[];
 }

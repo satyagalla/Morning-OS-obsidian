@@ -1,5 +1,5 @@
 import type { MorningOSSettings } from "../settings";
-import type { DailyBrief } from "../types";
+import type { DailyBrief, Reminder } from "../types";
 import type { CarriedTasks } from "./carry-detector";
 import type { ParsedGoals } from "./vault-reader";
 
@@ -21,7 +21,8 @@ export function assembleBrief(
   allTechnicalTasks: string[],
   yesterdayWins: string[],
   llmOutput: LLMOutput | null,
-  settings: MorningOSSettings
+  settings: MorningOSSettings,
+  reminders: Reminder[] = []
 ): DailyBrief {
   const tacticalRules =
     settings.modeTacticalRules && llmOutput?.tactical_rules
@@ -69,5 +70,6 @@ export function assembleBrief(
     hobby_tasks: hobbyTasks,
     suggestions,
     wins: yesterdayWins,
+    reminders,
   };
 }

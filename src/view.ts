@@ -1,5 +1,5 @@
 import { ItemView, WorkspaceLeaf, TFile } from "obsidian";
-import { DailyBrief, Task } from "./types";
+import { DailyBrief, Task, Reminder } from "./types";
 import { MorningOSSettings } from "./settings";
 
 export const VIEW_TYPE_MORNING = "morning-os-view";
@@ -117,6 +117,7 @@ export class MorningView extends ItemView {
     const left = body.createEl("div", { cls: "morning-os-left" });
     const right = body.createEl("div", { cls: "morning-os-right" });
 
+    this.renderReminders(left);
     this.renderTasks(left);
     this.renderTacticalRules(right);
     this.renderSuggestion(right);
@@ -288,6 +289,45 @@ export class MorningView extends ItemView {
       try { await this.app.vault.createFolder(dir); } catch {}
       await this.app.vault.create(filePath, payload);
     }
+  }
+
+  private renderReminders(parent: HTMLElement) {
+    if (!this.brief?.reminders?.length) return;
+
+    parent.createEl("h2", { cls: "morning-os-section-heading", text: "Reminders" });
+    const card = parent.createEl("div", { cls: "morning-os-card" });
+
+    for (const reminder of this.brief.reminders) {
+      const row = card.createEl("div", { cls: "morning-os-task-row" });
+      const checkbox = row.createEl("input", { type: "checkbox" });
+      row.createEl("span", { cls: "morning-os-task-text", text: reminder.text });
+      row.createEl("span", {
+        cls: "morning-os-carried-badge",
+        text: `noted ${reminder.source_date}`,
+      });
+      checkbox.addEventListener("change", async () => {
+        row.toggleClass("morning-os-task-done", checkbox.checked);
+        if (checkbox.checked) {
+          await this.dismissReminder(reminder.text, reminder.source_date, reminder.remind_date);
+        }
+      });
+    }
+  }
+
+  private async dismissReminder(text: string, sourceDate: string, remindDate: string) {
+    const remindersPath = `${this.settings.briefsDir}/reminders.json`;
+    const exists = await this.app.vault.adapter.exists(remindersPath);
+    if (!exists) return;
+
+    try {
+      const data = JSON.parse(await this.app.vault.adapter.read(remindersPath));
+      for (const r of data) {
+        if (r.text === text && r.source_date === sourceDate && r.remind_date === remindDate) {
+          r.dismissed = true;
+        }
+      }
+      await this.app.vault.adapter.write(remindersPath, JSON.stringify(data, null, 2));
+    } catch {}
   }
 
   private renderPendingTasks(parent: HTMLElement) {
