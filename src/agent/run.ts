@@ -1,6 +1,6 @@
 import { App, Notice } from "obsidian";
 import type { MorningOSSettings } from "../settings";
-import { parseDailyNote, parseYesterdayWins, parseBulletFile, parseGoals } from "./vault-reader";
+import { parseDailyNote, parseYesterdayWins, parseCompletedTasks, parseBulletFile, parseGoals } from "./vault-reader";
 import { detectCarries } from "./carry-detector";
 import { computeFeedback } from "./feedback";
 import { callLLM } from "./llm";
@@ -27,7 +27,11 @@ export async function runAgent(app: App, settings: MorningOSSettings): Promise<v
     throw new Error(`No daily note found for ${dateStr}. Create ${settings.dailyNoteDir}/${dateStr}.md first.`);
   }
 
-  const [tacticalRules, emotionalRules, technicalTasks, hobbyTasksRaw, goals, yesterdayWins] =
+  const d = new Date(dateStr + "T12:00:00");
+  d.setDate(d.getDate() - 1);
+  const yesterdayStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+  const [tacticalRules, emotionalRules, technicalTasks, hobbyTasksRaw, goals, yesterdayWins, yesterdayCompleted] =
     await Promise.all([
       parseBulletFile(settings.sourceTacticalRules, app),
       parseBulletFile(settings.sourceEmotionalRules, app),
@@ -35,6 +39,7 @@ export async function runAgent(app: App, settings: MorningOSSettings): Promise<v
       parseBulletFile(settings.sourceHobbyTasks, app),
       parseGoals(app, settings),
       parseYesterdayWins(dateStr, app, settings),
+      parseCompletedTasks(yesterdayStr, app, settings),
     ]);
 
   const allTaskItems = [...dailyData.red_alert, ...dailyData.regular, ...dailyData.wins];
@@ -109,9 +114,9 @@ export async function runAgent(app: App, settings: MorningOSSettings): Promise<v
       emotionalRules: emotionalRules.map(r => `- ${r}`).join("\n") || "None",
       shortTermGoals: goals.short_term.map(g => `- ${g}`).join("\n") || "None",
       longTermGoals: goals.long_term.map(g => `- ${g}`).join("\n") || "None",
-      technicalTasks: technicalTasks.slice(0, settings.technicalTasksCount).map(t => `- ${t}`).join("\n") || "None",
-      hobbyTasks: hobbyTasksRaw.map(t => `- ${t}`).join("\n") || "None",
+      technicalTasks: technicalTasks.map(t => `- ${t}`).join("\n") || "None",
       yesterdayWins: yesterdayWins.map(w => `- ${w}`).join("\n") || "None",
+      yesterdayCompleted: yesterdayCompleted.map(t => `- ${t}`).join("\n") || "None",
       tacticalRulesCount: settings.tacticalRulesCount,
       identityRulesCount: settings.identityRulesCount,
       suggestionCount: settings.suggestionCount,

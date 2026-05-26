@@ -141,6 +141,18 @@ export async function parseYesterdayWins(
   return extractSection(content, settings.sectionWins, WINS_VARIANTS).map(item => item.text);
 }
 
+export async function parseCompletedTasks(
+  dateStr: string,
+  app: App,
+  settings: MorningOSSettings
+): Promise<string[]> {
+  const result = await parseDailyNote(dateStr, app, settings);
+  if (result === null) return [];
+  return [...result.red_alert, ...result.regular]
+    .filter(t => t.done)
+    .map(t => t.text);
+}
+
 export async function parseBulletFile(filePath: string, app: App): Promise<string[]> {
   const content = await readVaultFile(filePath, app);
   if (content === null) return [];

@@ -9,8 +9,8 @@ export interface UserPromptData {
   shortTermGoals: string;
   longTermGoals: string;
   technicalTasks: string;
-  hobbyTasks: string;
   yesterdayWins: string;
+  yesterdayCompleted: string;
   tacticalRulesCount: number;
   identityRulesCount: number;
   suggestionCount: number;
@@ -37,14 +37,14 @@ ${data.emotionalRules}
 Short-term: ${data.shortTermGoals}
 Long-term: ${data.longTermGoals}
 
-## Technical Tasks Backlog (pick 2-3 light/fun ones for guilt-free downtime)
+## Technical Tasks Backlog (full list — use for suggestions on what to tackle next)
 ${data.technicalTasks}
-
-## Hobby Tasks
-${data.hobbyTasks}
 
 ## Yesterday's Wins
 ${data.yesterdayWins}
+
+## Yesterday's Completed Tasks
+${data.yesterdayCompleted}
 
 Respond in this EXACT JSON format (no other text):
 {
@@ -61,7 +61,7 @@ Respond in this EXACT JSON format (no other text):
 Rules for your response:
 - tactical_rules: Pick ${data.tacticalRulesCount} from the tactical list that are DIRECTLY relevant to today's tasks. Copy them VERBATIM — do not rephrase or generate new rules.
 - identity_rules: Pick exactly ${data.identityRulesCount} from the emotional rules list. Copy them VERBATIM — do not rephrase or generate new rules.
-- suggestions: Generate exactly ${data.suggestionCount} short insights (1-2 sentences each). This is the ONLY field where you may generate new text. Each suggestion should point out a stale carried task, connect a goal to a task, or surface a pattern (e.g., avoidance). Source = the vault file path most relevant to the insight.
+- suggestions: Generate exactly ${data.suggestionCount} short insights (1-2 sentences each). This is the ONLY field where you may generate new text. Use Yesterday's Wins and Yesterday's Completed Tasks to understand momentum — what went well, what got done. Suggest what to tackle next by drawing from the Technical Tasks Backlog in relation to today's tasks and goals. Also point out stale carried tasks or surface patterns (e.g., avoidance). Source = the vault file path most relevant to the insight.
 - hobby_tasks: Pick ${data.hobbyTasksCount} items from the Hobby Tasks list provided. Copy them VERBATIM — do not generate new tasks. If the list is empty, return [].
 - goals: Copy the short_term and long_term goals VERBATIM — do not rephrase or generate new goals. Keep the same count as input.`;
 }
