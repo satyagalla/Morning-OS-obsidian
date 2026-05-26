@@ -1,7 +1,13 @@
 import esbuild from "esbuild";
 import process from "process";
+import fs from "fs";
+import path from "path";
 
 const prod = process.argv[2] === "production";
+const watch = process.argv[2] === "watch";
+const deploy = process.argv[2] === "deploy";
+
+const PLUGIN_DIR = process.env.OBSIDIAN_PLUGIN_DIR ?? "D:/Productivity/OS/.obsidian/plugins/morning-os";
 
 const builtins = [
   "assert", "buffer", "child_process", "cluster", "console", "constants",
@@ -11,7 +17,26 @@ const builtins = [
   "timers", "tls", "tty", "url", "util", "v8", "vm", "worker_threads", "zlib",
 ];
 
-esbuild.build({
+function copyToVault() {
+  if (!PLUGIN_DIR) return;
+  for (const file of ["main.js", "manifest.json"]) {
+    const src = path.resolve(file);
+    const dest = path.join(PLUGIN_DIR, file);
+    if (fs.existsSync(src)) {
+      fs.copyFileSync(src, dest);
+    }
+  }
+  console.log(`[deploy] copied to ${PLUGIN_DIR}`);
+}
+
+const copyPlugin = {
+  name: "copy-to-vault",
+  setup(build) {
+    build.onEnd(() => { if (watch || deploy) copyToVault(); });
+  },
+};
+
+const ctx = await esbuild.context({
   entryPoints: ["src/main.ts"],
   bundle: true,
   external: [
@@ -33,8 +58,18 @@ esbuild.build({
   format: "cjs",
   target: "es2018",
   logLevel: "info",
-  sourcemap: prod ? false : "inline",
+  sourcemap: (prod || deploy) ? false : "inline",
   treeShaking: true,
   outfile: "main.js",
-  minify: prod,
-}).catch(() => process.exit(1));
+  minify: prod || deploy,
+  plugins: [copyPlugin],
+});
+
+if (watch) {
+  await ctx.watch();
+  console.log("[watch] watching for changes...");
+} else {
+  await ctx.rebuild();
+  await ctx.dispose();
+}
+

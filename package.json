@@ -4,8 +4,9 @@
   "description": "Personal Knowledge OS - Morning briefing dashboard for Obsidian",
   "main": "main.js",
   "scripts": {
-    "dev": "node esbuild.config.mjs",
-    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production"
+    "dev": "node esbuild.config.mjs watch",
+    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+    "deploy": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs deploy"
   },
   "keywords": [],
   "author": "Satya Akhil Galla",
