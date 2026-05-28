@@ -94,7 +94,10 @@ export async function runAgent(app: App, settings: MorningOSSettings): Promise<v
     settings.modeIdentityRules ||
     settings.modeGoals ||
     settings.modeHobbyTasks ||
-    settings.modeSuggestion;
+    settings.modeSuggestion ||
+    settings.modeTechnicalTasks ||
+    settings.modeTasks ||
+    settings.modeWins;
 
   let llmOutput: LLMOutput | null = null;
 
@@ -115,16 +118,29 @@ export async function runAgent(app: App, settings: MorningOSSettings): Promise<v
       shortTermGoals: goals.short_term.map(g => `- ${g}`).join("\n") || "None",
       longTermGoals: goals.long_term.map(g => `- ${g}`).join("\n") || "None",
       technicalTasks: technicalTasks.map(t => `- ${t}`).join("\n") || "None",
+      hobbyTasks: hobbyTasksRaw.map(t => `- ${t}`).join("\n") || "None",
       yesterdayWins: yesterdayWins.map(w => `- ${w}`).join("\n") || "None",
       yesterdayCompleted: yesterdayCompleted.map(t => `- ${t}`).join("\n") || "None",
       tacticalRulesCount: settings.tacticalRulesCount,
       identityRulesCount: settings.identityRulesCount,
       suggestionCount: settings.suggestionCount,
       hobbyTasksCount: settings.hobbyTasksCount,
+      technicalTasksCount: settings.technicalTasksCount,
+      modeTacticalRules: settings.modeTacticalRules,
+      modeIdentityRules: settings.modeIdentityRules,
+      modeGoals: settings.modeGoals,
+      modeHobbyTasks: settings.modeHobbyTasks,
+      modeSuggestion: settings.modeSuggestion,
+      modeTechnicalTasks: settings.modeTechnicalTasks,
+      modeTasks: settings.modeTasks,
+      modeWins: settings.modeWins,
     });
+
+    // console.log("Morning OS — user prompt:\n", userPrompt);
 
     try {
       const raw = await callLLM(INTELLIGENCE_SYSTEM, userPrompt, settings);
+      // console.log("Morning OS — raw LLM response:\n", raw);
       llmOutput = parseLLMResponse(raw);
     } catch (err) {
       console.error("Morning OS LLM failed, retrying once:", err);

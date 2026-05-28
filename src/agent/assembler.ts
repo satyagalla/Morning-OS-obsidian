@@ -1,6 +1,6 @@
 import type { MorningOSSettings } from "../settings";
 import type { DailyBrief, Reminder } from "../types";
-import type { CarriedTasks } from "./carry-detector";
+import type { CarriedTasks, TaskWithCarry } from "./carry-detector";
 import type { ParsedGoals } from "./vault-reader";
 
 export interface LLMOutput {
@@ -9,6 +9,27 @@ export interface LLMOutput {
   suggestions?: { text: string; source: string }[];
   hobby_tasks?: string[];
   goals?: { short_term?: string[]; long_term?: string[] };
+  technical_tasks?: string[];
+  tasks?: { red_alert?: string[]; regular?: string[] };
+  wins?: string[];
+}
+
+function reorderTasks(
+  carried: TaskWithCarry[],
+  llmOrder: string[]
+): TaskWithCarry[] {
+  const result: TaskWithCarry[] = [];
+  const remaining = [...carried];
+
+  for (const text of llmOrder) {
+    const idx = remaining.findIndex(t => t.text === text);
+    if (idx !== -1) {
+      result.push(remaining.splice(idx, 1)[0]);
+    }
+  }
+  // Append any tasks the LLM omitted (safety net)
+  result.push(...remaining);
+  return result;
 }
 
 export function assembleBrief(
@@ -52,7 +73,23 @@ export function assembleBrief(
       ? llmOutput.suggestions.slice(0, settings.suggestionCount)
       : [];
 
-  const technicalTasks = allTechnicalTasks.slice(0, settings.technicalTasksCount);
+  const technicalTasks =
+    settings.modeTechnicalTasks && llmOutput?.technical_tasks
+      ? llmOutput.technical_tasks.slice(0, settings.technicalTasksCount)
+      : allTechnicalTasks.slice(0, settings.technicalTasksCount);
+
+  const tasks: CarriedTasks =
+    settings.modeTasks && llmOutput?.tasks
+      ? {
+          red_alert: reorderTasks(carriedTasks.red_alert, llmOutput.tasks.red_alert ?? []),
+          regular: reorderTasks(carriedTasks.regular, llmOutput.tasks.regular ?? []),
+        }
+      : carriedTasks;
+
+  const wins =
+    settings.modeWins && llmOutput?.wins
+      ? llmOutput.wins
+      : yesterdayWins;
 
   return {
     date: dateStr,
@@ -64,12 +101,12 @@ export function assembleBrief(
     },
     identity: { rules: identityRules },
     goals,
-    tasks: carriedTasks,
+    tasks,
     tactical_rules: tacticalRules,
     technical_tasks: technicalTasks,
     hobby_tasks: hobbyTasks,
     suggestions,
-    wins: yesterdayWins,
+    wins,
     reminders,
   };
 }
