@@ -64,7 +64,7 @@ export async function runAgent(app: App, settings: MorningOSSettings): Promise<v
 
   for (const nr of newReminders) {
     const exists = allReminders.some(
-      r => r.text === nr.text && r.remind_date === nr.remind_date && r.source_date === nr.source_date
+      r => r.text === nr.text && r.remind_date === nr.remind_date
     );
     if (!exists) allReminders.push(nr);
   }
