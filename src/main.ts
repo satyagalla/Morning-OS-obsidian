@@ -1,7 +1,7 @@
 import { Plugin, WorkspaceLeaf, Notice } from "obsidian";
 import { MorningView, VIEW_TYPE_MORNING } from "./view";
 import { MorningOSSettings, DEFAULT_SETTINGS, MorningOSSettingTab } from "./settings";
-import { runAgent } from "./agent/run";
+import { runAgent, refreshBrief } from "./agent/run";
 
 function parseRunTime(timeStr: string): { hour: number; minute: number } | null {
   const match = timeStr.match(/^(\d{1,2}):(\d{2})$/);
@@ -36,6 +36,12 @@ export default class MorningOSPlugin extends Plugin {
       id: "run-agent",
       name: "Run briefing agent",
       callback: () => this.triggerAgent(),
+    });
+
+    this.addCommand({
+      id: "morning-os-refresh",
+      name: "Refresh brief",
+      callback: () => this.triggerRefresh(),
     });
 
     this.settingTab = new MorningOSSettingTab(this.app, this);
@@ -86,6 +92,16 @@ export default class MorningOSPlugin extends Plugin {
       new Notice(`Morning OS: agent failed — ${(err as Error).message.slice(0, 120)}`);
     } finally {
       this.agentRunning = false;
+    }
+  }
+
+  async triggerRefresh(): Promise<void> {
+    try {
+      await refreshBrief(this.app, this.settings);
+      new Notice("Morning OS: brief refreshed ✓");
+      this.refreshView();
+    } catch (err) {
+      new Notice(`Morning OS: ${(err as Error).message}`);
     }
   }
 

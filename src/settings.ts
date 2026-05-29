@@ -237,6 +237,26 @@ export class MorningOSSettingTab extends PluginSettingTab {
             }
           })
       );
+
+    new Setting(containerEl)
+      .setName("Refresh brief")
+      .setDesc("Rebuild the brief from current vault files without calling the AI.")
+      .addButton((btn) =>
+        btn
+          .setButtonText("Refresh")
+          .onClick(async () => {
+            btn.setButtonText("Refreshing…");
+            btn.setDisabled(true);
+            try {
+              await this.plugin.triggerRefresh();
+              btn.setButtonText("Done ✓");
+            } catch {
+              btn.setButtonText("Failed ✗");
+            } finally {
+              setTimeout(() => { btn.setButtonText("Refresh"); btn.setDisabled(false); }, 3000);
+            }
+          })
+      );
   }
 
   private renderAISection(containerEl: HTMLElement) {
