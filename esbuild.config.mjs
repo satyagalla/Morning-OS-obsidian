@@ -19,11 +19,16 @@ const builtins = [
 
 function copyToVault() {
   if (!PLUGIN_DIR) return;
-  for (const file of ["main.js", "manifest.json"]) {
-    const src = path.resolve(file);
-    const dest = path.join(PLUGIN_DIR, file);
-    if (fs.existsSync(src)) {
-      fs.copyFileSync(src, dest);
+  const files = [
+    ["main.js", "main.js"],
+    ["manifest.json", "manifest.json"],
+    ["styles/styles.css", "styles.css"],
+  ];
+  for (const [src, dest] of files) {
+    const srcPath = path.resolve(src);
+    const destPath = path.join(PLUGIN_DIR, dest);
+    if (fs.existsSync(srcPath)) {
+      fs.copyFileSync(srcPath, destPath);
     }
   }
   console.log(`[deploy] copied to ${PLUGIN_DIR}`);

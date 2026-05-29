@@ -1,6 +1,7 @@
 import { ItemView, WorkspaceLeaf, TFile } from "obsidian";
 import { DailyBrief, Task, Reminder } from "./types";
 import { MorningOSSettings } from "./settings";
+import type MorningOSPlugin from "./main";
 
 export const VIEW_TYPE_MORNING = "morning-os-view";
 
@@ -9,10 +10,14 @@ export class MorningView extends ItemView {
   private wins: string[] = [];
   private suggestionReactions: ("up" | "down" | null)[] = [];
   private settings: MorningOSSettings;
+  private plugin: MorningOSPlugin;
+  private floatingHandle: HTMLElement | null = null;
+  private floatingActions: HTMLElement | null = null;
 
-  constructor(leaf: WorkspaceLeaf, settings: MorningOSSettings) {
+  constructor(leaf: WorkspaceLeaf, settings: MorningOSSettings, plugin: MorningOSPlugin) {
     super(leaf);
     this.settings = settings;
+    this.plugin = plugin;
   }
 
   getViewType(): string { return VIEW_TYPE_MORNING; }
@@ -26,7 +31,12 @@ export class MorningView extends ItemView {
     this.render();
   }
 
-  async onClose() {}
+  async onClose() {
+    this.floatingHandle?.remove();
+    this.floatingHandle = null;
+    this.floatingActions?.remove();
+    this.floatingActions = null;
+  }
 
   async refresh() {
     await this.loadBrief();
@@ -107,7 +117,14 @@ export class MorningView extends ItemView {
       return;
     }
 
-    const wrapper = container.createEl("div", { cls: "morning-os-wrapper" });
+    this.floatingHandle?.remove();
+    this.floatingHandle = null;
+    this.floatingActions?.remove();
+    this.floatingActions = null;
+    this.renderFloatingActions();
+
+    const scroll = container.createEl("div", { cls: "morning-os-scroll" });
+    const wrapper = scroll.createEl("div", { cls: "morning-os-wrapper" });
 
     this.renderHeader(wrapper);
     this.renderIdentityStrip(wrapper);
@@ -136,6 +153,31 @@ export class MorningView extends ItemView {
         weekday: "long", day: "numeric", month: "long", year: "numeric",
       }),
     });
+  }
+
+  private renderFloatingActions() {
+    const container = this.containerEl.children[1] as HTMLElement;
+    const handle = container.createEl("div", { cls: "morning-os-floating-handle" });
+    const actions = container.createEl("div", { cls: "morning-os-floating-actions" });
+    this.floatingHandle = handle;
+    this.floatingActions = actions;
+
+    handle.addEventListener("mouseenter", () => {
+      actions.style.opacity = "1";
+      actions.style.pointerEvents = "auto";
+    });
+    actions.addEventListener("mouseleave", () => {
+      actions.style.opacity = "0";
+      actions.style.pointerEvents = "none";
+    });
+
+    const refreshBtn = actions.createEl("button", { cls: "morning-os-fab", attr: { "aria-label": "Refresh brief" } });
+    refreshBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>`;
+    refreshBtn.addEventListener("click", () => this.plugin.triggerRefresh());
+
+    const runBtn = actions.createEl("button", { cls: "morning-os-fab", attr: { "aria-label": "Run agent" } });
+    runBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polygon points="10 8 16 12 10 16 10 8"></polygon></svg>`;
+    runBtn.addEventListener("click", () => this.plugin.triggerAgent());
   }
 
   private renderIdentityStrip(parent: HTMLElement) {

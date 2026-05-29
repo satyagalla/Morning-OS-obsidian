@@ -20,7 +20,7 @@ export default class MorningOSPlugin extends Plugin {
   async onload() {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
 
-    this.registerView(VIEW_TYPE_MORNING, (leaf) => new MorningView(leaf, this.settings));
+    this.registerView(VIEW_TYPE_MORNING, (leaf) => new MorningView(leaf, this.settings, this));
 
     this.addRibbonIcon("sun", "Morning OS", () => {
       this.activateView();
