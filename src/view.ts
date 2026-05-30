@@ -2,6 +2,7 @@ import { ItemView, WorkspaceLeaf, TFile } from "obsidian";
 import { DailyBrief, Task, Reminder } from "./types";
 import { MorningOSSettings } from "./settings";
 import type MorningOSPlugin from "./main";
+import { renderOnboarding } from "./onboarding";
 
 export const VIEW_TYPE_MORNING = "morning-os-view";
 
@@ -109,6 +110,11 @@ export class MorningView extends ItemView {
     container.empty();
     container.addClass("morning-os");
 
+    if (!this.settings.onboarded) {
+      renderOnboarding(container, this.plugin);
+      return;
+    }
+
     if (!this.brief) {
       container.createEl("div", {
         cls: "morning-os-empty",
@@ -126,6 +132,10 @@ export class MorningView extends ItemView {
     const scroll = container.createEl("div", { cls: "morning-os-scroll" });
     const wrapper = scroll.createEl("div", { cls: "morning-os-wrapper" });
 
+    if (!this.hasApiKey()) {
+      this.renderApiKeyBanner(wrapper);
+    }
+
     this.renderHeader(wrapper);
     this.renderIdentityStrip(wrapper);
     this.renderGoals(wrapper);
@@ -142,6 +152,25 @@ export class MorningView extends ItemView {
     this.renderPendingTasks(wrapper);
     this.renderHobbyTasks(wrapper);
     this.renderWins(wrapper);
+  }
+
+  private hasApiKey(): boolean {
+    const s = this.settings;
+    const provider = s.intelligenceProvider;
+    if (provider === "bedrock") return !!(s.awsAccessKeyId && s.awsSecretAccessKey);
+    if (provider === "openai") return !!s.openaiApiKey;
+    if (provider === "gemini") return !!s.geminiApiKey;
+    if (provider === "groq") return !!s.groqApiKey;
+    return false;
+  }
+
+  private renderApiKeyBanner(parent: HTMLElement) {
+    const banner = parent.createEl("div", { cls: "mos-onboard-banner" });
+    banner.createEl("span", {
+      text: "Add your API key in Settings → Morning OS to generate personalized briefs.",
+    });
+    const dismiss = banner.createEl("button", { cls: "mos-onboard-banner-dismiss", text: "✕" });
+    dismiss.addEventListener("click", () => banner.remove());
   }
 
   private renderHeader(parent: HTMLElement) {

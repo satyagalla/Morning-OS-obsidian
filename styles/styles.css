@@ -602,3 +602,124 @@ h3[data-dirty]::after {
     gap: 10px;
   }
 }
+
+/* ── Onboarding ── */
+.morning-os-onboarding {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 40px 24px;
+  text-align: center;
+  gap: 8px;
+}
+
+.mos-onboard-icon {
+  color: var(--interactive-accent);
+  margin-bottom: 12px;
+}
+
+.mos-onboard-title {
+  font-size: 1.8em;
+  font-weight: 700;
+  color: var(--text-normal);
+  margin: 0;
+}
+
+.mos-onboard-subtitle {
+  font-size: 0.95em;
+  color: var(--text-muted);
+  margin: 0;
+  line-height: 1.5;
+}
+
+.mos-onboard-input-row {
+  margin-top: 16px;
+  width: 100%;
+  max-width: 300px;
+}
+
+.mos-onboard-folder-input {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  font-size: 0.95em;
+  text-align: center;
+}
+
+.mos-onboard-folder-input:focus {
+  outline: none;
+  border-color: var(--interactive-accent);
+}
+
+.mos-onboard-btn {
+  margin-top: 16px;
+  padding: 10px 28px;
+  border: none;
+  border-radius: 20px;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  font-size: 0.95em;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.mos-onboard-btn:hover {
+  opacity: 0.85;
+}
+
+.mos-onboard-terminal {
+  width: 100%;
+  max-width: 500px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  padding: 20px 24px;
+  text-align: left;
+  font-family: var(--font-monospace);
+  font-size: 0.82em;
+  line-height: 1.8;
+  color: var(--text-muted);
+  margin-top: 24px;
+}
+
+.mos-onboard-line {
+  opacity: 0;
+  animation: mos-line-appear 0.15s forwards;
+}
+
+@keyframes mos-line-appear {
+  to { opacity: 1; }
+}
+
+.mos-onboard-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: rgba(var(--color-blue-rgb), 0.08);
+  border: 1px solid rgba(var(--color-blue-rgb), 0.2);
+  border-radius: 8px;
+  font-size: 0.85em;
+  color: var(--text-muted);
+}
+
+.mos-onboard-banner-dismiss {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 1.1em;
+  padding: 2px 6px;
+  margin-left: auto;
+  border-radius: 4px;
+}
+
+.mos-onboard-banner-dismiss:hover {
+  background: var(--background-modifier-hover);
+}

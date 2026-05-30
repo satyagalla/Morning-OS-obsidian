@@ -63,6 +63,9 @@ export interface MorningOSSettings {
 
   // Dirty flag — true when settings changed since last agent run
   settingsChangedSinceRun: boolean;
+
+  // Onboarding
+  onboarded: boolean;
 }
 
 export const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
@@ -124,6 +127,8 @@ export const DEFAULT_SETTINGS: MorningOSSettings = {
   technicalTasksCount: 5,
 
   settingsChangedSinceRun: false,
+
+  onboarded: false,
 };
 
 const PROVIDERS = {

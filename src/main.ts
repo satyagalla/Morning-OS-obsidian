@@ -20,6 +20,11 @@ export default class MorningOSPlugin extends Plugin {
   async onload() {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
 
+    if (!this.settings.onboarded && this.settings.agentLastRunDate) {
+      this.settings.onboarded = true;
+      await this.saveData(this.settings);
+    }
+
     this.registerView(VIEW_TYPE_MORNING, (leaf) => new MorningView(leaf, this.settings, this));
 
     this.addRibbonIcon("sun", "Morning OS", () => {
@@ -123,7 +128,7 @@ export default class MorningOSPlugin extends Plugin {
     }
   }
 
-  private refreshView() {
+  refreshView() {
     const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_MORNING);
     for (const leaf of leaves) {
       (leaf.view as MorningView).refresh();
