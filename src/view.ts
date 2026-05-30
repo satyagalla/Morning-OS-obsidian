@@ -3,6 +3,8 @@ import { DailyBrief, Task, Reminder } from "./types";
 import { MorningOSSettings } from "./settings";
 import type MorningOSPlugin from "./main";
 import { renderOnboarding } from "./onboarding";
+import { scaffoldDailyNote } from "./agent/scaffold-daily-note";
+import { todayStr } from "./utils";
 
 export const VIEW_TYPE_MORNING = "morning-os-view";
 
@@ -26,6 +28,23 @@ export class MorningView extends ItemView {
   getIcon(): string { return "sun"; }
 
   async onOpen() {
+    if (!this.settings.onboarded) {
+      await this.loadBrief();
+      await this.loadWins();
+      await this.loadSuggestionReaction();
+      this.render();
+      return;
+    }
+
+    const today = todayStr();
+    await scaffoldDailyNote(today, this.app, this.settings);
+
+    const alreadyRan = this.plugin.settings.agentLastRunDate === today;
+    if (!alreadyRan) {
+      await this.plugin.triggerAgent();
+      return;
+    }
+
     await this.loadBrief();
     await this.loadWins();
     await this.loadSuggestionReaction();

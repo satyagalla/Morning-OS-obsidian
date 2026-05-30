@@ -26,7 +26,6 @@ export interface MorningOSSettings {
   goalsLongTerm: string;
 
   // Agent runner
-  agentRunTime: string;
   agentLastRunDate: string;
 
   // Field modes (true = llm, false = direct)
@@ -118,7 +117,6 @@ export const DEFAULT_SETTINGS: MorningOSSettings = {
   geminiApiKey: "",
   groqApiKey: "",
 
-  agentRunTime: "07:00",
   agentLastRunDate: "",
 
   tacticalRulesCount: 4,
@@ -209,16 +207,6 @@ export class MorningOSSettingTab extends PluginSettingTab {
 
   private renderAgentSection(containerEl: HTMLElement) {
     this.sectionHeading(containerEl, "Briefing agent");
-
-    new Setting(containerEl)
-      .setName("Daily run time")
-      .setDesc("Time to automatically run the agent each day (24h format, e.g. 07:00).")
-      .addText((text) =>
-        text
-          .setPlaceholder("07:00")
-          .setValue(this.plugin.settings.agentRunTime)
-          .onChange(async (value) => { await this.save({ agentRunTime: value.trim() }); })
-      );
 
     new Setting(containerEl)
       .setName("Carry lookback days")

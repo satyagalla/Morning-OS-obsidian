@@ -2,15 +2,8 @@ import { Plugin, WorkspaceLeaf, Notice } from "obsidian";
 import { MorningView, VIEW_TYPE_MORNING } from "./view";
 import { MorningOSSettings, DEFAULT_SETTINGS, MorningOSSettingTab } from "./settings";
 import { runAgent, refreshBrief, AgentResult } from "./agent/run";
-
-function parseRunTime(timeStr: string): { hour: number; minute: number } | null {
-  const match = timeStr.match(/^(\d{1,2}):(\d{2})$/);
-  if (!match) return null;
-  const hour = parseInt(match[1], 10);
-  const minute = parseInt(match[2], 10);
-  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
-  return { hour, minute };
-}
+import { scaffoldDailyNote } from "./agent/scaffold-daily-note";
+import { todayStr } from "./utils";
 
 export default class MorningOSPlugin extends Plugin {
   settings: MorningOSSettings;
@@ -51,11 +44,6 @@ export default class MorningOSPlugin extends Plugin {
 
     this.settingTab = new MorningOSSettingTab(this.app, this);
     this.addSettingTab(this.settingTab);
-
-    // Check every minute whether it's time for the daily auto-run
-    this.registerInterval(window.setInterval(() => this.maybeAutoRun(), 60_000));
-    // Also check immediately on load (handles case where Obsidian opens after scheduled time)
-    this.maybeAutoRun();
   }
 
   async activateView() {
@@ -84,8 +72,7 @@ export default class MorningOSPlugin extends Plugin {
 
     try {
       const result: AgentResult = await runAgent(this.app, this.settings);
-      const today = this.todayStr();
-      this.settings.agentLastRunDate = today;
+      this.settings.agentLastRunDate = todayStr();
       this.settings.settingsChangedSinceRun = false;
       await this.saveData(this.settings);
       if (result.mode === "direct-no-keys") {
@@ -110,6 +97,17 @@ export default class MorningOSPlugin extends Plugin {
   }
 
   async triggerRefresh(): Promise<void> {
+    const today = todayStr();
+
+    await scaffoldDailyNote(today, this.app, this.settings);
+
+    const briefPath = `${this.settings.briefsDir}/${today}.json`;
+    const briefExists = await this.app.vault.adapter.exists(briefPath);
+    if (!briefExists) {
+      await this.triggerAgent();
+      return;
+    }
+
     try {
       await refreshBrief(this.app, this.settings);
       new Notice("Morning OS: brief refreshed ✓");
@@ -119,34 +117,11 @@ export default class MorningOSPlugin extends Plugin {
     }
   }
 
-  private async maybeAutoRun() {
-    if (!this.settings.agentRunTime) return;
-
-    const parsed = parseRunTime(this.settings.agentRunTime);
-    if (!parsed) return;
-
-    const now = new Date();
-    const today = this.todayStr();
-
-    const alreadyRan = this.settings.agentLastRunDate === today;
-    const pastRunTime = now.getHours() > parsed.hour ||
-      (now.getHours() === parsed.hour && now.getMinutes() >= parsed.minute);
-
-    if (!alreadyRan && pastRunTime) {
-      await this.triggerAgent();
-    }
-  }
-
   refreshView() {
     const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_MORNING);
     for (const leaf of leaves) {
       (leaf.view as MorningView).refresh();
     }
-  }
-
-  private todayStr(): string {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   }
 
   onunload() {}
