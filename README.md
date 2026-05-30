@@ -24,6 +24,18 @@ The AI picks which of your items to surface — it never rewrites or edits your 
 
 ---
 
+## Works on mobile
+
+No terminal, no Python, no desktop-only dependencies. The plugin runs entirely inside Obsidian — tap the sun icon on your phone, your note is scaffolded and your brief is generated.
+
+The only requirement is that your vault is in sync across devices. 
+
+> **Recommended:** [Remotely Save](https://github.com/remotely-save/remotely-save) with Dropbox. Make sure your sync settings include folders with underscores — some tools exclude them by default, and Morning OS writes its briefs and feedback to `_generated/`.
+
+With sync in place, you can review your brief and check off tasks from anywhere. The daily note and brief JSON stay consistent across all your devices.
+
+---
+
 ## Setup
 
 1. Copy `main.js`, `manifest.json`, and `styles.css` to `.obsidian/plugins/morning-os/`
