@@ -104,8 +104,8 @@ export const DEFAULT_SETTINGS: MorningOSSettings = {
   modeTasks: false,
   modeWins: false,
 
-  intelligenceProvider: "bedrock",
-  intelligenceModel: "us.anthropic.claude-sonnet-4-6",
+  intelligenceProvider: "openai",
+  intelligenceModel: "gpt-4o",
   intelligenceRegion: "us-east-2",
 
   awsAccessKeyId: "",

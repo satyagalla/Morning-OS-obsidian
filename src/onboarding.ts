@@ -1,26 +1,24 @@
 import { AbstractInputSuggest, TFolder } from "obsidian";
 import type MorningOSPlugin from "./main";
-import type { DailyBrief } from "./types";
+import { runAgent } from "./agent/run";
 
-const SAMPLE_TACTICAL_RULES = `- Break tasks into 25-minute focus blocks
-- Process inbox to zero before starting deep work
-- One task at a time — close all unrelated tabs
-- If stuck for 10 minutes, change approach or ask for help
-- End each day by writing tomorrow's top 3 priorities`;
+const SAMPLE_TACTICAL_RULES = `- Start the hardest task within 15 minutes of sitting down
+- One tab, one task. Close everything else
+- If stuck for 10 minutes, change the approach — don't stare harder
+- No meetings before noon
+- End the day by writing tomorrow's top 3`;
 
-const SAMPLE_EMOTIONAL_RULES = `- follows through on commitments, even small ones
-- chooses discomfort over regret
-- protects deep focus time without guilt`;
+const SAMPLE_EMOTIONAL_RULES = `- Builds things that matter, even if no one's watching yet
+- Protects mornings like they're sacred — low dopamine, high clarity
+- Trusts the process over the mood`;
 
 const SAMPLE_GOALS = `## Short Term
-- Ship the MVP and get 10 beta users
-- Build a consistent morning routine that sticks
-- Read one non-fiction book this month
+- Reply to every message within 24 hours this week
+- Wake up before 8am for 5 days straight
 
 ## Long Term
-- Build a product that helps 10,000 people
-- Achieve financial independence through my own work
-- Become someone others trust for clear thinking`;
+- Design a life where Mondays feel the same as Fridays
+- Become the person who finishes what they start`;
 
 const SAMPLE_TECHNICAL_TASKS = `## Top 3 pending
 - Set up CI/CD pipeline for the main project
@@ -38,12 +36,12 @@ function todayStr(): string {
 
 function dailyNoteTemplate(): string {
   return `## Red alert
-- [ ] Complete the most important task of the day
+- [ ] Reply to the email I've been avoiding since Monday
 
 ## Regular
-- [ ] Review my goals and priorities
-- [ ] Clear inbox to zero
-- [ ] Plan tomorrow before shutting down
+- [ ] 90 minutes deep work — phone in another room
+- [ ] Clear 3 tabs I've had open all week
+- [ ] Write down what to do first thing tomorrow
 
 ## Wins
 
@@ -52,66 +50,6 @@ function dailyNoteTemplate(): string {
 `;
 }
 
-export function generateDemoBrief(dateStr: string): DailyBrief {
-  return {
-    date: dateStr,
-    meta: { goals: { short_term_count: 2, long_term_count: 1 } },
-    identity: {
-      rules: [
-        "follows through on commitments, even small ones",
-        "chooses discomfort over regret",
-        "protects deep focus time without guilt",
-      ],
-    },
-    goals: {
-      short_term: [
-        "Ship the MVP and get 10 beta users",
-        "Build a consistent morning routine that sticks",
-      ],
-      long_term: [
-        "Build a product that helps 10,000 people",
-      ],
-    },
-    tasks: {
-      red_alert: [
-        { text: "Complete the onboarding flow", carried_from: null },
-      ],
-      regular: [
-        { text: "Review pull requests", carried_from: null },
-        { text: "Update project documentation", carried_from: null },
-        { text: "Plan next sprint priorities", carried_from: null },
-      ],
-    },
-    tactical_rules: [
-      "Break tasks into 25-minute focus blocks",
-      "One task at a time — close all unrelated tabs",
-      "If stuck for 10 minutes, change approach or ask for help",
-      "End each day by writing tomorrow's top 3 priorities",
-    ],
-    technical_tasks: [
-      "Set up CI/CD pipeline for the main project",
-      "Refactor the authentication module",
-      "Write integration tests for the API layer",
-    ],
-    hobby_tasks: [
-      "Practice guitar for 20 minutes",
-      "Sketch one thing from observation",
-      "Try a new recipe this week",
-    ],
-    suggestions: [
-      {
-        text: "Your morning routine is your operating system's boot sequence. Protect it from interrupts — no messages, no email, no news until the system is fully online.",
-        source: "Based on your tactical rules",
-      },
-      {
-        text: "You listed 'Ship the MVP' as a goal. Consider blocking 2 hours today for the single highest-leverage task toward that — what would make everything else easier?",
-        source: "Based on your goals",
-      },
-    ],
-    wins: [],
-    reminders: [],
-  };
-}
 
 class FolderSuggest extends AbstractInputSuggest<TFolder> {
   private inputEl: HTMLInputElement;
@@ -183,11 +121,6 @@ async function scaffoldVault(plugin: MorningOSPlugin, rootPath: string): Promise
     }
   }
 
-  const briefPath = `${rootPath}/_generated/briefs/${dateStr}.json`;
-  const brief = generateDemoBrief(dateStr);
-  await app.vault.adapter.write(briefPath, JSON.stringify(brief, null, 2));
-  log.push(`Generating first briefing ✓`);
-
   plugin.settings.dailyNoteDir = `${rootPath}/Daily`;
   plugin.settings.briefsDir = `${rootPath}/_generated/briefs`;
   plugin.settings.feedbackDir = `${rootPath}/_generated/feedback`;
@@ -198,6 +131,17 @@ async function scaffoldVault(plugin: MorningOSPlugin, rootPath: string): Promise
   plugin.settings.sourceHobbyTasks = `${rootPath}/Pending Tasks/Hobby Tasks.md`;
   plugin.settings.onboarded = true;
   await plugin.saveData(plugin.settings);
+
+  log.push("Generating first briefing...");
+  await runAgent(app, plugin.settings);
+
+  const briefPath = `${plugin.settings.briefsDir}/${dateStr}.json`;
+  const briefJson = JSON.parse(await app.vault.adapter.read(briefPath));
+  briefJson.suggestions = [
+    { text: "Your rule says 'no meetings before noon' but you have a regular task every morning. Consider batching small tasks after lunch instead.", source: "Morning OS" },
+    { text: "You've been carrying 'reply to email' as a red alert — most dreaded replies take under 5 minutes once you start typing. Send it before deep work so it's not in the back of your mind.", source: "Morning OS" },
+  ];
+  await app.vault.adapter.write(briefPath, JSON.stringify(briefJson, null, 2));
 
   log.push("System online.");
   return log;

@@ -123,8 +123,16 @@ export async function runAgent(app: App, settings: MorningOSSettings): Promise<A
   let resultMode: AgentResult["mode"] = "direct";
 
   if (needsLLM && !hasCredentials(settings)) {
-    llmOutput = null;
     resultMode = "direct-no-keys";
+    const briefPath = `${settings.briefsDir}/${dateStr}.json`;
+    if (await app.vault.adapter.exists(briefPath)) {
+      try {
+        const existing = JSON.parse(await app.vault.adapter.read(briefPath));
+        if (existing.suggestions?.length) {
+          llmOutput = { suggestions: existing.suggestions };
+        }
+      } catch {}
+    }
   } else if (needsLLM) {
     const carried = [
       ...carriedTasks.red_alert,
