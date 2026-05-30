@@ -8,6 +8,25 @@ import { callLLM } from "./llm";
 import { assembleBrief, LLMOutput } from "./assembler";
 import { INTELLIGENCE_SYSTEM, formatUserPrompt } from "./prompts";
 
+export interface AgentResult {
+  mode: "llm" | "direct" | "direct-no-keys";
+}
+
+function hasCredentials(settings: MorningOSSettings): boolean {
+  switch (settings.intelligenceProvider) {
+    case "bedrock":
+      return !!(settings.awsAccessKeyId && settings.awsSecretAccessKey);
+    case "openai":
+      return !!settings.openaiApiKey;
+    case "gemini":
+      return !!settings.geminiApiKey;
+    case "groq":
+      return !!settings.groqApiKey;
+    default:
+      return false;
+  }
+}
+
 function todayStr(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -20,7 +39,7 @@ function parseLLMResponse(raw: string): LLMOutput {
   return JSON.parse(text);
 }
 
-export async function runAgent(app: App, settings: MorningOSSettings): Promise<void> {
+export async function runAgent(app: App, settings: MorningOSSettings): Promise<AgentResult> {
   const dateStr = todayStr();
 
   const dailyData = await parseDailyNote(dateStr, app, settings);
@@ -101,8 +120,12 @@ export async function runAgent(app: App, settings: MorningOSSettings): Promise<v
     settings.modeWins;
 
   let llmOutput: LLMOutput | null = null;
+  let resultMode: AgentResult["mode"] = "direct";
 
-  if (needsLLM) {
+  if (needsLLM && !hasCredentials(settings)) {
+    llmOutput = null;
+    resultMode = "direct-no-keys";
+  } else if (needsLLM) {
     const carried = [
       ...carriedTasks.red_alert,
       ...carriedTasks.regular,
@@ -137,20 +160,18 @@ export async function runAgent(app: App, settings: MorningOSSettings): Promise<v
       modeWins: settings.modeWins,
     });
 
-    // console.log("Morning OS — user prompt:\n", userPrompt);
-
     try {
       const raw = await callLLM(INTELLIGENCE_SYSTEM, userPrompt, settings);
-      // console.log("Morning OS — raw LLM response:\n", raw);
       llmOutput = parseLLMResponse(raw);
+      resultMode = "llm";
     } catch (err) {
-      console.error("Morning OS LLM failed, retrying once:", err);
       try {
         const raw = await callLLM(INTELLIGENCE_SYSTEM, userPrompt, settings);
         llmOutput = parseLLMResponse(raw);
+        resultMode = "llm";
       } catch (err2) {
-        console.error("Morning OS LLM retry failed, using direct mode:", err2);
-        llmOutput = null;
+        const msg = (err2 as Error).message || "Unknown error";
+        throw new Error(`LLM_FAILED: ${msg}`);
       }
     }
   }
@@ -172,6 +193,8 @@ export async function runAgent(app: App, settings: MorningOSSettings): Promise<v
     `${settings.briefsDir}/${dateStr}.json`,
     JSON.stringify(brief, null, 2)
   );
+
+  return { mode: resultMode };
 }
 
 export async function refreshBrief(app: App, settings: MorningOSSettings): Promise<void> {

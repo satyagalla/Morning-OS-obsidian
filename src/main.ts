@@ -1,7 +1,7 @@
 import { Plugin, WorkspaceLeaf, Notice } from "obsidian";
 import { MorningView, VIEW_TYPE_MORNING } from "./view";
 import { MorningOSSettings, DEFAULT_SETTINGS, MorningOSSettingTab } from "./settings";
-import { runAgent, refreshBrief } from "./agent/run";
+import { runAgent, refreshBrief, AgentResult } from "./agent/run";
 
 function parseRunTime(timeStr: string): { hour: number; minute: number } | null {
   const match = timeStr.match(/^(\d{1,2}):(\d{2})$/);
@@ -83,18 +83,27 @@ export default class MorningOSPlugin extends Plugin {
     new Notice("Morning OS: running briefing agent…");
 
     try {
-      await runAgent(this.app, this.settings);
+      const result: AgentResult = await runAgent(this.app, this.settings);
       const today = this.todayStr();
       this.settings.agentLastRunDate = today;
-      await this.saveData(this.settings);
       this.settings.settingsChangedSinceRun = false;
       await this.saveData(this.settings);
-      new Notice("Morning OS: brief ready ✓");
+      if (result.mode === "direct-no-keys") {
+        new Notice("Morning OS: brief ready (direct mode — no API key configured)");
+      } else {
+        new Notice("Morning OS: brief ready ✓");
+      }
       this.settingTab.clearDirty();
       this.refreshView();
     } catch (err) {
+      const msg = (err as Error).message;
+      if (msg.startsWith("LLM_FAILED:")) {
+        const detail = msg.replace("LLM_FAILED: ", "");
+        new Notice(`Morning OS: LLM error — ${detail}\n\nCheck your API key in settings, or disable AI modes to use direct mode.`, 10000);
+      } else {
+        new Notice(`Morning OS: agent failed — ${msg.slice(0, 120)}`);
+      }
       console.error("Morning OS agent error:", err);
-      new Notice(`Morning OS: agent failed — ${(err as Error).message.slice(0, 120)}`);
     } finally {
       this.agentRunning = false;
     }
