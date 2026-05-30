@@ -2,6 +2,7 @@ import { App } from "obsidian";
 import type { MorningOSSettings } from "../settings";
 import type { TaskItem } from "./vault-reader";
 import { fuzzyMatch } from "./carry-detector";
+import { findMostRecentBrief } from "./find-recent-brief";
 
 export async function computeFeedback(
   todayTasks: { red_alert: TaskItem[]; regular: TaskItem[] },
@@ -9,21 +10,11 @@ export async function computeFeedback(
   app: App,
   settings: MorningOSSettings
 ): Promise<void> {
-  const d = new Date(todayStr + "T12:00:00");
-  d.setDate(d.getDate() - 1);
-  const yesterdayStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const found = await findMostRecentBrief(todayStr, app, settings);
+  if (!found) return;
 
-  const briefPath = `${settings.briefsDir}/${yesterdayStr}.json`;
-  const exists = await app.vault.adapter.exists(briefPath);
-  if (!exists) return;
-
-  let yesterdayBrief: any;
-  try {
-    const raw = await app.vault.adapter.read(briefPath);
-    yesterdayBrief = JSON.parse(raw);
-  } catch {
-    return;
-  }
+  const yesterdayStr = found.date;
+  const yesterdayBrief = found.brief;
 
   const todayAllTexts: string[] = [
     ...todayTasks.red_alert.filter(t => !t.done).map(t => t.text),

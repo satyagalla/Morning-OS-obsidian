@@ -61,6 +61,9 @@ export interface MorningOSSettings {
   suggestionCount: number;
   technicalTasksCount: number;
 
+  // Carry detection
+  carryLookbackDays: number;
+
   // Dirty flag — true when settings changed since last agent run
   settingsChangedSinceRun: boolean;
 
@@ -125,6 +128,8 @@ export const DEFAULT_SETTINGS: MorningOSSettings = {
   hobbyTasksCount: 3,
   suggestionCount: 3,
   technicalTasksCount: 5,
+
+  carryLookbackDays: 7,
 
   settingsChangedSinceRun: false,
 
@@ -214,6 +219,22 @@ export class MorningOSSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.agentRunTime)
           .onChange(async (value) => { await this.save({ agentRunTime: value.trim() }); })
       );
+
+    new Setting(containerEl)
+      .setName("Carry lookback days")
+      .setDesc("How many days to search back for the previous brief when detecting carried tasks.")
+      .addText((text) => {
+        text.inputEl.type = "number";
+        text.inputEl.min = "1";
+        text.inputEl.max = "30";
+        text.inputEl.style.width = "60px";
+        text
+          .setValue(String(this.plugin.settings.carryLookbackDays))
+          .onChange(async (value) => {
+            const n = parseInt(value, 10);
+            if (!isNaN(n) && n >= 1) await this.save({ carryLookbackDays: n }, "Briefing agent");
+          });
+      });
 
     // Banner slot — visible only when settingsChangedSinceRun
     const bannerSlot = containerEl.createEl("div", { cls: "mos-run-banner-slot" });
