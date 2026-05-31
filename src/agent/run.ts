@@ -91,6 +91,11 @@ export async function runAgent(app: App, settings: MorningOSSettings): Promise<A
     .filter(r => !r.dismissed && r.remind_date <= dateStr)
     .map(r => ({ text: r.text, source_date: r.source_date, remind_date: r.remind_date }));
 
+  const completedTasks = {
+    red_alert: dailyData.red_alert.filter(t => t.done).map(t => t.text),
+    regular: dailyData.regular.filter(t => t.done).map(t => t.text),
+  };
+
   const carriedTasks = await detectCarries(
     { red_alert: dailyData.red_alert, regular: dailyData.regular },
     dateStr,
@@ -183,6 +188,7 @@ export async function runAgent(app: App, settings: MorningOSSettings): Promise<A
   const brief = assembleBrief(
     dateStr,
     carriedTasks,
+    completedTasks,
     goals,
     tacticalRules,
     emotionalRules,
@@ -279,6 +285,11 @@ export async function refreshBrief(app: App, settings: MorningOSSettings): Promi
     .filter(r => !r.dismissed && r.remind_date <= dateStr)
     .map(r => ({ text: r.text, source_date: r.source_date, remind_date: r.remind_date }));
 
+  const completedTasksRefresh = {
+    red_alert: dailyData.red_alert.filter(t => t.done).map(t => t.text),
+    regular: dailyData.regular.filter(t => t.done).map(t => t.text),
+  };
+
   const carriedTasks = await detectCarries(
     { red_alert: dailyData.red_alert, regular: dailyData.regular },
     dateStr,
@@ -289,6 +300,7 @@ export async function refreshBrief(app: App, settings: MorningOSSettings): Promi
   const brief = assembleBrief(
     dateStr,
     carriedTasks,
+    completedTasksRefresh,
     goals,
     tacticalRules,
     emotionalRules,

@@ -276,19 +276,33 @@ export class MorningView extends ItemView {
   }
 
   private renderTasks(parent: HTMLElement) {
-    if (this.brief!.tasks.red_alert.length > 0) {
+    const completedRed = this.brief!.tasks.completed_red_alert ?? [];
+    const completedRegular = this.brief!.tasks.completed_regular ?? [];
+
+    if (this.brief!.tasks.red_alert.length > 0 || completedRed.length > 0) {
       parent.createEl("h2", { cls: "morning-os-section-heading morning-os-red-heading", text: "Red alert" });
-      this.renderTaskList(
-        parent.createEl("div", { cls: "morning-os-card morning-os-card-red" }),
-        this.brief!.tasks.red_alert
-      );
+      const card = parent.createEl("div", { cls: "morning-os-card morning-os-card-red" });
+      this.renderTaskList(card, this.brief!.tasks.red_alert);
+      this.renderCompletedList(card, completedRed);
     }
-    if (this.brief!.tasks.regular.length > 0) {
+    if (this.brief!.tasks.regular.length > 0 || completedRegular.length > 0) {
       parent.createEl("h2", { cls: "morning-os-section-heading", text: "Regular" });
-      this.renderTaskList(
-        parent.createEl("div", { cls: "morning-os-card" }),
-        this.brief!.tasks.regular
-      );
+      const card = parent.createEl("div", { cls: "morning-os-card" });
+      this.renderTaskList(card, this.brief!.tasks.regular);
+      this.renderCompletedList(card, completedRegular);
+    }
+  }
+
+  private renderCompletedList(parent: HTMLElement, tasks: string[]) {
+    for (const text of tasks) {
+      const row = parent.createEl("div", { cls: "morning-os-task-row morning-os-task-done" });
+      const checkbox = row.createEl("input", { type: "checkbox" });
+      checkbox.checked = true;
+      row.createEl("span", { cls: "morning-os-task-text", text });
+      checkbox.addEventListener("change", async () => {
+        row.toggleClass("morning-os-task-done", checkbox.checked);
+        await this.toggleTaskInNote(text, checkbox.checked);
+      });
     }
   }
 

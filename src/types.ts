@@ -32,6 +32,8 @@ export interface DailyBrief {
   tasks: {
     red_alert: Task[];
     regular: Task[];
+    completed_red_alert: string[];
+    completed_regular: string[];
   };
   tactical_rules: string[];
   technical_tasks: string[];

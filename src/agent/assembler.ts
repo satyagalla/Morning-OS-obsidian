@@ -35,6 +35,7 @@ function reorderTasks(
 export function assembleBrief(
   dateStr: string,
   carriedTasks: CarriedTasks,
+  completedTasks: { red_alert: string[]; regular: string[] },
   parsedGoals: ParsedGoals,
   allTacticalRules: string[],
   allEmotionalRules: string[],
@@ -101,7 +102,11 @@ export function assembleBrief(
     },
     identity: { rules: identityRules },
     goals,
-    tasks,
+    tasks: {
+      ...tasks,
+      completed_red_alert: completedTasks.red_alert,
+      completed_regular: completedTasks.regular,
+    },
     tactical_rules: tacticalRules,
     technical_tasks: technicalTasks,
     hobby_tasks: hobbyTasks,
