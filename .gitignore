@@ -2,9 +2,6 @@
 node_modules/
 obsidian/
 
-# Legacy Python agent (ported to TypeScript)
-agent/
-
 # Environment
 .env
 .claude/
@@ -22,3 +19,4 @@ desktop.ini
 # Dev docs (not shipped)
 plans/
 dev/
+CLAUDE.md
