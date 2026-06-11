@@ -11,6 +11,7 @@ export interface ParsedTasks {
   red_alert: TaskItem[];
   regular: TaskItem[];
   wins: TaskItem[];
+  reminders: string[];
 }
 
 export interface ParsedGoals {
@@ -121,8 +122,11 @@ export async function parseDailyNote(
   const redAlert = extractSection(content, settings.sectionRedAlert);
   const regular = extractSection(content, settings.sectionRegular);
   const wins = extractSection(content, settings.sectionWins, WINS_VARIANTS);
+  const reminders = extractSection(content, "Reminders").map(item => {
+    return item.remind_date ? `${item.text} @remind(${item.remind_date})` : item.text;
+  });
 
-  return { red_alert: redAlert, regular, wins };
+  return { red_alert: redAlert, regular, wins, reminders };
 }
 
 export async function parseYesterdayWins(

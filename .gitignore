@@ -19,4 +19,5 @@ desktop.ini
 # Dev docs (not shipped)
 plans/
 dev/
+agent-reports/
 CLAUDE.md
