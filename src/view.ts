@@ -210,13 +210,27 @@ export class MorningView extends ItemView {
     this.floatingHandle = handle;
     this.floatingActions = actions;
 
-    handle.addEventListener("mouseenter", () => {
+    const showActions = () => {
       actions.style.opacity = "1";
       actions.style.pointerEvents = "auto";
-    });
-    actions.addEventListener("mouseleave", () => {
+    };
+    const hideActions = () => {
       actions.style.opacity = "0";
       actions.style.pointerEvents = "none";
+    };
+
+    handle.addEventListener("mouseenter", showActions);
+    actions.addEventListener("mouseleave", hideActions);
+
+    handle.addEventListener("touchstart", (e: TouchEvent) => {
+      e.preventDefault();
+      showActions();
+    }, { passive: false });
+
+    document.addEventListener("touchstart", (e: TouchEvent) => {
+      if (!handle.contains(e.target as Node) && !actions.contains(e.target as Node)) {
+        hideActions();
+      }
     });
 
     const refreshBtn = actions.createEl("button", { cls: "morning-os-fab", attr: { "aria-label": "Refresh brief" } });
@@ -250,6 +264,7 @@ export class MorningView extends ItemView {
 
     const toggle = wrap.createEl("div", { cls: "morning-os-goals-toggle" });
     toggle.createEl("span", { cls: "morning-os-goals-toggle-label", text: "Goals" });
+    toggle.addEventListener("click", () => wrap.toggleClass("is-open", !wrap.hasClass("is-open")));
 
     const preview = toggle.createEl("div", { cls: "morning-os-goals-preview" });
     for (const item of stVisible)
