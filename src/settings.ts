@@ -69,9 +69,7 @@ export interface MorningOSSettings {
   // Onboarding
   onboarded: boolean;
 
-  // What's new card
   lastSeenVersion: string;
-  whatsNew: { version: string; items: string[] }[];
 }
 
 export const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
@@ -138,19 +136,6 @@ export const DEFAULT_SETTINGS: MorningOSSettings = {
   onboarded: false,
 
   lastSeenVersion: "",
-  whatsNew: [
-    {
-      version: "0.2.0",
-      items: [
-        "Completed tasks now appear in the dashboard with strikethrough.",
-        "Goals bar collapses cleanly on mobile.",
-        "Floating action buttons are accessible via touch.",
-        "Daily note scaffolding no longer adds Thoughts and Reminders sections.",
-        "@remind tags are preserved when scaffolding daily notes.",
-      ],
-    },
-  ],
-
 };
 
 const PROVIDERS = {

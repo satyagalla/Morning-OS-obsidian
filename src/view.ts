@@ -1,4 +1,6 @@
 import { ItemView, WorkspaceLeaf, TFile, Modal, App, requestUrl } from "obsidian";
+import changelogText from "../CHANGELOG.md";
+import { parseChangelog } from "./agent/parse-changelog";
 
 const WEBHOOK_BUGS     = "https://discord.com/api/webhooks/1514853476990062683/hNbPlOaE13qKD33xxzDUMmUMhtyUZDqKIIr703U9ri8ug4_ujRqhcp2ohDR18DEU-0x6";
 const WEBHOOK_FEATURES = "https://discord.com/api/webhooks/1514853636856090737/zyUYjvGXZdBdrRkv7lBLe4Vaie0YLPENaZgy72xIYNiIWgLyb71ZT7qi7-axEz-Utd0d";
@@ -556,7 +558,7 @@ export class MorningView extends ItemView {
     const manifest = this.plugin.manifest;
     if (manifest.version === this.settings.lastSeenVersion) return;
 
-    const entry = (this.settings.whatsNew ?? []).find((e) => e.version === manifest.version);
+    const entry = parseChangelog(changelogText, manifest.version);
     if (!entry) return;
 
     const banner = parent.createEl("div", { cls: "mos-whats-new-banner" });
@@ -565,12 +567,21 @@ export class MorningView extends ItemView {
     const label = top.createEl("span", { cls: "mos-whats-new-label" });
     label.createEl("span", { cls: "mos-whats-new-badge", text: `v${entry.version}` });
     label.createEl("span", { text: " What's new" });
-
     const dismissBtn = top.createEl("button", { cls: "mos-whats-new-dismiss", text: "Got it ✓" });
 
-    const list = banner.createEl("ul", { cls: "mos-whats-new-list" });
-    for (const item of entry.items) {
-      list.createEl("li", { text: item });
+    for (const section of entry.sections) {
+      banner.createEl("div", { cls: "mos-whats-new-section-heading", text: section.heading });
+      if (section.heading.toLowerCase() === "personal") {
+        // Personal note renders as paragraphs, not a list
+        for (const item of section.items) {
+          banner.createEl("p", { cls: "mos-whats-new-note", text: item });
+        }
+      } else {
+        const list = banner.createEl("ul", { cls: "mos-whats-new-list" });
+        for (const item of section.items) {
+          list.createEl("li", { text: item });
+        }
+      }
     }
 
     dismissBtn.addEventListener("click", async () => {

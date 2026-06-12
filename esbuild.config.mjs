@@ -60,6 +60,7 @@ const ctx = await esbuild.context({
     "@lezer/lr",
     ...builtins,
   ],
+  loader: { ".md": "text" },
   format: "cjs",
   target: "es2018",
   logLevel: "info",
