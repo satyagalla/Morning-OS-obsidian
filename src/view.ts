@@ -39,7 +39,9 @@ export class MorningView extends ItemView {
     const today = todayStr();
     await scaffoldDailyNote(today, this.app, this.settings);
 
-    const alreadyRan = this.plugin.settings.agentLastRunDate === today;
+    const briefPath = `${this.settings.briefsDir}/${today}.json`;
+    const briefExists = await this.app.vault.adapter.exists(briefPath);
+    const alreadyRan = this.plugin.settings.agentLastRunDate === today && briefExists;
     if (!alreadyRan) {
       await this.plugin.triggerAgent();
       return;
