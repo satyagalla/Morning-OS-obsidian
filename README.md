@@ -33,8 +33,6 @@ The AI picks which of your items to surface. It never rewrites or edits your vau
 
 ---
 
----
-
 ## Works on mobile
 
 No terminal, no Python, no desktop-only dependencies. The plugin runs entirely inside Obsidian — tap the sun icon on your phone and your brief is ready.
