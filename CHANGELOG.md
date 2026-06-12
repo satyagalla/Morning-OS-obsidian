@@ -27,6 +27,8 @@ This release is about feel. The plugin works - it has since v0.2.0 - but it felt
 
 If you're one of the 125 - thank you. Keep the feedback coming.
 
+Next up: smarter agents, better personalization, and features I haven't told anyone about yet.
+
 ### Changes
 
 - Completely overhauled UI — adapts to your Obsidian theme, amber accent for task signals
