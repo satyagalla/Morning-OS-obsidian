@@ -161,4 +161,4 @@ Set `OBSIDIAN_PLUGIN_DIR` to your vault's plugin folder path.
 
 ---
 
-Built by [@satyagalla](https://github.com/satyagalla) — 125 people start their day with this. [Share your feedback](https://github.com/satyagalla/Morning-OS-obsidian/issues) or use the feedback button inside the plugin.
+Built by [@satyagalla](https://github.com/satyagalla). [Share your feedback](https://github.com/satyagalla/Morning-OS-obsidian/issues) or use the feedback button inside the plugin.
