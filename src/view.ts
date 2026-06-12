@@ -1,4 +1,7 @@
-import { ItemView, WorkspaceLeaf, TFile } from "obsidian";
+import { ItemView, WorkspaceLeaf, TFile, Modal, App, requestUrl } from "obsidian";
+
+const WEBHOOK_BUGS     = "https://discord.com/api/webhooks/1514853476990062683/hNbPlOaE13qKD33xxzDUMmUMhtyUZDqKIIr703U9ri8ug4_ujRqhcp2ohDR18DEU-0x6";
+const WEBHOOK_FEATURES = "https://discord.com/api/webhooks/1514853636856090737/zyUYjvGXZdBdrRkv7lBLe4Vaie0YLPENaZgy72xIYNiIWgLyb71ZT7qi7-axEz-Utd0d";
 import { DailyBrief, Task, Reminder } from "./types";
 import { MorningOSSettings } from "./settings";
 import type MorningOSPlugin from "./main";
@@ -153,6 +156,8 @@ export class MorningView extends ItemView {
     const scroll = container.createEl("div", { cls: "morning-os-scroll" });
     const wrapper = scroll.createEl("div", { cls: "morning-os-wrapper" });
 
+    this.renderWhatsNew(wrapper);
+
     if (!this.hasApiKey()) {
       this.renderApiKeyBanner(wrapper);
     }
@@ -173,6 +178,7 @@ export class MorningView extends ItemView {
     this.renderPendingTasks(wrapper);
     this.renderHobbyTasks(wrapper);
     this.renderWins(wrapper);
+    this.renderFeedbackFooter(wrapper);
   }
 
   private hasApiKey(): boolean {
@@ -546,9 +552,136 @@ export class MorningView extends ItemView {
     await this.app.vault.modify(file, content);
   }
 
+  private renderWhatsNew(parent: HTMLElement) {
+    const manifest = this.plugin.manifest;
+    if (manifest.version === this.settings.lastSeenVersion) return;
+
+    const entry = (this.settings.whatsNew ?? []).find((e) => e.version === manifest.version);
+    if (!entry) return;
+
+    const banner = parent.createEl("div", { cls: "mos-whats-new-banner" });
+
+    const top = banner.createEl("div", { cls: "mos-whats-new-top" });
+    const label = top.createEl("span", { cls: "mos-whats-new-label" });
+    label.createEl("span", { cls: "mos-whats-new-badge", text: `v${entry.version}` });
+    label.createEl("span", { text: " What's new" });
+
+    const dismissBtn = top.createEl("button", { cls: "mos-whats-new-dismiss", text: "Got it ✓" });
+
+    const list = banner.createEl("ul", { cls: "mos-whats-new-list" });
+    for (const item of entry.items) {
+      list.createEl("li", { text: item });
+    }
+
+    dismissBtn.addEventListener("click", async () => {
+      this.settings.lastSeenVersion = manifest.version;
+      await this.plugin.saveData(this.plugin.settings);
+      banner.remove();
+    });
+  }
+
+  private renderFeedbackFooter(parent: HTMLElement) {
+    const card = parent.createEl("div", { cls: "mos-feedback-card" });
+
+    const left = card.createEl("div", { cls: "mos-feedback-text" });
+    left.createEl("div", { cls: "mos-feedback-title", text: "Share your thoughts" });
+    left.createEl("div", { cls: "mos-feedback-sub", text: "What's working? What's missing?" });
+
+    const btn = card.createEl("button", { cls: "mos-feedback-btn", text: "Give feedback →" });
+    btn.addEventListener("click", () => new FeedbackModal(this.app).open());
+  }
+
   private daysBetween(dateStr: string, todayStr: string): number {
     const d1 = new Date(dateStr + "T00:00:00");
     const d2 = new Date(todayStr + "T00:00:00");
     return Math.round((d2.getTime() - d1.getTime()) / (1000 * 60 * 60 * 24));
+  }
+}
+
+class FeedbackModal extends Modal {
+  private type: "bug" | "feature" | null = null;
+  private description = "";
+
+  constructor(app: App) {
+    super(app);
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.addClass("mos-feedback-modal");
+
+    contentEl.createEl("h2", { cls: "mos-feedback-modal-title", text: "Share feedback" });
+    contentEl.createEl("p", { cls: "mos-feedback-modal-sub", text: "Your feedback shapes what gets built next." });
+
+    const typeRow = contentEl.createEl("div", { cls: "mos-feedback-type-row" });
+    const bugBtn = typeRow.createEl("button", { cls: "mos-feedback-type-btn", text: "🐛 Report a bug" });
+    const featBtn = typeRow.createEl("button", { cls: "mos-feedback-type-btn", text: "✨ Request a feature" });
+
+    const select = (selected: "bug" | "feature") => {
+      this.type = selected;
+      bugBtn.toggleClass("mos-feedback-type-active", selected === "bug");
+      featBtn.toggleClass("mos-feedback-type-active", selected === "feature");
+    };
+
+    bugBtn.addEventListener("click", () => select("bug"));
+    featBtn.addEventListener("click", () => select("feature"));
+
+    const textarea = contentEl.createEl("textarea", { cls: "mos-feedback-textarea" });
+    textarea.placeholder = "Describe briefly…";
+    textarea.rows = 4;
+    textarea.addEventListener("input", () => { this.description = textarea.value.trim(); });
+
+    const footer = contentEl.createEl("div", { cls: "mos-feedback-modal-footer" });
+    const status = footer.createEl("span", { cls: "mos-feedback-status" });
+    const submitBtn = footer.createEl("button", { cls: "mos-feedback-submit-btn", text: "Submit →" });
+
+    submitBtn.addEventListener("click", async () => {
+      if (!this.type) {
+        status.setText("Please select bug or feature request.");
+        return;
+      }
+      if (!this.description) {
+        status.setText("Please add a short description.");
+        return;
+      }
+
+      submitBtn.disabled = true;
+      submitBtn.setText("Sending…");
+      status.setText("");
+
+      const webhook = this.type === "bug" ? WEBHOOK_BUGS : WEBHOOK_FEATURES;
+      const label = this.type === "bug" ? "🐛 Bug report" : "✨ Feature request";
+
+      try {
+        await requestUrl({
+          url: webhook,
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            embeds: [{
+              title: label,
+              description: this.description,
+              color: this.type === "bug" ? 0xe5534b : 0xc9a84c,
+              footer: { text: "Morning OS feedback" },
+            }],
+          }),
+        });
+
+        contentEl.empty();
+        contentEl.addClass("mos-feedback-modal");
+        contentEl.createEl("div", { cls: "mos-feedback-success", text: "✓ Thanks! Feedback received." });
+        const closeBtn = contentEl.createEl("button", { cls: "mos-feedback-submit-btn", text: "Close" });
+        closeBtn.style.marginTop = "16px";
+        closeBtn.addEventListener("click", () => this.close());
+      } catch {
+        submitBtn.disabled = false;
+        submitBtn.setText("Submit →");
+        status.setText("Failed to send. Check your connection.");
+      }
+    });
+  }
+
+  onClose() {
+    this.contentEl.empty();
   }
 }

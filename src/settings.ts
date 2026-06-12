@@ -68,6 +68,10 @@ export interface MorningOSSettings {
 
   // Onboarding
   onboarded: boolean;
+
+  // What's new card
+  lastSeenVersion: string;
+  whatsNew: { version: string; items: string[] }[];
 }
 
 export const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
@@ -132,6 +136,21 @@ export const DEFAULT_SETTINGS: MorningOSSettings = {
   settingsChangedSinceRun: false,
 
   onboarded: false,
+
+  lastSeenVersion: "",
+  whatsNew: [
+    {
+      version: "0.2.0",
+      items: [
+        "Completed tasks now appear in the dashboard with strikethrough.",
+        "Goals bar collapses cleanly on mobile.",
+        "Floating action buttons are accessible via touch.",
+        "Daily note scaffolding no longer adds Thoughts and Reminders sections.",
+        "@remind tags are preserved when scaffolding daily notes.",
+      ],
+    },
+  ],
+
 };
 
 const PROVIDERS = {
@@ -203,6 +222,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
     this.renderHeadingsSection(containerEl);
     this.renderCountsSection(containerEl);
     this.renderModesSection(containerEl);
+    this.renderAboutSection(containerEl);
   }
 
   private renderAgentSection(containerEl: HTMLElement) {
@@ -538,6 +558,10 @@ export class MorningOSSettingTab extends PluginSettingTab {
     count("Hobby tasks", "hobbyTasksCount");
     count("Suggestions", "suggestionCount");
     count("Pending technical tasks", "technicalTasksCount");
+  }
+
+  private renderAboutSection(containerEl: HTMLElement) {
+    this.sectionHeading(containerEl, "About");
   }
 
   private renderModesSection(containerEl: HTMLElement) {

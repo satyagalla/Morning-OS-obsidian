@@ -1,9 +1,14 @@
 /* ── Morning OS Design Tokens ── */
 .morning-os {
-  /* Amber accent — the one branded color, used sparingly */
+  /* Amber accent — productivity signals (carried tasks, focus rings, suggestions) */
   --mos-accent:      #c9a84c;
   --mos-accent-dim:  color-mix(in srgb, #c9a84c 12%, transparent);
   --mos-accent-glow: color-mix(in srgb, #c9a84c 28%, transparent);
+
+  /* System color — What's New, feedback, product communication */
+  --mos-system:      #4a9d7f;
+  --mos-system-dim:  color-mix(in srgb, #4a9d7f 12%, transparent);
+  --mos-system-glow: color-mix(in srgb, #4a9d7f 28%, transparent);
 
   /* Semantic colors — fall through to Obsidian theme vars */
   --mos-red:    var(--color-red,    #e5534b);
@@ -32,11 +37,15 @@
   --mos-transition: 140ms ease;
 }
 
-/* Light mode accent adjustment — base amber is too light on cream */
+/* Light mode adjustments */
 .theme-light .morning-os {
   --mos-accent:      #8a6200;
   --mos-accent-dim:  color-mix(in srgb, #8a6200 12%, transparent);
   --mos-accent-glow: color-mix(in srgb, #8a6200 22%, transparent);
+
+  --mos-system:      #1a7d5f;
+  --mos-system-dim:  color-mix(in srgb, #1a7d5f 12%, transparent);
+  --mos-system-glow: color-mix(in srgb, #1a7d5f 22%, transparent);
 }
 
 /* ── Base ── */
@@ -704,6 +713,210 @@ h3[data-dirty]::after {
     flex-direction: column;
     gap: 10px;
   }
+}
+
+/* ── What's New banner ── */
+.mos-whats-new-banner {
+  border: 1px solid var(--mos-system-dim);
+  border-left: 3px solid var(--mos-system);
+  border-radius: var(--mos-radius-md);
+  padding: 12px 16px;
+  background: var(--mos-system-dim);
+}
+
+.mos-whats-new-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.mos-whats-new-label {
+  font-size: 0.82em;
+  font-weight: 600;
+  color: var(--mos-system);
+}
+
+.mos-whats-new-badge {
+  background: var(--mos-system);
+  color: var(--background-primary);
+  font-size: 0.78em;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-right: 6px;
+}
+
+.mos-whats-new-dismiss {
+  font-size: 0.75em;
+  padding: 2px 10px;
+  border-radius: var(--mos-radius-sm);
+  border: 1px solid var(--mos-system);
+  background: transparent;
+  color: var(--mos-system);
+  cursor: pointer;
+  transition: background var(--mos-transition), color var(--mos-transition);
+}
+
+.mos-whats-new-dismiss:hover {
+  background: var(--mos-system);
+  color: var(--background-primary);
+}
+
+.mos-whats-new-list {
+  margin: 0;
+  padding-left: 1.1em;
+  list-style: disc;
+}
+
+.mos-whats-new-list li {
+  font-size: 0.88em;
+  color: var(--mos-text-secondary);
+  padding: 2px 0;
+  line-height: 1.5;
+}
+
+/* ── Feedback card ── */
+.mos-feedback-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: var(--mos-radius-md);
+  border: 1px solid var(--mos-system-dim);
+  border-left: 3px solid var(--mos-system);
+  background: var(--mos-system-dim);
+  margin-top: 4px;
+}
+
+.mos-feedback-title {
+  font-size: 0.88em;
+  font-weight: 600;
+  color: var(--mos-system);
+}
+
+.mos-feedback-sub {
+  font-size: 0.78em;
+  color: var(--mos-text-faint);
+  margin-top: 2px;
+}
+
+.mos-feedback-btn {
+  font-size: 0.82em;
+  padding: 5px 14px;
+  border-radius: var(--mos-radius-sm);
+  border: 1px solid var(--mos-system);
+  background: transparent;
+  color: var(--mos-system);
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background var(--mos-transition), color var(--mos-transition);
+}
+
+.mos-feedback-btn:hover {
+  background: var(--mos-system);
+  color: var(--background-primary);
+}
+
+/* ── Feedback modal ── */
+.mos-feedback-modal-title {
+  font-size: 1.1em;
+  font-weight: 600;
+  color: var(--text-normal);
+  margin: 0 0 4px 0;
+}
+
+.mos-feedback-modal-sub {
+  font-size: 0.85em;
+  color: var(--text-muted);
+  margin: 0 0 16px 0;
+}
+
+.mos-feedback-type-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.mos-feedback-type-btn {
+  flex: 1;
+  padding: 8px 12px;
+  border-radius: var(--mos-radius-sm);
+  border: 1px solid var(--background-modifier-border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.88em;
+  transition: border-color var(--mos-transition), color var(--mos-transition), background var(--mos-transition);
+}
+
+.mos-feedback-type-btn:hover {
+  border-color: var(--mos-system);
+  color: var(--text-normal);
+}
+
+.mos-feedback-type-btn.mos-feedback-type-active {
+  border-color: var(--mos-system);
+  background: var(--mos-system-dim);
+  color: var(--mos-system);
+  font-weight: 600;
+}
+
+.mos-feedback-textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: var(--mos-radius-sm);
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: 0.9em;
+  font-family: var(--font-interface);
+  resize: vertical;
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color var(--mos-transition);
+}
+
+.mos-feedback-textarea:focus {
+  border-color: var(--mos-system);
+}
+
+.mos-feedback-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+
+.mos-feedback-submit-btn {
+  padding: 7px 20px;
+  border-radius: var(--mos-radius-sm);
+  border: none;
+  background: var(--mos-system);
+  color: var(--background-primary);
+  font-size: 0.88em;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity var(--mos-transition);
+}
+
+.mos-feedback-submit-btn:hover {
+  opacity: 0.85;
+}
+
+.mos-feedback-status {
+  font-size: 0.8em;
+  color: var(--text-error);
+  flex: 1;
+}
+
+.mos-feedback-success {
+  text-align: center;
+  padding: 24px 0 8px;
+  font-size: 1em;
+  font-weight: 600;
+  color: var(--mos-green);
 }
 
 /* ── Onboarding ── */
