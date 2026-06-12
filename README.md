@@ -1,5 +1,8 @@
 # Morning OS
 
+[![Obsidian Plugin](https://img.shields.io/badge/Obsidian-Plugin-7c3aed?logo=obsidian&logoColor=white)](https://obsidian.md/plugins/morning-os)
+[![Downloads](https://img.shields.io/badge/dynamic/json?url=https://raw.githubusercontent.com/obsidianmd/obsidian-releases/master/community-plugin-stats.json&query=%24%5B%22morning-os%22%5D.downloads&label=downloads&color=7c3aed)](https://obsidian.md/plugins/morning-os)
+
 > Your Obsidian vault, processed every morning. Morning OS reads your goals, tasks, and rules — and generates a personalized briefing dashboard. Spend your morning focused, not reorganizing.
 
 ![Morning OS Dashboard](images/dashboard-dark.png)
@@ -159,4 +162,4 @@ Set `OBSIDIAN_PLUGIN_DIR` to your vault's plugin folder path.
 
 ---
 
-Built by [@satyagalla](https://github.com/satyagalla). [Share your feedback](https://github.com/satyagalla/Morning-OS-obsidian/issues) or use the feedback button inside the plugin.
+Built by [@satyagalla](https://github.com/satyagalla) · For feedback use the button inside the plugin or [open a GitHub issue](https://github.com/satyagalla/Morning-OS-obsidian/issues)
