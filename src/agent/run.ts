@@ -70,22 +70,28 @@ export async function runAgent(app: App, settings: MorningOSSettings): Promise<A
 
   const remindersPath = `${settings.briefsDir}/reminders.json`;
   let allReminders: Array<{ text: string; source_date: string; remind_date: string; dismissed: boolean }> = [];
+  let remindersParseOk = true;
   const remindersExist = await app.vault.adapter.exists(remindersPath);
   if (remindersExist) {
     try {
       allReminders = JSON.parse(await app.vault.adapter.read(remindersPath));
-    } catch {}
+    } catch {
+      remindersParseOk = false;
+      console.error("Morning OS: failed to parse reminders.json — skipping write to avoid data loss");
+    }
   }
 
-  for (const nr of newReminders) {
-    const exists = allReminders.some(
-      r => r.text === nr.text && r.remind_date === nr.remind_date
-    );
-    if (!exists) allReminders.push(nr);
-  }
+  if (remindersParseOk) {
+    for (const nr of newReminders) {
+      const exists = allReminders.some(
+        r => r.text === nr.text && r.remind_date === nr.remind_date
+      );
+      if (!exists) allReminders.push(nr);
+    }
 
-  await app.vault.adapter.mkdir(settings.briefsDir);
-  await app.vault.adapter.write(remindersPath, JSON.stringify(allReminders, null, 2));
+    await app.vault.adapter.mkdir(settings.briefsDir);
+    await app.vault.adapter.write(remindersPath, JSON.stringify(allReminders, null, 2));
+  }
 
   const activeReminders = allReminders
     .filter(r => !r.dismissed && r.remind_date <= dateStr)
@@ -264,22 +270,28 @@ export async function refreshBrief(app: App, settings: MorningOSSettings): Promi
 
   const remindersPath = `${settings.briefsDir}/reminders.json`;
   let allReminders: Array<{ text: string; source_date: string; remind_date: string; dismissed: boolean }> = [];
+  let remindersParseOk = true;
   const remindersExist = await app.vault.adapter.exists(remindersPath);
   if (remindersExist) {
     try {
       allReminders = JSON.parse(await app.vault.adapter.read(remindersPath));
-    } catch {}
+    } catch {
+      remindersParseOk = false;
+      console.error("Morning OS: failed to parse reminders.json — skipping write to avoid data loss");
+    }
   }
 
-  for (const nr of newReminders) {
-    const existsAlready = allReminders.some(
-      r => r.text === nr.text && r.remind_date === nr.remind_date && r.source_date === nr.source_date
-    );
-    if (!existsAlready) allReminders.push(nr);
-  }
+  if (remindersParseOk) {
+    for (const nr of newReminders) {
+      const existsAlready = allReminders.some(
+        r => r.text === nr.text && r.remind_date === nr.remind_date && r.source_date === nr.source_date
+      );
+      if (!existsAlready) allReminders.push(nr);
+    }
 
-  await app.vault.adapter.mkdir(settings.briefsDir);
-  await app.vault.adapter.write(remindersPath, JSON.stringify(allReminders, null, 2));
+    await app.vault.adapter.mkdir(settings.briefsDir);
+    await app.vault.adapter.write(remindersPath, JSON.stringify(allReminders, null, 2));
+  }
 
   const activeReminders = allReminders
     .filter(r => !r.dismissed && r.remind_date <= dateStr)
