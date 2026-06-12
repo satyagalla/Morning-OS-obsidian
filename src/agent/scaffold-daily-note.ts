@@ -30,7 +30,6 @@ export async function scaffoldDailyNote(
   const prev = await findMostRecentDailyNote(dateStr, app, settings);
   const redAlert: string[] = [];
   const regular: string[] = [];
-  let prevReminderLines: string[] = [];
 
   if (prev) {
     const parsed = await parseDailyNote(prev.date, app, settings);
@@ -43,25 +42,8 @@ export async function scaffoldDailyNote(
         const taskText = t.remind_date ? `${t.text} @remind(${t.remind_date})` : t.text;
         return `- [ ] ${taskText}`;
       }));
-      prevReminderLines = parsed.reminders.map(r => `- ${r}`);
     }
   }
-
-  const remindersPath = `${settings.briefsDir}/reminders.json`;
-  let jsonReminderLines: string[] = [];
-  if (await app.vault.adapter.exists(remindersPath)) {
-    try {
-      const allReminders: Array<{ text: string; source_date: string; remind_date: string; dismissed: boolean }> =
-        JSON.parse(await app.vault.adapter.read(remindersPath));
-      jsonReminderLines = allReminders
-        .filter(r => !r.dismissed && r.remind_date <= dateStr)
-        .map(r => `- ${r.text} @remind(${r.remind_date})`);
-    } catch {}
-  }
-
-  // Merge note-local carried reminders with JSON-store reminders, deduplicating by string equality.
-  const seen = new Set(prevReminderLines);
-  const reminderLines = [...prevReminderLines, ...jsonReminderLines.filter(l => !seen.has(l))];
 
   const lines: string[] = [
     `## ${settings.sectionRedAlert}`,
@@ -71,11 +53,6 @@ export async function scaffoldDailyNote(
     ...regular,
     ``,
     `## ${settings.sectionWins}`,
-    ``,
-    `## ${settings.sectionThoughts}`,
-    ``,
-    `## Reminders`,
-    ...reminderLines,
     ``,
   ];
 
