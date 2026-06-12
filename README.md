@@ -2,7 +2,7 @@
 
 > Your Obsidian vault, processed every morning. Morning OS reads your goals, tasks, and rules — and generates a personalized briefing dashboard. Spend your morning focused, not reorganizing.
 
-![Morning OS Dashboard](images/dashboard-dark.png?raw=true)
+![Morning OS Dashboard](images/dashboard-dark.png)
 
 ---
 
@@ -16,7 +16,7 @@ Morning OS does that reading for you. Open the panel, your day is already laid o
 
 ## What you get
 
-![Dashboard Light Mode](images/dashboard-light.png?raw=true)
+![Dashboard Light Mode](images/dashboard-light.png)
 
 | Section | What it does |
 |---|---|
@@ -43,7 +43,7 @@ The only requirement is that your vault syncs across devices.
 
 > **Recommended:** [Remotely Save](https://github.com/remotely-save/remotely-save) with Dropbox. Make sure your sync settings include folders starting with `_` — that's where Morning OS writes its briefs.
 
-![Mobile view](images/mobile.png?raw=true)
+![Mobile view](images/mobile.png)
 
 ---
 
