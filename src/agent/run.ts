@@ -97,6 +97,8 @@ async function saveReminders(
   reminders: ReminderEntry[],
   app: App
 ): Promise<void> {
+  const dir = remindersPath.substring(0, remindersPath.lastIndexOf("/"));
+  await app.vault.adapter.mkdir(dir);
   const json = JSON.stringify(reminders, null, 2);
   await app.vault.adapter.write(remindersPath, json);
   const backupPath = remindersPath.replace(/\.json$/, ".backup.json");
