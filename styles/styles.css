@@ -17,6 +17,10 @@
   --mos-blue:   var(--color-blue,   #388bfd);
   --mos-purple: var(--color-purple, #a371f7);
 
+  /* Rose/mauve — personal life, hobby, long-term vision */
+  --mos-rose:     #e05585;
+  --mos-rose-dim: color-mix(in srgb, #e05585 12%, transparent);
+
   --mos-red-rgb:    var(--color-red-rgb,    229, 83, 75);
   --mos-green-rgb:  var(--color-green-rgb,  63, 185, 80);
   --mos-orange-rgb: var(--color-orange-rgb, 201, 112, 10);
@@ -46,6 +50,9 @@
   --mos-system:      #1a7d5f;
   --mos-system-dim:  color-mix(in srgb, #1a7d5f 12%, transparent);
   --mos-system-glow: color-mix(in srgb, #1a7d5f 22%, transparent);
+
+  --mos-rose:     #a05570;
+  --mos-rose-dim: color-mix(in srgb, #a05570 12%, transparent);
 }
 
 /* ── Base ── */
@@ -129,7 +136,7 @@
   width: 6px;
   height: 40px;
   border-radius: 4px 0 0 4px;
-  background: var(--mos-accent);
+  background: var(--mos-system);
   opacity: 0.4;
   cursor: pointer;
   transition: opacity var(--mos-transition), width var(--mos-transition);
@@ -156,7 +163,7 @@
 
 .morning-os-fab:hover {
   color: var(--text-normal);
-  border-color: var(--mos-accent);
+  border-color: var(--mos-system);
 }
 
 /* ── Identity strip ── */
@@ -256,8 +263,8 @@
 }
 
 .morning-os-goals-pill-long {
-  background: color-mix(in srgb, var(--mos-purple) 12%, transparent);
-  color: var(--mos-purple);
+  background: var(--mos-rose-dim);
+  color: var(--mos-rose);
 }
 
 .morning-os-goals-panel {
@@ -346,8 +353,12 @@
 }
 
 .morning-os-card-rules {
-  border-left: 2px solid var(--background-modifier-border);
+  border-left: 2px solid rgba(255, 255, 255, 0.6);
   padding-left: 14px;
+}
+
+.theme-light .morning-os-card-rules {
+  border-left: 2px solid rgba(0, 0, 0, 0.75);
 }
 
 .morning-os-card-wins {
@@ -558,7 +569,7 @@
 
 /* ── Hobby tasks ── */
 .morning-os-hobby-card {
-  border-left: 2px solid var(--mos-purple);
+  border-left: 2px solid var(--mos-rose);
   padding-left: 14px;
 }
 
@@ -769,6 +780,31 @@ h3[data-dirty]::after {
   list-style: disc;
 }
 
+.mos-whats-new-note {
+  font-size: 0.85em;
+  color: var(--mos-text-secondary);
+  line-height: 1.6;
+  font-style: italic;
+  margin: 0 0 10px 0;
+}
+
+.mos-whats-new-summary {
+  font-size: 0.82em;
+  font-weight: 600;
+  color: var(--mos-system);
+  margin: 0 0 10px 0;
+  line-height: 1.5;
+}
+
+.mos-whats-new-section-heading {
+  font-size: 0.68em;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--mos-text-faint);
+  margin: 10px 0 4px 0;
+}
+
 .mos-whats-new-list li {
   font-size: 0.88em;
   color: var(--mos-text-secondary);
@@ -969,7 +1005,7 @@ h3[data-dirty]::after {
 
 .mos-onboard-folder-input:focus {
   outline: none;
-  border-color: var(--mos-accent);
+  border-color: var(--mos-system);
 }
 
 .mos-onboard-btn {
@@ -977,7 +1013,7 @@ h3[data-dirty]::after {
   padding: 10px 28px;
   border: none;
   border-radius: 20px;
-  background: var(--mos-accent);
+  background: var(--mos-system);
   color: var(--background-primary);
   font-size: 0.95em;
   font-weight: 600;
