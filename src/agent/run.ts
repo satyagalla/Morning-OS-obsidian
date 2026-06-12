@@ -360,7 +360,7 @@ export async function refreshBrief(app: App, settings: MorningOSSettings): Promi
   if (remindersWriteOkRefresh) {
     for (const nr of newReminders) {
       const existsAlready = allRemindersRefresh.some(
-        r => r.text === nr.text && r.remind_date === nr.remind_date && r.source_date === nr.source_date
+        r => r.text === nr.text && r.remind_date === nr.remind_date
       );
       if (!existsAlready) allRemindersRefresh.push(nr);
     }

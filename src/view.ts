@@ -378,7 +378,14 @@ export class MorningView extends ItemView {
       card.createEl("p", { cls: "morning-os-suggestion-text", text: s.text });
 
       const footer = card.createEl("div", { cls: "morning-os-suggestion-footer" });
-      footer.createEl("span", { cls: "morning-os-suggestion-source", text: s.source });
+      const sourceLabel: Record<string, string> = {
+        tasks: "Today's Tasks",
+        goals: "Goals",
+        technical_backlog: "Technical Backlog",
+        carried_tasks: "Carried Tasks",
+        wins: "Yesterday's Wins",
+      };
+      footer.createEl("span", { cls: "morning-os-suggestion-source", text: sourceLabel[s.source] ?? s.source });
 
       const reactions = footer.createEl("div", { cls: "morning-os-suggestion-reactions" });
       const thumbUp = reactions.createEl("button", { cls: "morning-os-reaction-btn", text: "👍" });

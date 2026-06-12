@@ -90,8 +90,8 @@ ${data.yesterdayCompleted}`;
   }
 
   if (data.modeSuggestion) {
-    schemaFields.push(`  "suggestions": [{"text": "...", "source": "vault/path/to/note"}]`);
-    rules.push(`- suggestions: Generate exactly ${data.suggestionCount} short insights (1-2 sentences each). This is the ONLY field where you may generate new text. Use Yesterday's Wins and Yesterday's Completed Tasks to understand momentum — what went well, what got done. Suggest what to tackle next by drawing from the Technical Tasks Backlog in relation to today's tasks and goals. Also point out stale carried tasks or surface patterns (e.g., avoidance). Source = the vault file path most relevant to the insight.`);
+    schemaFields.push(`  "suggestions": [{"text": "...", "source": "tasks|goals|technical_backlog|carried_tasks|wins"}]`);
+    rules.push(`- suggestions: Generate exactly ${data.suggestionCount} short insights (1-2 sentences each). This is the ONLY field where you may generate new text. Use Yesterday's Wins and Yesterday's Completed Tasks to understand momentum — what went well, what got done. Suggest what to tackle next by drawing from the Technical Tasks Backlog in relation to today's tasks and goals. Also point out stale carried tasks or surface patterns (e.g., avoidance). source MUST be exactly one of: "tasks", "goals", "technical_backlog", "carried_tasks", "wins" — pick whichever section the insight primarily draws from. No other values are allowed.`);
   }
 
   if (data.modeTechnicalTasks) {

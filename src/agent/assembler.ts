@@ -1,7 +1,9 @@
 import type { MorningOSSettings } from "../settings";
-import type { DailyBrief, Reminder } from "../types";
+import type { DailyBrief, Reminder, SuggestionSource } from "../types";
 import type { CarriedTasks, TaskWithCarry } from "./carry-detector";
 import type { ParsedGoals } from "./vault-reader";
+
+const VALID_SOURCES = new Set<string>(["tasks", "goals", "technical_backlog", "carried_tasks", "wins"]);
 
 export interface LLMOutput {
   tactical_rules?: string[];
@@ -71,7 +73,10 @@ export function assembleBrief(
 
   const suggestions =
     settings.modeSuggestion && llmOutput?.suggestions
-      ? llmOutput.suggestions.slice(0, settings.suggestionCount)
+      ? llmOutput.suggestions.slice(0, settings.suggestionCount).map(s => ({
+          text: s.text,
+          source: (VALID_SOURCES.has(s.source) ? s.source : "tasks") as SuggestionSource,
+        }))
       : [];
 
   const technicalTasks =

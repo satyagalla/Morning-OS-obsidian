@@ -3,9 +3,16 @@ export interface Task {
   carried_from: string | null;
 }
 
+export type SuggestionSource =
+  | "tasks"
+  | "goals"
+  | "technical_backlog"
+  | "carried_tasks"
+  | "wins";
+
 export interface Suggestion {
   text: string;
-  source: string;
+  source: SuggestionSource;
 }
 
 export interface Reminder {
