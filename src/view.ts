@@ -197,11 +197,13 @@ export class MorningView extends ItemView {
   private renderHeader(parent: HTMLElement) {
     const header = parent.createEl("div", { cls: "morning-os-header" });
     const dateObj = new Date(this.brief!.date + "T00:00:00");
-    header.createEl("span", {
-      cls: "morning-os-date",
-      text: dateObj.toLocaleDateString("en-US", {
-        weekday: "long", day: "numeric", month: "long", year: "numeric",
-      }),
+    header.createEl("div", {
+      cls: "morning-os-date-weekday",
+      text: dateObj.toLocaleDateString("en-US", { weekday: "long" }),
+    });
+    header.createEl("div", {
+      cls: "morning-os-date-numeric",
+      text: dateObj.toLocaleDateString("en-US", { day: "numeric", month: "long", year: "numeric" }),
     });
   }
 
@@ -353,7 +355,7 @@ export class MorningView extends ItemView {
 
   private renderTacticalRules(parent: HTMLElement) {
     parent.createEl("h2", { cls: "morning-os-section-heading", text: "Rules for today" });
-    const card = parent.createEl("div", { cls: "morning-os-card" });
+    const card = parent.createEl("div", { cls: "morning-os-card morning-os-card-rules" });
     const list = card.createEl("ul");
     for (const rule of this.brief!.tactical_rules) {
       list.createEl("li", { text: rule });
@@ -423,7 +425,7 @@ export class MorningView extends ItemView {
       const checkbox = row.createEl("input", { type: "checkbox" });
       row.createEl("span", { cls: "morning-os-task-text", text: reminder.text });
       row.createEl("span", {
-        cls: "morning-os-carried-badge",
+        cls: "morning-os-reminder-badge",
         text: `noted ${reminder.source_date}`,
       });
       checkbox.addEventListener("change", async () => {
@@ -481,8 +483,8 @@ export class MorningView extends ItemView {
 
   private renderWins(parent: HTMLElement) {
     const section = parent.createEl("div", { cls: "morning-os-wins" });
-    section.createEl("h2", { cls: "morning-os-section-heading", text: "Wins today" });
-    const card = section.createEl("div", { cls: "morning-os-card" });
+    section.createEl("h2", { cls: "morning-os-section-heading morning-os-green-heading", text: "Wins today" });
+    const card = section.createEl("div", { cls: "morning-os-card morning-os-card-wins" });
 
     const list = card.createEl("div", { cls: "morning-os-wins-list" });
     this.renderWinsList(list);

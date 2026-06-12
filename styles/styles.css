@@ -1,7 +1,50 @@
+/* ── Morning OS Design Tokens ── */
+.morning-os {
+  /* Amber accent — the one branded color, used sparingly */
+  --mos-accent:      #c9a84c;
+  --mos-accent-dim:  color-mix(in srgb, #c9a84c 12%, transparent);
+  --mos-accent-glow: color-mix(in srgb, #c9a84c 28%, transparent);
+
+  /* Semantic colors — fall through to Obsidian theme vars */
+  --mos-red:    var(--color-red,    #e5534b);
+  --mos-green:  var(--color-green,  #3fb950);
+  --mos-orange: var(--color-orange, #c9700a);
+  --mos-blue:   var(--color-blue,   #388bfd);
+  --mos-purple: var(--color-purple, #a371f7);
+
+  --mos-red-rgb:    var(--color-red-rgb,    229, 83, 75);
+  --mos-green-rgb:  var(--color-green-rgb,  63, 185, 80);
+  --mos-orange-rgb: var(--color-orange-rgb, 201, 112, 10);
+  --mos-blue-rgb:   var(--color-blue-rgb,   56, 139, 253);
+  --mos-purple-rgb: var(--color-purple-rgb, 163, 113, 247);
+
+  /* Text hierarchy — opacity-based off Obsidian's text-normal */
+  --mos-text:           var(--text-normal);
+  --mos-text-secondary: color-mix(in srgb, var(--text-normal) 65%, transparent);
+  --mos-text-faint:     color-mix(in srgb, var(--text-normal) 35%, transparent);
+
+  /* Shape */
+  --mos-radius-sm: 6px;
+  --mos-radius-md: 10px;
+  --mos-radius-lg: 14px;
+
+  /* Motion */
+  --mos-transition: 140ms ease;
+}
+
+/* Light mode accent adjustment — base amber is too light on cream */
+.theme-light .morning-os {
+  --mos-accent:      #8a6200;
+  --mos-accent-dim:  color-mix(in srgb, #8a6200 12%, transparent);
+  --mos-accent-glow: color-mix(in srgb, #8a6200 22%, transparent);
+}
+
+/* ── Base ── */
 .morning-os {
   padding: 0;
   font-family: var(--font-interface);
   background: var(--background-primary);
+  color: var(--text-normal);
   height: 100%;
   position: relative;
 }
@@ -14,7 +57,7 @@
 .morning-os-wrapper {
   max-width: 960px;
   margin: 0 auto;
-  padding: 32px 28px 80px;
+  padding: 28px 24px 80px;
   display: flex;
   flex-direction: column;
   gap: 20px;
@@ -23,9 +66,28 @@
 /* ── Header ── */
 .morning-os-header {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  gap: 2px;
+  padding: 20px 0 16px 0;
+  position: relative;
 }
 
+
+.morning-os-date-weekday {
+  font-size: 2em;
+  font-weight: 300;
+  letter-spacing: -0.02em;
+  color: var(--text-normal);
+  line-height: 1.15;
+}
+
+.morning-os-date-numeric {
+  font-size: 0.95em;
+  color: var(--mos-text-secondary);
+  letter-spacing: 0.01em;
+}
+
+/* ── Floating actions ── */
 .morning-os-floating-actions {
   position: absolute;
   top: 24px;
@@ -36,12 +98,12 @@
   gap: 18px;
   z-index: 100;
   padding: 10px 8px;
-  border-radius: 6px 0 0 6px;
-  background: var(--background-primary);
-  box-shadow: -2px 0 8px rgba(0, 0, 0, 0.15);
+  border-radius: var(--mos-radius-sm) 0 0 var(--mos-radius-sm);
+  background: var(--background-secondary);
+  box-shadow: var(--shadow-s);
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.2s ease;
+  transition: opacity var(--mos-transition);
 }
 
 .morning-os-floating-actions:hover,
@@ -58,14 +120,14 @@
   width: 6px;
   height: 40px;
   border-radius: 4px 0 0 4px;
-  background: var(--interactive-accent);
-  opacity: 0.5;
+  background: var(--mos-accent);
+  opacity: 0.4;
   cursor: pointer;
-  transition: opacity 0.2s ease, width 0.2s ease;
+  transition: opacity var(--mos-transition), width var(--mos-transition);
 }
 
 .morning-os-floating-handle:hover {
-  opacity: 1;
+  opacity: 0.85;
   width: 8px;
 }
 
@@ -79,26 +141,21 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+  box-shadow: none;
+  transition: color var(--mos-transition), border-color var(--mos-transition);
 }
 
 .morning-os-fab:hover {
   color: var(--text-normal);
-  background: var(--background-modifier-hover);
-  border-color: var(--interactive-accent);
-}
-
-.morning-os-date {
-  font-size: 1.1em;
-  font-weight: 600;
-  color: var(--text-normal);
+  border-color: var(--mos-accent);
 }
 
 /* ── Identity strip ── */
 .morning-os-identity-strip {
-  background: var(--background-secondary);
-  border-radius: 10px;
-  padding: 16px 22px;
+  background: transparent;
+  border-radius: 0;
+  padding: 8px 0 12px 0;
+  border-bottom: 1px solid var(--background-modifier-border);
   display: flex;
   align-items: baseline;
   gap: 20px;
@@ -110,7 +167,7 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--text-faint);
+  color: var(--mos-text-faint);
   white-space: nowrap;
   flex-shrink: 0;
 }
@@ -123,15 +180,22 @@
 }
 
 .morning-os-identity-rule {
-  font-size: 0.92em;
-  color: var(--text-normal);
-  background: var(--background-primary);
-  border-radius: 6px;
-  padding: 5px 12px;
+  font-size: 0.88em;
+  color: var(--mos-text-secondary);
+  background: transparent;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--mos-radius-sm);
+  padding: 3px 10px;
   line-height: 1.4;
+  transition: color var(--mos-transition), border-color var(--mos-transition);
 }
 
-/* ── Goals (hover to reveal) ── */
+.morning-os-identity-rule:hover {
+  color: var(--text-normal);
+  border-color: var(--mos-accent);
+}
+
+/* ── Goals (click to reveal) ── */
 .morning-os-goals-wrap {
   position: relative;
 }
@@ -140,10 +204,10 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  cursor: default;
-  padding: 10px 18px;
-  background: var(--background-secondary);
-  border-radius: 8px;
+  cursor: pointer;
+  padding: 8px 0;
+  background: transparent;
+  border-bottom: 1px solid var(--background-modifier-border);
 }
 
 .morning-os-goals-toggle-label {
@@ -151,13 +215,13 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--text-muted);
+  color: var(--mos-text-faint);
 }
 
 .morning-os-goals-toggle-hint {
   font-size: 0.72em;
-  color: var(--text-faint);
-  font-style: italic;
+  color: var(--mos-accent);
+  font-style: normal;
   white-space: nowrap;
   margin-left: auto;
 }
@@ -171,20 +235,20 @@
 
 .morning-os-goals-preview-pill {
   font-size: 0.82em;
-  padding: 3px 10px;
-  border-radius: 6px;
+  padding: 2px 9px;
+  border-radius: var(--mos-radius-sm);
   line-height: 1.4;
   white-space: nowrap;
 }
 
 .morning-os-goals-pill-short {
-  background: rgba(var(--color-blue-rgb), 0.12);
-  color: var(--color-blue);
+  background: color-mix(in srgb, var(--mos-blue) 12%, transparent);
+  color: var(--mos-blue);
 }
 
 .morning-os-goals-pill-long {
-  background: rgba(var(--color-purple-rgb), 0.12);
-  color: var(--color-purple);
+  background: color-mix(in srgb, var(--mos-purple) 12%, transparent);
+  color: var(--mos-purple);
 }
 
 .morning-os-goals-panel {
@@ -194,11 +258,11 @@
   left: 0;
   right: 0;
   z-index: 100;
-  background: var(--background-primary);
+  background: var(--background-secondary);
   border: 1px solid var(--background-modifier-border);
-  border-radius: 10px;
+  border-radius: var(--mos-radius-lg);
   padding: 16px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-l);
 }
 
 .morning-os-goals-wrap:hover .morning-os-goals-panel,
@@ -217,7 +281,7 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--text-muted);
+  color: var(--mos-text-faint);
   margin: 0 0 8px 0;
 }
 
@@ -233,17 +297,17 @@
 .morning-os-right {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 0;
 }
 
 /* ── Section headings ── */
 .morning-os-section-heading {
-  font-size: 0.72em;
-  font-weight: 600;
+  font-size: 0.68em;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-muted);
-  margin: 8px 0 6px 0;
+  letter-spacing: 0.1em;
+  color: var(--mos-text-faint);
+  margin: 20px 0 6px 0;
 }
 
 .morning-os-left .morning-os-section-heading:first-child,
@@ -253,18 +317,33 @@
 
 .morning-os .morning-os-red-heading,
 .morning-os-wrapper .morning-os-red-heading {
-  color: var(--text-error);
+  color: var(--mos-red);
+}
+
+.morning-os-green-heading {
+  color: var(--mos-green);
 }
 
 /* ── Cards ── */
 .morning-os-card {
-  background: var(--background-secondary);
-  border-radius: 8px;
-  padding: 14px 18px;
+  background: var(--background-primary);
+  border-radius: var(--mos-radius-md);
+  padding: 12px 16px;
 }
 
 .morning-os-card-red {
-  border-left: 3px solid var(--text-error);
+  border-left: 2px solid var(--mos-red);
+  padding-left: 14px;
+}
+
+.morning-os-card-rules {
+  border-left: 2px solid var(--background-modifier-border);
+  padding-left: 14px;
+}
+
+.morning-os-card-wins {
+  border-left: 2px solid var(--mos-green);
+  padding-left: 14px;
 }
 
 .morning-os-card ul {
@@ -277,13 +356,19 @@
   padding: 4px 0;
   font-size: 0.92em;
   color: var(--text-normal);
-  line-height: 1.5;
+  line-height: 1.55;
+}
+
+.morning-os-card-rules ul li {
+  color: var(--mos-text-secondary);
+  line-height: 1.7;
+  font-size: 0.88em;
 }
 
 .morning-os-card ul li::before {
-  content: "•";
+  content: "·";
   margin-right: 10px;
-  color: var(--text-faint);
+  color: var(--mos-text-faint);
 }
 
 /* ── Tasks ── */
@@ -297,32 +382,43 @@
 .morning-os-task-row input[type="checkbox"] {
   margin: 0;
   flex-shrink: 0;
+  accent-color: var(--mos-accent);
 }
 
 .morning-os-task-text {
   flex: 1;
   font-size: 0.92em;
   color: var(--text-normal);
-  line-height: 1.4;
+  line-height: 1.5;
 }
 
 .morning-os-task-done .morning-os-task-text {
   text-decoration: line-through;
-  color: var(--text-muted);
+  color: var(--mos-text-faint);
 }
 
 .morning-os-carried-badge {
-  font-size: 0.72em;
-  color: var(--text-error);
-  background: rgba(var(--color-red-rgb), 0.1);
-  padding: 2px 8px;
+  font-size: 0.68em;
+  font-weight: 600;
+  color: var(--mos-accent);
+  background: var(--mos-accent-dim);
+  padding: 2px 7px;
   border-radius: 10px;
+  white-space: nowrap;
+}
+
+.morning-os-reminder-badge {
+  font-size: 0.68em;
+  color: var(--mos-text-faint);
+  background: transparent;
+  padding: 2px 0 2px 8px;
   white-space: nowrap;
 }
 
 /* ── Suggestion ── */
 .morning-os-suggestion-card {
-  border-left: 3px solid var(--color-accent);
+  border-left: 2px solid var(--mos-accent);
+  padding-left: 14px;
 }
 
 .morning-os-suggestion-text {
@@ -342,7 +438,7 @@
 
 .morning-os-suggestion-source {
   font-size: 0.72em;
-  color: var(--text-faint);
+  color: var(--mos-text-faint);
 }
 
 .morning-os-suggestion-reactions {
@@ -354,13 +450,13 @@
 .morning-os-reaction-btn {
   background: none;
   border: 1px solid var(--background-modifier-border);
-  border-radius: 6px;
+  border-radius: var(--mos-radius-sm);
   padding: 2px 8px;
   cursor: pointer;
   font-size: 0.88em;
   line-height: 1.6;
   color: var(--text-muted);
-  transition: background 0.15s, border-color 0.15s;
+  transition: background var(--mos-transition), border-color var(--mos-transition);
 }
 
 .morning-os-reaction-btn:hover {
@@ -368,13 +464,16 @@
 }
 
 .morning-os-reaction-btn.morning-os-reaction-active {
-  background: var(--background-modifier-hover);
-  border-color: var(--color-accent);
+  background: var(--mos-accent-dim);
+  border-color: var(--mos-accent);
 }
 
-/* ── Pending tasks (hover to reveal) ── */
+/* ── Pending tasks ── */
 .morning-os-pending-wrap {
   position: relative;
+  padding-top: 16px;
+  border-top: 1px solid var(--background-modifier-border);
+  margin-top: 4px;
 }
 
 .morning-os-pending-toggle {
@@ -382,9 +481,9 @@
   align-items: center;
   gap: 10px;
   cursor: default;
-  padding: 10px 18px;
-  background: var(--background-secondary);
-  border-radius: 8px;
+  padding: 10px 16px;
+  background: var(--background-primary);
+  border-radius: var(--mos-radius-md);
 }
 
 .morning-os-pending-label {
@@ -392,7 +491,7 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--text-muted);
+  color: var(--mos-text-faint);
 }
 
 .morning-os-pending-count {
@@ -411,11 +510,11 @@
   left: 0;
   right: 0;
   z-index: 100;
-  background: var(--background-primary);
+  background: var(--background-secondary);
   border: 1px solid var(--background-modifier-border);
-  border-radius: 10px;
-  padding: 16px 18px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  border-radius: var(--mos-radius-lg);
+  padding: 16px;
+  box-shadow: var(--shadow-l);
   max-height: 320px;
   overflow-y: auto;
 }
@@ -445,12 +544,13 @@
 .morning-os-pending-list li::before {
   content: "·";
   margin-right: 10px;
-  color: var(--text-faint);
+  color: var(--mos-text-faint);
 }
 
-/* ── Hobby tasks (full-width) ── */
+/* ── Hobby tasks ── */
 .morning-os-hobby-card {
-  border-left: 3px solid var(--color-green);
+  border-left: 2px solid var(--mos-purple);
+  padding-left: 14px;
 }
 
 .morning-os-hobby-list {
@@ -465,9 +565,9 @@
 .morning-os-hobby-list li {
   font-size: 0.88em;
   color: var(--text-normal);
-  background: var(--background-primary);
-  border-radius: 6px;
-  padding: 4px 12px;
+  background: var(--background-secondary);
+  border-radius: var(--mos-radius-sm);
+  padding: 3px 10px;
   line-height: 1.5;
 }
 
@@ -500,36 +600,39 @@
   flex: 1;
   font-size: 0.88em;
   padding: 5px 10px;
-  border-radius: 6px;
+  border-radius: var(--mos-radius-sm);
   border: 1px solid var(--background-modifier-border);
   background: var(--background-primary);
   color: var(--text-normal);
   outline: none;
+  transition: border-color var(--mos-transition), box-shadow var(--mos-transition);
 }
 
 .morning-os-wins-input:focus {
-  border-color: var(--color-accent);
+  border-color: var(--mos-accent);
+  box-shadow: 0 0 0 2px var(--mos-accent-glow);
 }
 
 .morning-os-wins-add-btn {
   font-size: 0.82em;
   padding: 5px 14px;
-  border-radius: 6px;
+  border-radius: var(--mos-radius-sm);
   border: 1px solid var(--background-modifier-border);
-  background: var(--background-modifier-hover);
-  color: var(--text-normal);
+  background: var(--background-primary);
+  color: var(--text-muted);
   cursor: pointer;
   white-space: nowrap;
+  transition: background var(--mos-transition), color var(--mos-transition), border-color var(--mos-transition);
 }
 
 .morning-os-wins-add-btn:hover {
-  background: var(--interactive-accent);
-  color: var(--text-on-accent);
-  border-color: var(--interactive-accent);
+  background: var(--mos-accent);
+  color: var(--background-primary);
+  border-color: var(--mos-accent);
 }
 
 .morning-os-empty-state {
-  color: var(--text-faint);
+  color: var(--mos-text-faint);
   font-style: italic;
   font-size: 0.88em;
   margin: 0 0 10px 0;
@@ -552,7 +655,7 @@ h3[data-dirty]::after {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--color-orange);
+  background: var(--mos-orange);
   margin-left: 8px;
   vertical-align: middle;
   position: relative;
@@ -565,10 +668,10 @@ h3[data-dirty]::after {
   gap: 8px;
   padding: 8px 12px;
   margin: 4px 0 8px;
-  border-radius: 6px;
-  background: rgba(var(--color-orange-rgb), 0.12);
-  border: 1px solid rgba(var(--color-orange-rgb), 0.35);
-  color: var(--color-orange);
+  border-radius: var(--mos-radius-sm);
+  background: color-mix(in srgb, var(--mos-orange) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--mos-orange) 35%, transparent);
+  color: var(--mos-orange);
   font-size: 0.88em;
 }
 
@@ -616,7 +719,7 @@ h3[data-dirty]::after {
 }
 
 .mos-onboard-icon {
-  color: var(--interactive-accent);
+  color: var(--mos-accent);
   margin-bottom: 12px;
 }
 
@@ -644,7 +747,7 @@ h3[data-dirty]::after {
   width: 100%;
   padding: 10px 14px;
   border: 1px solid var(--background-modifier-border);
-  border-radius: 8px;
+  border-radius: var(--mos-radius-md);
   background: var(--background-secondary);
   color: var(--text-normal);
   font-size: 0.95em;
@@ -653,7 +756,7 @@ h3[data-dirty]::after {
 
 .mos-onboard-folder-input:focus {
   outline: none;
-  border-color: var(--interactive-accent);
+  border-color: var(--mos-accent);
 }
 
 .mos-onboard-btn {
@@ -661,12 +764,12 @@ h3[data-dirty]::after {
   padding: 10px 28px;
   border: none;
   border-radius: 20px;
-  background: var(--interactive-accent);
-  color: var(--text-on-accent);
+  background: var(--mos-accent);
+  color: var(--background-primary);
   font-size: 0.95em;
   font-weight: 600;
   cursor: pointer;
-  transition: opacity 0.15s ease;
+  transition: opacity var(--mos-transition);
 }
 
 .mos-onboard-btn:hover {
@@ -678,7 +781,7 @@ h3[data-dirty]::after {
   max-width: 500px;
   background: var(--background-secondary);
   border: 1px solid var(--background-modifier-border);
-  border-radius: 8px;
+  border-radius: var(--mos-radius-md);
   padding: 20px 24px;
   text-align: left;
   font-family: var(--font-monospace);
@@ -702,9 +805,9 @@ h3[data-dirty]::after {
   align-items: center;
   gap: 12px;
   padding: 10px 16px;
-  background: rgba(var(--color-blue-rgb), 0.08);
-  border: 1px solid rgba(var(--color-blue-rgb), 0.2);
-  border-radius: 8px;
+  background: color-mix(in srgb, var(--mos-blue) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--mos-blue) 20%, transparent);
+  border-radius: var(--mos-radius-md);
   font-size: 0.85em;
   color: var(--text-muted);
 }
@@ -717,7 +820,8 @@ h3[data-dirty]::after {
   font-size: 1.1em;
   padding: 2px 6px;
   margin-left: auto;
-  border-radius: 4px;
+  border-radius: var(--mos-radius-sm);
+  transition: background var(--mos-transition);
 }
 
 .mos-onboard-banner-dismiss:hover {
