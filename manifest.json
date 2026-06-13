@@ -1,7 +1,7 @@
 {
   "id": "morning-os",
   "name": "Morning OS",
-  "version": "0.2.2",
+  "version": "0.2.1",
   "minAppVersion": "1.7.2",
   "description": "Your vault, processed every morning. Reads your tasks, goals, and rules — builds a focused briefing dashboard. Spend your morning deciding, not reorganizing.",
   "author": "Satya Akhil Galla",
