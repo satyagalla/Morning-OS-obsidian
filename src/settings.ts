@@ -167,15 +167,16 @@ export class MorningOSSettingTab extends PluginSettingTab {
 
   clearDirty() {
     this.dirtySections.clear();
-    this.containerEl.querySelectorAll("h3[data-dirty]").forEach((el) => {
+    this.containerEl.querySelectorAll(".setting-item-heading[data-dirty]").forEach((el) => {
       (el as HTMLElement).removeAttribute("data-dirty");
     });
     this.hideRunBanner();
   }
 
   private markSectionDirty(section: string) {
-    this.containerEl.querySelectorAll("h3").forEach((el) => {
-      if (el.textContent === section) (el as HTMLElement).setAttribute("data-dirty", "true");
+    this.containerEl.querySelectorAll(".setting-item-heading").forEach((el) => {
+      const nameEl = el.querySelector(".setting-item-name");
+      if (nameEl?.textContent === section) (el as HTMLElement).setAttribute("data-dirty", "true");
     });
   }
 
@@ -193,8 +194,8 @@ export class MorningOSSettingTab extends PluginSettingTab {
   }
 
   private sectionHeading(containerEl: HTMLElement, text: string) {
-    const h = containerEl.createEl("h3", { text });
-    if (this.dirtySections.has(text)) h.setAttribute("data-dirty", "true");
+    const s = new Setting(containerEl).setName(text).setHeading();
+    if (this.dirtySections.has(text)) s.settingEl.setAttribute("data-dirty", "true");
   }
 
   display(): void {
@@ -220,7 +221,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
         text.inputEl.type = "number";
         text.inputEl.min = "1";
         text.inputEl.max = "30";
-        text.inputEl.style.width = "60px";
+        text.inputEl.addClass("mos-number-input-sm");
         text
           .setValue(String(this.plugin.settings.carryLookbackDays))
           .onChange(async (value) => {
@@ -252,7 +253,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
             } catch {
               btn.setButtonText("Failed ✗");
             } finally {
-              setTimeout(() => { btn.setButtonText("Run"); btn.setDisabled(false); }, 3000);
+              window.setTimeout(() => { btn.setButtonText("Run"); btn.setDisabled(false); }, 3000);
             }
           })
       );
@@ -272,7 +273,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
             } catch {
               btn.setButtonText("Failed ✗");
             } finally {
-              setTimeout(() => { btn.setButtonText("Refresh"); btn.setDisabled(false); }, 3000);
+              window.setTimeout(() => { btn.setButtonText("Refresh"); btn.setDisabled(false); }, 3000);
             }
           })
       );
@@ -526,7 +527,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
         .addText((text) => {
           text.inputEl.type = "number";
           text.inputEl.min = "0";
-          text.inputEl.style.width = "60px";
+          text.inputEl.addClass("mos-number-input-sm");
           text
             .setValue(String(this.plugin.settings[key]))
             .onChange(async (value) => {

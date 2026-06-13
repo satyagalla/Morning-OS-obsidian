@@ -128,7 +128,7 @@ function parseLLMResponse(raw: string): LLMOutput {
   let text = raw.trim();
   const match = text.match(/```(?:json)?\s*\n([\s\S]*?)\n```/);
   if (match) text = match[1];
-  return JSON.parse(text);
+  return JSON.parse(text) as LLMOutput;
 }
 
 export async function runAgent(app: App, settings: MorningOSSettings): Promise<AgentResult> {
@@ -219,11 +219,11 @@ export async function runAgent(app: App, settings: MorningOSSettings): Promise<A
     const briefPath = `${settings.briefsDir}/${dateStr}.json`;
     if (await app.vault.adapter.exists(briefPath)) {
       try {
-        const existing = JSON.parse(await app.vault.adapter.read(briefPath));
+        const existing = JSON.parse(await app.vault.adapter.read(briefPath)) as DailyBrief;
         if (existing.suggestions?.length) {
           llmOutput = { suggestions: existing.suggestions };
         }
-      } catch {}
+      } catch { /* intentional — stale brief JSON is not critical */ }
     }
   } else if (needsLLM) {
     const carried = [
@@ -264,7 +264,7 @@ export async function runAgent(app: App, settings: MorningOSSettings): Promise<A
       const raw = await callLLM(INTELLIGENCE_SYSTEM, userPrompt, settings);
       llmOutput = parseLLMResponse(raw);
       resultMode = "llm";
-    } catch (err) {
+    } catch (_err) {
       try {
         const raw = await callLLM(INTELLIGENCE_SYSTEM, userPrompt, settings);
         llmOutput = parseLLMResponse(raw);
@@ -328,10 +328,6 @@ export async function refreshBrief(app: App, settings: MorningOSSettings): Promi
   if (dailyData === null) {
     throw new Error(`No daily note found for ${dateStr}. Create ${settings.dailyNoteDir}/${dateStr}.md first.`);
   }
-
-  const d = new Date(dateStr + "T12:00:00");
-  d.setDate(d.getDate() - 1);
-  const yesterdayDateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
   const [tacticalRules, emotionalRules, technicalTasks, hobbyTasksRaw, goals, yesterdayWins] =
     await Promise.all([

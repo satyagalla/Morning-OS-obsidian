@@ -2,7 +2,7 @@
   "id": "morning-os",
   "name": "Morning OS",
   "version": "0.2.1",
-  "minAppVersion": "1.0.0",
+  "minAppVersion": "1.7.2",
   "description": "Daily briefing dashboard that surfaces tasks, goals, and AI insights from your vault.",
   "author": "Satya Akhil Galla",
   "authorUrl": "https://github.com/satyagalla",

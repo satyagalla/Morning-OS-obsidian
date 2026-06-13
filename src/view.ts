@@ -1,10 +1,10 @@
-import { ItemView, WorkspaceLeaf, TFile, Modal, App, requestUrl } from "obsidian";
+import { ItemView, WorkspaceLeaf, TFile, Modal, App, requestUrl, sanitizeHTMLToDom } from "obsidian";
 import changelogText from "../CHANGELOG.md";
 import { parseChangelog } from "./agent/parse-changelog";
 
 const WEBHOOK_BUGS     = "https://discord.com/api/webhooks/1514853476990062683/hNbPlOaE13qKD33xxzDUMmUMhtyUZDqKIIr703U9ri8ug4_ujRqhcp2ohDR18DEU-0x6";
 const WEBHOOK_FEATURES = "https://discord.com/api/webhooks/1514853636856090737/zyUYjvGXZdBdrRkv7lBLe4Vaie0YLPENaZgy72xIYNiIWgLyb71ZT7qi7-axEz-Utd0d";
-import { DailyBrief, Task, Reminder } from "./types";
+import { DailyBrief, Task } from "./types";
 import { MorningOSSettings } from "./settings";
 import type MorningOSPlugin from "./main";
 import { renderOnboarding } from "./onboarding";
@@ -77,7 +77,7 @@ export class MorningView extends ItemView {
     const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
     const file = this.app.vault.getAbstractFileByPath(`${this.settings.briefsDir}/${today}.json`);
     if (file instanceof TFile) {
-      this.brief = JSON.parse(await this.app.vault.read(file));
+      this.brief = JSON.parse(await this.app.vault.read(file)) as DailyBrief;
     } else {
       this.brief = null;
     }
@@ -123,12 +123,12 @@ export class MorningView extends ItemView {
     );
     if (!(file instanceof TFile)) return;
     try {
-      const data = JSON.parse(await this.app.vault.read(file));
+      const data = JSON.parse(await this.app.vault.read(file)) as { suggestion_reactions?: ("up" | "down" | null)[] };
       const saved: ("up" | "down" | null)[] = data.suggestion_reactions ?? [];
       for (let i = 0; i < count; i++) {
         this.suggestionReactions[i] = saved[i] ?? null;
       }
-    } catch {}
+    } catch { /* intentional — corrupt reactions file just resets to no reactions */ }
   }
 
   private render() {
@@ -223,12 +223,10 @@ export class MorningView extends ItemView {
     this.floatingActions = actions;
 
     const showActions = () => {
-      actions.style.opacity = "1";
-      actions.style.pointerEvents = "auto";
+      actions.addClass("is-visible");
     };
     const hideActions = () => {
-      actions.style.opacity = "0";
-      actions.style.pointerEvents = "none";
+      actions.removeClass("is-visible");
     };
 
     handle.addEventListener("mouseenter", showActions);
@@ -239,19 +237,19 @@ export class MorningView extends ItemView {
       showActions();
     }, { passive: false });
 
-    document.addEventListener("touchstart", (e: TouchEvent) => {
+    activeDocument.addEventListener("touchstart", (e: TouchEvent) => {
       if (!handle.contains(e.target as Node) && !actions.contains(e.target as Node)) {
         hideActions();
       }
     });
 
     const refreshBtn = actions.createEl("button", { cls: "morning-os-fab", attr: { "aria-label": "Refresh brief" } });
-    refreshBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>`;
-    refreshBtn.addEventListener("click", () => this.plugin.triggerRefresh());
+    refreshBtn.appendChild(sanitizeHTMLToDom(`<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>`));
+    refreshBtn.addEventListener("click", () => { void this.plugin.triggerRefresh(); });
 
     const runBtn = actions.createEl("button", { cls: "morning-os-fab", attr: { "aria-label": "Run agent" } });
-    runBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polygon points="10 8 16 12 10 16 10 8"></polygon></svg>`;
-    runBtn.addEventListener("click", () => this.plugin.triggerAgent());
+    runBtn.appendChild(sanitizeHTMLToDom(`<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polygon points="10 8 16 12 10 16 10 8"></polygon></svg>`));
+    runBtn.addEventListener("click", () => { void this.plugin.triggerAgent(); });
   }
 
   private renderIdentityStrip(parent: HTMLElement) {
@@ -326,9 +324,9 @@ export class MorningView extends ItemView {
       const checkbox = row.createEl("input", { type: "checkbox" });
       checkbox.checked = true;
       row.createEl("span", { cls: "morning-os-task-text", text });
-      checkbox.addEventListener("change", async () => {
+      checkbox.addEventListener("change", () => {
         row.toggleClass("morning-os-task-done", checkbox.checked);
-        await this.toggleTaskInNote(text, checkbox.checked);
+        void this.toggleTaskInNote(text, checkbox.checked);
       });
     }
   }
@@ -342,9 +340,9 @@ export class MorningView extends ItemView {
         const days = this.daysBetween(task.carried_from, this.brief!.date);
         row.createEl("span", { cls: "morning-os-carried-badge", text: `carried ${days}d` });
       }
-      checkbox.addEventListener("change", async () => {
+      checkbox.addEventListener("change", () => {
         row.toggleClass("morning-os-task-done", checkbox.checked);
-        await this.toggleTaskInNote(task.text, checkbox.checked);
+        void this.toggleTaskInNote(task.text, checkbox.checked);
       });
     }
   }
@@ -394,20 +392,20 @@ export class MorningView extends ItemView {
       if (this.suggestionReactions[i] === "up") thumbUp.addClass("morning-os-reaction-active");
       if (this.suggestionReactions[i] === "down") thumbDown.addClass("morning-os-reaction-active");
 
-      thumbUp.addEventListener("click", async () => {
+      thumbUp.addEventListener("click", () => {
         const next = this.suggestionReactions[i] === "up" ? null : "up";
         this.suggestionReactions[i] = next;
         thumbUp.toggleClass("morning-os-reaction-active", next === "up");
         thumbDown.removeClass("morning-os-reaction-active");
-        await this.writeSuggestionReactions();
+        void this.writeSuggestionReactions();
       });
 
-      thumbDown.addEventListener("click", async () => {
+      thumbDown.addEventListener("click", () => {
         const next = this.suggestionReactions[i] === "down" ? null : "down";
         this.suggestionReactions[i] = next;
         thumbDown.toggleClass("morning-os-reaction-active", next === "down");
         thumbUp.removeClass("morning-os-reaction-active");
-        await this.writeSuggestionReactions();
+        void this.writeSuggestionReactions();
       });
     });
   }
@@ -424,7 +422,7 @@ export class MorningView extends ItemView {
     if (existing instanceof TFile) {
       await this.app.vault.modify(existing, payload);
     } else {
-      try { await this.app.vault.createFolder(dir); } catch {}
+      try { await this.app.vault.createFolder(dir); } catch { /* intentional — dir may already exist */ }
       await this.app.vault.create(filePath, payload);
     }
   }
@@ -443,10 +441,10 @@ export class MorningView extends ItemView {
         cls: "morning-os-reminder-badge",
         text: `noted ${reminder.source_date}`,
       });
-      checkbox.addEventListener("change", async () => {
+      checkbox.addEventListener("change", () => {
         row.toggleClass("morning-os-task-done", checkbox.checked);
         if (checkbox.checked) {
-          await this.dismissReminder(reminder.text, reminder.source_date, reminder.remind_date);
+          void this.dismissReminder(reminder.text, reminder.source_date, reminder.remind_date);
         }
       });
     }
@@ -458,14 +456,14 @@ export class MorningView extends ItemView {
     if (!exists) return;
 
     try {
-      const data = JSON.parse(await this.app.vault.adapter.read(remindersPath));
+      const data = JSON.parse(await this.app.vault.adapter.read(remindersPath)) as { text: string; source_date: string; remind_date: string; dismissed: boolean }[];
       for (const r of data) {
         if (r.text === text && r.source_date === sourceDate && r.remind_date === remindDate) {
           r.dismissed = true;
         }
       }
       await this.app.vault.adapter.write(remindersPath, JSON.stringify(data, null, 2));
-    } catch {}
+    } catch { /* intentional — failure to dismiss reminder is non-critical */ }
   }
 
   private renderPendingTasks(parent: HTMLElement) {
@@ -522,9 +520,9 @@ export class MorningView extends ItemView {
       this.renderWinsList(list);
     };
 
-    addBtn.addEventListener("click", addWin);
+    addBtn.addEventListener("click", () => { void addWin(); });
     input.addEventListener("keydown", (e: KeyboardEvent) => {
-      if (e.key === "Enter") addWin();
+      if (e.key === "Enter") void addWin();
     });
   }
 
@@ -591,10 +589,12 @@ export class MorningView extends ItemView {
       }
     }
 
-    dismissBtn.addEventListener("click", async () => {
-      this.settings.lastSeenVersion = manifest.version;
-      await this.plugin.saveData(this.plugin.settings);
-      banner.remove();
+    dismissBtn.addEventListener("click", () => {
+      void (async () => {
+        this.settings.lastSeenVersion = manifest.version;
+        await this.plugin.saveData(this.plugin.settings);
+        banner.remove();
+      })();
     });
   }
 
@@ -653,49 +653,50 @@ class FeedbackModal extends Modal {
     const status = footer.createEl("span", { cls: "mos-feedback-status" });
     const submitBtn = footer.createEl("button", { cls: "mos-feedback-submit-btn", text: "Submit →" });
 
-    submitBtn.addEventListener("click", async () => {
-      if (!this.type) {
-        status.setText("Please select bug or feature request.");
-        return;
-      }
-      if (!this.description) {
-        status.setText("Please add a short description.");
-        return;
-      }
+    submitBtn.addEventListener("click", () => {
+      void (async () => {
+        if (!this.type) {
+          status.setText("Please select bug or feature request.");
+          return;
+        }
+        if (!this.description) {
+          status.setText("Please add a short description.");
+          return;
+        }
 
-      submitBtn.disabled = true;
-      submitBtn.setText("Sending…");
-      status.setText("");
+        submitBtn.disabled = true;
+        submitBtn.setText("Sending…");
+        status.setText("");
 
-      const webhook = this.type === "bug" ? WEBHOOK_BUGS : WEBHOOK_FEATURES;
-      const label = this.type === "bug" ? "🐛 Bug report" : "✨ Feature request";
+        const webhook = this.type === "bug" ? WEBHOOK_BUGS : WEBHOOK_FEATURES;
+        const label = this.type === "bug" ? "🐛 Bug report" : "✨ Feature request";
 
-      try {
-        await requestUrl({
-          url: webhook,
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            embeds: [{
-              title: label,
-              description: this.description,
-              color: this.type === "bug" ? 0xe5534b : 0xc9a84c,
-              footer: { text: "Morning OS feedback" },
-            }],
-          }),
-        });
+        try {
+          await requestUrl({
+            url: webhook,
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              embeds: [{
+                title: label,
+                description: this.description,
+                color: this.type === "bug" ? 0xe5534b : 0xc9a84c,
+                footer: { text: "Morning OS feedback" },
+              }],
+            }),
+          });
 
-        contentEl.empty();
-        contentEl.addClass("mos-feedback-modal");
-        contentEl.createEl("div", { cls: "mos-feedback-success", text: "✓ Thanks! Feedback received." });
-        const closeBtn = contentEl.createEl("button", { cls: "mos-feedback-submit-btn", text: "Close" });
-        closeBtn.style.marginTop = "16px";
-        closeBtn.addEventListener("click", () => this.close());
-      } catch {
-        submitBtn.disabled = false;
-        submitBtn.setText("Submit →");
-        status.setText("Failed to send. Check your connection.");
-      }
+          contentEl.empty();
+          contentEl.addClass("mos-feedback-modal");
+          contentEl.createEl("div", { cls: "mos-feedback-success", text: "✓ Thanks! Feedback received." });
+          const closeBtn = contentEl.createEl("button", { cls: "mos-feedback-submit-btn mos-feedback-close-btn", text: "Close" });
+          closeBtn.addEventListener("click", () => this.close());
+        } catch {
+          submitBtn.disabled = false;
+          submitBtn.setText("Submit →");
+          status.setText("Failed to send. Check your connection.");
+        }
+      })();
     });
   }
 

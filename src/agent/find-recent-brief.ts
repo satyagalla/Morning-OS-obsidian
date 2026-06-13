@@ -1,11 +1,12 @@
 import { App } from "obsidian";
 import type { MorningOSSettings } from "../settings";
+import type { DailyBrief } from "../types";
 
 export async function findMostRecentBrief(
   beforeDate: string,
   app: App,
   settings: MorningOSSettings
-): Promise<{ date: string; brief: any } | null> {
+): Promise<{ date: string; brief: DailyBrief } | null> {
   const d = new Date(beforeDate + "T12:00:00");
   for (let i = 1; i <= settings.carryLookbackDays; i++) {
     d.setDate(d.getDate() - 1);
@@ -14,7 +15,7 @@ export async function findMostRecentBrief(
     if (await app.vault.adapter.exists(path)) {
       try {
         const raw = await app.vault.adapter.read(path);
-        return { date: dateStr, brief: JSON.parse(raw) };
+        return { date: dateStr, brief: JSON.parse(raw) as DailyBrief };
       } catch { continue; }
     }
   }

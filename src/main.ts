@@ -21,25 +21,25 @@ export default class MorningOSPlugin extends Plugin {
     this.registerView(VIEW_TYPE_MORNING, (leaf) => new MorningView(leaf, this.settings, this));
 
     this.addRibbonIcon("sun", "Morning OS", () => {
-      this.activateView();
+      void this.activateView();
     });
 
     this.addCommand({
       id: "open-morning-view",
       name: "Open Morning Dashboard",
-      callback: () => this.activateView(),
+      callback: () => { void this.activateView(); },
     });
 
     this.addCommand({
       id: "run-agent",
       name: "Run briefing agent",
-      callback: () => this.triggerAgent(),
+      callback: () => { void this.triggerAgent(); },
     });
 
     this.addCommand({
-      id: "morning-os-refresh",
+      id: "refresh-brief",
       name: "Refresh brief",
-      callback: () => this.triggerRefresh(),
+      callback: () => { void this.triggerRefresh(); },
     });
 
     this.settingTab = new MorningOSSettingTab(this.app, this);
@@ -58,7 +58,7 @@ export default class MorningOSPlugin extends Plugin {
       await leaf.setViewState({ type: VIEW_TYPE_MORNING, active: true });
     }
 
-    workspace.revealLeaf(leaf);
+    await workspace.revealLeaf(leaf);
   }
 
   async triggerAgent(): Promise<void> {
@@ -120,9 +120,9 @@ export default class MorningOSPlugin extends Plugin {
   refreshView() {
     const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_MORNING);
     for (const leaf of leaves) {
-      (leaf.view as MorningView).refresh();
+      void (leaf.view as MorningView).refresh();
     }
   }
 
-  onunload() {}
+  onunload() { /* intentional — no teardown needed beyond Obsidian's built-in deregister */ }
 }

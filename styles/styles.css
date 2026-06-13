@@ -1076,3 +1076,20 @@ h3[data-dirty]::after {
 .mos-onboard-banner-dismiss:hover {
   background: var(--background-modifier-hover);
 }
+
+/* ── Utility ── */
+/* Settings number inputs */
+.mos-number-input-sm {
+  width: 60px;
+}
+
+/* Floating actions visibility states */
+.morning-os-floating-actions.is-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Feedback modal close button */
+.mos-feedback-close-btn {
+  margin-top: 16px;
+}

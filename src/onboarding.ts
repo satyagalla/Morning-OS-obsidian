@@ -1,4 +1,4 @@
-import { AbstractInputSuggest, TFolder } from "obsidian";
+import { AbstractInputSuggest, TFolder, sanitizeHTMLToDom } from "obsidian";
 import type MorningOSPlugin from "./main";
 import { runAgent } from "./agent/run";
 
@@ -151,7 +151,7 @@ export function renderOnboarding(container: HTMLElement, plugin: MorningOSPlugin
   const wrap = container.createEl("div", { cls: "morning-os-onboarding" });
 
   const icon = wrap.createEl("div", { cls: "mos-onboard-icon" });
-  icon.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>`;
+  icon.appendChild(sanitizeHTMLToDom(`<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>`));
 
   wrap.createEl("h1", { cls: "mos-onboard-title", text: "Morning OS" });
   wrap.createEl("p", { cls: "mos-onboard-subtitle", text: "Your operating system is booting up." });
@@ -167,25 +167,27 @@ export function renderOnboarding(container: HTMLElement, plugin: MorningOSPlugin
 
   const btn = wrap.createEl("button", { cls: "mos-onboard-btn", text: "Initialize system" });
 
-  btn.addEventListener("click", async () => {
-    const rootPath = input.value.trim() || "Essential";
+  btn.addEventListener("click", () => {
+    void (async () => {
+      const rootPath = input.value.trim() || "Essential";
 
-    wrap.empty();
-    const terminal = wrap.createEl("div", { cls: "mos-onboard-terminal" });
-    terminal.createEl("div", { cls: "mos-onboard-line", text: "> Initializing vault structure..." });
+      wrap.empty();
+      const terminal = wrap.createEl("div", { cls: "mos-onboard-terminal" });
+      terminal.createEl("div", { cls: "mos-onboard-line", text: "> Initializing vault structure..." });
 
-    const lines = await scaffoldVault(plugin, rootPath);
+      const lines = await scaffoldVault(plugin, rootPath);
 
-    let i = 0;
-    const interval = window.setInterval(() => {
-      if (i >= lines.length) {
-        clearInterval(interval);
-        setTimeout(() => plugin.refreshView(), 600);
-        return;
-      }
-      const line = terminal.createEl("div", { cls: "mos-onboard-line" });
-      line.setText(`> ${lines[i]}`);
-      i++;
-    }, 150);
+      let i = 0;
+      const interval = window.setInterval(() => {
+        if (i >= lines.length) {
+          window.clearInterval(interval);
+          window.setTimeout(() => plugin.refreshView(), 600);
+          return;
+        }
+        const line = terminal.createEl("div", { cls: "mos-onboard-line" });
+        line.setText(`> ${lines[i]}`);
+        i++;
+      }, 150);
+    })();
   });
 }
