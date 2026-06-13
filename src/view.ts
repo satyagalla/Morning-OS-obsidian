@@ -117,7 +117,7 @@ export class MorningView extends ItemView {
   private async loadSuggestionReaction() {
     if (!this.brief) return;
     const count = this.brief.suggestions.length;
-    this.suggestionReactions = Array(count).fill(null);
+    this.suggestionReactions = Array<"up" | "down" | null>(count).fill(null);
     const file = this.app.vault.getAbstractFileByPath(
       `${this.settings.feedbackDir}/reactions/${this.brief.date}.json`
     );

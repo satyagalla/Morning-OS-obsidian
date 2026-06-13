@@ -11,7 +11,7 @@ export default class MorningOSPlugin extends Plugin {
   private agentRunning = false;
 
   async onload() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData()) as MorningOSSettings;
 
     if (!this.settings.onboarded && this.settings.agentLastRunDate) {
       this.settings.onboarded = true;

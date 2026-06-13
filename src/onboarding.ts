@@ -136,10 +136,10 @@ async function scaffoldVault(plugin: MorningOSPlugin, rootPath: string): Promise
   await runAgent(app, plugin.settings);
 
   const briefPath = `${plugin.settings.briefsDir}/${dateStr}.json`;
-  const briefJson = JSON.parse(await app.vault.adapter.read(briefPath));
+  const briefJson = JSON.parse(await app.vault.adapter.read(briefPath)) as import("./types").DailyBrief;
   briefJson.suggestions = [
-    { text: "Your rule says 'no meetings before noon' but you have a regular task every morning. Consider batching small tasks after lunch instead.", source: "Morning OS" },
-    { text: "You've been carrying 'reply to email' as a red alert — most dreaded replies take under 5 minutes once you start typing. Send it before deep work so it's not in the back of your mind.", source: "Morning OS" },
+    { text: "Your rule says 'no meetings before noon' but you have a regular task every morning. Consider batching small tasks after lunch instead.", source: "tasks" },
+    { text: "You've been carrying 'reply to email' as a red alert — most dreaded replies take under 5 minutes once you start typing. Send it before deep work so it's not in the back of your mind.", source: "carried_tasks" },
   ];
   await app.vault.adapter.write(briefPath, JSON.stringify(briefJson, null, 2));
 

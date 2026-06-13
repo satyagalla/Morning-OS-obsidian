@@ -33,7 +33,7 @@ async function loadReminders(
   if (exists) {
     try {
       const raw = await app.vault.adapter.read(remindersPath);
-      const parsed: ReminderEntry[] = JSON.parse(raw);
+      const parsed = JSON.parse(raw) as ReminderEntry[];
       // Treat an empty array as valid — no recovery needed
       return { reminders: parsed, writeOk: true };
     } catch {
@@ -46,7 +46,7 @@ async function loadReminders(
   if (backupExists) {
     try {
       const raw = await app.vault.adapter.read(backupPath);
-      const parsed: ReminderEntry[] = JSON.parse(raw);
+      const parsed = JSON.parse(raw) as ReminderEntry[];
       if (parsed.length > 0) {
         new Notice("Morning OS: reminders.json was missing or corrupt — restored from backup. Check your reminders and re-dismiss any that no longer apply.");
         console.warn("Morning OS: reminders recovered from backup");
@@ -66,7 +66,7 @@ async function loadReminders(
     const briefPath = `${settings.briefsDir}/${ds}.json`;
     if (!(await app.vault.adapter.exists(briefPath))) continue;
     try {
-      const brief: DailyBrief = JSON.parse(await app.vault.adapter.read(briefPath));
+      const brief = JSON.parse(await app.vault.adapter.read(briefPath)) as DailyBrief;
       if (!brief.reminders?.length) continue;
       for (const r of brief.reminders) {
         const alreadyPresent = seeded.some(s => s.text === r.text && s.remind_date === r.remind_date);
@@ -264,7 +264,7 @@ export async function runAgent(app: App, settings: MorningOSSettings): Promise<A
       const raw = await callLLM(INTELLIGENCE_SYSTEM, userPrompt, settings);
       llmOutput = parseLLMResponse(raw);
       resultMode = "llm";
-    } catch (_err) {
+    } catch {
       try {
         const raw = await callLLM(INTELLIGENCE_SYSTEM, userPrompt, settings);
         llmOutput = parseLLMResponse(raw);
@@ -307,7 +307,7 @@ export async function refreshBrief(app: App, settings: MorningOSSettings): Promi
     throw new Error("No brief found for today. Run the agent first.");
   }
 
-  const existingBrief: DailyBrief = JSON.parse(await app.vault.adapter.read(briefPath));
+  const existingBrief = JSON.parse(await app.vault.adapter.read(briefPath)) as DailyBrief;
 
   const cachedLLM: LLMOutput = {};
   if (settings.modeTacticalRules) cachedLLM.tactical_rules = existingBrief.tactical_rules;

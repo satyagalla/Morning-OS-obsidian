@@ -198,6 +198,18 @@ export class MorningOSSettingTab extends PluginSettingTab {
     if (this.dirtySections.has(text)) s.settingEl.setAttribute("data-dirty", "true");
   }
 
+  private rerender(): void {
+    const { containerEl } = this;
+    containerEl.empty();
+    this.renderAgentSection(containerEl);
+    this.renderAISection(containerEl);
+    this.renderPathsSection(containerEl);
+    this.renderHeadingsSection(containerEl);
+    this.renderCountsSection(containerEl);
+    this.renderModesSection(containerEl);
+    this.renderAboutSection(containerEl);
+  }
+
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
@@ -295,7 +307,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
               intelligenceModel: PROVIDER_DEFAULT_MODELS[value] ?? "",
               intelligenceRegion: value === "bedrock" ? (this.plugin.settings.awsRegion || "us-east-2") : "",
             }, "AI provider");
-            this.display();
+            this.rerender();
           })
       );
 

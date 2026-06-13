@@ -1,6 +1,18 @@
 import { requestUrl } from "obsidian";
 import type { MorningOSSettings } from "../settings";
 
+interface OpenAIResponse {
+  choices: { message: { content: string } }[];
+}
+
+interface GeminiResponse {
+  candidates: { content: { parts: { text: string }[] } }[];
+}
+
+interface BedrockResponse {
+  output: { message: { content: { text: string }[] } };
+}
+
 async function callOpenAI(system: string, user: string, apiKey: string, model: string): Promise<string> {
   const response = await requestUrl({
     url: "https://api.openai.com/v1/chat/completions",
@@ -19,7 +31,7 @@ async function callOpenAI(system: string, user: string, apiKey: string, model: s
       max_tokens: 2048,
     }),
   });
-  return response.json.choices[0].message.content;
+  return (response.json as OpenAIResponse).choices[0].message.content;
 }
 
 async function callGroq(system: string, user: string, apiKey: string, model: string): Promise<string> {
@@ -40,7 +52,7 @@ async function callGroq(system: string, user: string, apiKey: string, model: str
       max_tokens: 2048,
     }),
   });
-  return response.json.choices[0].message.content;
+  return (response.json as OpenAIResponse).choices[0].message.content;
 }
 
 async function callGemini(system: string, user: string, apiKey: string, model: string): Promise<string> {
@@ -54,10 +66,10 @@ async function callGemini(system: string, user: string, apiKey: string, model: s
       generationConfig: { temperature: 0.7, maxOutputTokens: 2048 },
     }),
   });
-  return response.json.candidates[0].content.parts[0].text;
+  return (response.json as GeminiResponse).candidates[0].content.parts[0].text;
 }
 
-async function hmacSha256(key: ArrayBuffer | Uint8Array<ArrayBuffer>, data: string): Promise<ArrayBuffer> {
+async function hmacSha256(key: ArrayBuffer, data: string): Promise<ArrayBuffer> {
   const cryptoKey = await crypto.subtle.importKey(
     "raw", key, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
   );
@@ -96,7 +108,7 @@ async function signAwsRequest(opts: {
     "AWS4-HMAC-SHA256", amzDate, credentialScope, await sha256Hex(canonicalRequest),
   ].join("\n");
 
-  const kDate = await hmacSha256(new TextEncoder().encode("AWS4" + opts.secretAccessKey), dateStamp);
+  const kDate = await hmacSha256(new TextEncoder().encode("AWS4" + opts.secretAccessKey).buffer as ArrayBuffer, dateStamp);
   const kRegion = await hmacSha256(kDate, opts.region);
   const kService = await hmacSha256(kRegion, opts.service);
   const kSigning = await hmacSha256(kService, "aws4_request");
@@ -140,7 +152,7 @@ async function callBedrock(system: string, user: string, settings: MorningOSSett
     body,
   });
 
-  return response.json.output.message.content[0].text;
+  return (response.json as BedrockResponse).output.message.content[0].text;
 }
 
 export async function callLLM(system: string, user: string, settings: MorningOSSettings): Promise<string> {
