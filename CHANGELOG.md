@@ -17,7 +17,7 @@ When I saw 53 people had downloaded Morning OS, I was genuinely happy. This star
 ---
 ---
 
-## v0.2.1
+## v0.2.2
 
 ### Personal
 
