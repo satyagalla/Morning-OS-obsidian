@@ -4,12 +4,82 @@ import { parseChangelog } from "./agent/parse-changelog";
 
 const WEBHOOK_BUGS     = "https://discord.com/api/webhooks/1514853476990062683/hNbPlOaE13qKD33xxzDUMmUMhtyUZDqKIIr703U9ri8ug4_ujRqhcp2ohDR18DEU-0x6";
 const WEBHOOK_FEATURES = "https://discord.com/api/webhooks/1514853636856090737/zyUYjvGXZdBdrRkv7lBLe4Vaie0YLPENaZgy72xIYNiIWgLyb71ZT7qi7-axEz-Utd0d";
-import { DailyBrief, Task } from "./types";
+import { DailyBrief, BriefTask, Task, TaskRegistry } from "./types";
 import { MorningOSSettings } from "./settings";
 import type MorningOSPlugin from "./main";
 import { renderOnboarding } from "./onboarding";
 import { scaffoldDailyNote } from "./agent/scaffold-daily-note";
 import { todayStr } from "./utils";
+import { loadRegistry, saveRegistry, toggleTaskDone, updateTask, createTask, clearTaskFromView, moveTaskToToday, deleteTask, restoreTask } from "./task-registry";
+import { parseIdentityAnchor } from "./agent/vault-reader";
+
+export const VIEW_TYPE_PILLAR = "morning-os-pillar-view";
+export const VIEW_TYPE_DUMP = "morning-os-inbox-view";
+export const VIEW_TYPE_TRASH = "morning-os-trash-view";
+
+const NAV_ITEMS = [
+  { id: "home",         label: "🌅 Home",         type: "morning-os-view" },
+  { id: "dump",         label: "📥 Inbox",         type: "morning-os-inbox-view" },
+  { id: "health",       label: "❤️ Health",        type: "morning-os-pillar-view-health" },
+  { id: "career",       label: "💼 Career",        type: "morning-os-pillar-view-career" },
+  { id: "interests",    label: "✨ Interests",     type: "morning-os-pillar-view-interests" },
+  { id: "family",       label: "👨‍👩‍👧 Family",      type: "morning-os-pillar-view-family" },
+  { id: "relationship", label: "💞 Relationship",  type: "morning-os-pillar-view-relationship" },
+  { id: "trash",        label: "🗑 Trash",          type: VIEW_TYPE_TRASH },
+] as const;
+
+function renderNavBar(container: HTMLElement, activeType: string, plugin: MorningOSPlugin) {
+  const nav = container.createEl("div", { cls: "mos-nav-bar" });
+  for (const item of NAV_ITEMS) {
+    const btn = nav.createEl("button", {
+      cls: "mos-nav-btn" + (activeType === item.type ? " is-active" : ""),
+      text: item.label,
+    });
+    btn.addEventListener("click", () => {
+      if (item.id === "home") void plugin.activateView();
+      else if (item.id === "dump") void plugin.activateDump();
+      else if (item.id === "trash") void plugin.activateTrash();
+      else void plugin.activatePillar(item.id);
+    });
+  }
+}
+
+export function renderNavPopover(anchor: HTMLElement, plugin: MorningOSPlugin) {
+  document.querySelector(".mos-nav-popover")?.remove();
+
+  // Walk up to the actual ribbon button element
+  let btn: HTMLElement = anchor;
+  while (btn.parentElement && !btn.classList.contains("side-dock-ribbon-action")) {
+    btn = btn.parentElement;
+  }
+
+  const popover = document.body.createEl("div", { cls: "mos-nav-popover" });
+  const rect = btn.getBoundingClientRect();
+  popover.style.position = "fixed";
+  popover.style.left = `${rect.right + 8}px`;
+  popover.style.top = `${rect.top}px`;
+  popover.style.zIndex = "9999";
+
+  for (const item of NAV_ITEMS) {
+    const btn = popover.createEl("button", { cls: "mos-nav-popover-item", text: item.label });
+    btn.addEventListener("click", () => {
+      popover.remove();
+      if (item.id === "home") void plugin.activateView();
+      else if (item.id === "dump") void plugin.activateDump();
+      else if (item.id === "trash") void plugin.activateTrash();
+      else void plugin.activatePillar(item.id);
+    });
+  }
+
+  // Close on outside click
+  const close = (e: MouseEvent) => {
+    if (!popover.contains(e.target as Node) && e.target !== anchor) {
+      popover.remove();
+      document.removeEventListener("mousedown", close);
+    }
+  };
+  document.addEventListener("mousedown", close);
+}
 
 export const VIEW_TYPE_MORNING = "morning-os-view";
 
@@ -21,6 +91,9 @@ export class MorningView extends ItemView {
   private plugin: MorningOSPlugin;
   private floatingHandle: HTMLElement | null = null;
   private floatingActions: HTMLElement | null = null;
+  private floatingCleanup: (() => void) | null = null;
+  private registry: TaskRegistry = [];
+  private identityLines: string[] = [];
 
   constructor(leaf: WorkspaceLeaf, settings: MorningOSSettings, plugin: MorningOSPlugin) {
     super(leaf);
@@ -55,10 +128,13 @@ export class MorningView extends ItemView {
     await this.loadBrief();
     await this.loadWins();
     await this.loadSuggestionReaction();
+    await this.loadRegistryAndIdentity();
     this.render();
   }
 
   async onClose() {
+    this.floatingCleanup?.();
+    this.floatingCleanup = null;
     this.floatingHandle?.remove();
     this.floatingHandle = null;
     this.floatingActions?.remove();
@@ -69,7 +145,13 @@ export class MorningView extends ItemView {
     await this.loadBrief();
     await this.loadWins();
     await this.loadSuggestionReaction();
+    await this.loadRegistryAndIdentity();
     this.render();
+  }
+
+  private async loadRegistryAndIdentity() {
+    this.registry = await loadRegistry(this.app);
+    this.identityLines = await parseIdentityAnchor(this.app, this.settings);
   }
 
   private async loadBrief() {
@@ -175,10 +257,7 @@ export class MorningView extends ItemView {
     this.renderReminders(left);
     this.renderTasks(left);
     this.renderTacticalRules(right);
-    this.renderSuggestion(right);
 
-    this.renderPendingTasks(wrapper);
-    this.renderHobbyTasks(wrapper);
     this.renderWins(wrapper);
     this.renderFeedbackFooter(wrapper);
   }
@@ -217,46 +296,19 @@ export class MorningView extends ItemView {
 
   private renderFloatingActions() {
     const container = this.containerEl.children[1] as HTMLElement;
-    const handle = container.createEl("div", { cls: "morning-os-floating-handle" });
-    const actions = container.createEl("div", { cls: "morning-os-floating-actions" });
+    const { handle, actions, cleanup } = mountFloatingPanel(container, this.plugin);
     this.floatingHandle = handle;
     this.floatingActions = actions;
-
-    const showActions = () => {
-      actions.addClass("is-visible");
-    };
-    const hideActions = () => {
-      actions.removeClass("is-visible");
-    };
-
-    handle.addEventListener("mouseenter", showActions);
-    actions.addEventListener("mouseleave", hideActions);
-
-    handle.addEventListener("touchstart", (e: TouchEvent) => {
-      e.preventDefault();
-      showActions();
-    }, { passive: false });
-
-    activeDocument.addEventListener("touchstart", (e: TouchEvent) => {
-      if (!handle.contains(e.target as Node) && !actions.contains(e.target as Node)) {
-        hideActions();
-      }
-    });
-
-    const refreshBtn = actions.createEl("button", { cls: "morning-os-fab", attr: { "aria-label": "Refresh brief" } });
-    refreshBtn.appendChild(sanitizeHTMLToDom(`<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>`));
-    refreshBtn.addEventListener("click", () => { void this.plugin.triggerRefresh(); });
-
-    const runBtn = actions.createEl("button", { cls: "morning-os-fab", attr: { "aria-label": "Run agent" } });
-    runBtn.appendChild(sanitizeHTMLToDom(`<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polygon points="10 8 16 12 10 16 10 8"></polygon></svg>`));
-    runBtn.addEventListener("click", () => { void this.plugin.triggerAgent(); });
+    this.floatingCleanup = cleanup;
   }
 
   private renderIdentityStrip(parent: HTMLElement) {
+    const lines = this.identityLines.length > 0 ? this.identityLines : (this.brief?.identity?.rules ?? []);
+    if (!lines.length) return;
     const strip = parent.createEl("div", { cls: "morning-os-identity-strip" });
     strip.createEl("div", { cls: "morning-os-identity-label", text: "I am someone who" });
     const rules = strip.createEl("div", { cls: "morning-os-identity-rules" });
-    for (const rule of this.brief!.identity.rules) {
+    for (const rule of lines) {
       rules.createEl("span", { cls: "morning-os-identity-rule", text: rule });
     }
   }
@@ -303,6 +355,14 @@ export class MorningView extends ItemView {
   private renderTasks(parent: HTMLElement) {
     const completedRed = this.brief!.tasks.completed_red_alert ?? [];
     const completedRegular = this.brief!.tasks.completed_regular ?? [];
+    const hasAny = this.brief!.tasks.red_alert.length > 0 || this.brief!.tasks.regular.length > 0 || completedRed.length > 0 || completedRegular.length > 0;
+
+    if (!hasAny) {
+      const empty = parent.createEl("div", { cls: "morning-os-card morning-os-card-empty" });
+      empty.createEl("p", { cls: "morning-os-empty-state", text: "You're all caught up for today." });
+      empty.createEl("p", { cls: "morning-os-empty-state", text: "Pick tasks from the Inbox or Pillar views to get started." });
+      return;
+    }
 
     if (this.brief!.tasks.red_alert.length > 0 || completedRed.length > 0) {
       parent.createEl("h2", { cls: "morning-os-section-heading morning-os-red-heading", text: "Red alert" });
@@ -331,7 +391,7 @@ export class MorningView extends ItemView {
     }
   }
 
-  private renderTaskList(parent: HTMLElement, tasks: Task[]) {
+  private renderTaskList(parent: HTMLElement, tasks: BriefTask[]) {
     for (const task of tasks) {
       const row = parent.createEl("div", { cls: "morning-os-task-row" });
       const checkbox = row.createEl("input", { type: "checkbox" });
@@ -340,9 +400,53 @@ export class MorningView extends ItemView {
         const days = this.daysBetween(task.carried_from, this.brief!.date);
         row.createEl("span", { cls: "morning-os-carried-badge", text: `carried ${days}d` });
       }
+
+      const moreBtn = row.createEl("button", { cls: "mos-more-btn", text: "⋯" });
+      moreBtn.addEventListener("click", () => {
+        const menuItems: MenuAction[] = [];
+        if (task.id) {
+          menuItems.push({
+            label: "✕ Remove from today",
+            action: () => {
+              void (async () => {
+                await updateTask(this.app, task.id!, { in_today: false });
+                await this.plugin.autoRefreshBrief();
+                this.plugin.refreshView();
+              })();
+            },
+          });
+          menuItems.push({
+            label: "✎ Edit metadata",
+            action: () => {
+              const fullTask = this.registry.find(t => t.id === task.id);
+              if (!fullTask) return;
+              new TaskEditModal(this.app, fullTask, async (updated) => {
+                const reg = await loadRegistry(this.app);
+                const idx = reg.findIndex(t => t.id === updated.id);
+                if (idx !== -1) reg[idx] = updated;
+                await saveRegistry(this.app, reg);
+                this.plugin.refreshView();
+              }).open();
+            },
+          });
+          menuItems.push({
+            label: "🗑 Delete",
+            danger: true,
+            action: () => {
+              void deleteTask(this.app, task.id!).then(() => this.plugin.refreshView());
+            },
+          });
+        }
+        openContextMenu(moreBtn, menuItems);
+      });
+
       checkbox.addEventListener("change", () => {
         row.toggleClass("morning-os-task-done", checkbox.checked);
-        void this.toggleTaskInNote(task.text, checkbox.checked);
+        if (task.id) {
+          void toggleTaskDone(this.app, task.id, checkbox.checked).then(() => this.plugin.refreshView());
+        } else {
+          void this.toggleTaskInNote(task.text, checkbox.checked);
+        }
       });
     }
   }
@@ -360,6 +464,8 @@ export class MorningView extends ItemView {
   }
 
   private renderTacticalRules(parent: HTMLElement) {
+    const hasTasks = this.brief!.tasks.red_alert.length > 0 || this.brief!.tasks.regular.length > 0;
+    if (!hasTasks || !this.brief!.tactical_rules?.length) return;
     parent.createEl("h2", { cls: "morning-os-section-heading", text: "Rules for today" });
     const card = parent.createEl("div", { cls: "morning-os-card morning-os-card-rules" });
     const list = card.createEl("ul");
@@ -447,6 +553,13 @@ export class MorningView extends ItemView {
           void this.dismissReminder(reminder.text, reminder.source_date, reminder.remind_date);
         }
       });
+
+      const dismissBtn = row.createEl("button", { cls: "mos-task-action-btn mos-task-action-delete", text: "🗑" });
+      dismissBtn.setAttribute("aria-label", "Dismiss reminder");
+      dismissBtn.addEventListener("click", () => {
+        row.remove();
+        void this.dismissReminder(reminder.text, reminder.source_date, reminder.remind_date);
+      });
     }
   }
 
@@ -456,6 +569,7 @@ export class MorningView extends ItemView {
     if (!exists) return;
 
     try {
+      // Update reminders.json — mark dismissed
       const data = JSON.parse(await this.app.vault.adapter.read(remindersPath)) as { text: string; source_date: string; remind_date: string; dismissed: boolean }[];
       for (const r of data) {
         if (r.text === text && r.source_date === sourceDate && r.remind_date === remindDate) {
@@ -463,6 +577,15 @@ export class MorningView extends ItemView {
         }
       }
       await this.app.vault.adapter.write(remindersPath, JSON.stringify(data, null, 2));
+
+      // Also remove from today's brief.json so reload doesn't restore it
+      if (this.brief) {
+        this.brief.reminders = (this.brief.reminders ?? []).filter(
+          r => !(r.text === text && r.source_date === sourceDate && r.remind_date === remindDate)
+        );
+        const briefPath = `${this.settings.briefsDir}/${this.brief.date}.json`;
+        await this.app.vault.adapter.write(briefPath, JSON.stringify(this.brief, null, 2));
+      }
     } catch { /* intentional — failure to dismiss reminder is non-critical */ }
   }
 
@@ -508,7 +631,7 @@ export class MorningView extends ItemView {
       cls: "morning-os-wins-input",
       placeholder: "Add a win...",
     });
-    const addBtn = inputRow.createEl("button", { cls: "morning-os-wins-add-btn", text: "Add" });
+    const addBtn = inputRow.createEl("button", { cls: "mos-btn mos-btn-primary", text: "Add" });
 
     const addWin = async () => {
       const text = input.value.trim();
@@ -616,6 +739,668 @@ export class MorningView extends ItemView {
   }
 }
 
+function mountFloatingPanel(container: HTMLElement, plugin: MorningOSPlugin): { handle: HTMLElement; actions: HTMLElement; cleanup: () => void } {
+  const handle = container.createEl("div", { cls: "morning-os-floating-handle" });
+  const actions = container.createEl("div", { cls: "morning-os-floating-actions" });
+
+  const show = () => actions.addClass("is-visible");
+  const hide = () => actions.removeClass("is-visible");
+
+  handle.addEventListener("mouseenter", show);
+  actions.addEventListener("mouseleave", hide);
+  handle.addEventListener("touchstart", (e: TouchEvent) => { e.preventDefault(); show(); }, { passive: false });
+  const touchHandler = (e: TouchEvent) => {
+    if (!handle.contains(e.target as Node) && !actions.contains(e.target as Node)) hide();
+  };
+  activeDocument.addEventListener("touchstart", touchHandler);
+  const cleanup = () => activeDocument.removeEventListener("touchstart", touchHandler);
+
+  actions.createEl("div", { cls: "morning-os-fab-label", text: "Agent" });
+  const refreshBtn = actions.createEl("button", { cls: "morning-os-fab" });
+  refreshBtn.appendChild(sanitizeHTMLToDom(`<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>`));
+  refreshBtn.appendText(" Refresh brief");
+  refreshBtn.addEventListener("click", () => { void plugin.triggerRefresh(); });
+
+  const runBtn = actions.createEl("button", { cls: "morning-os-fab" });
+  runBtn.appendChild(sanitizeHTMLToDom(`<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polygon points="10 8 16 12 10 16 10 8"></polygon></svg>`));
+  runBtn.appendText(" Run agent");
+  runBtn.addEventListener("click", () => { void plugin.triggerAgent(); });
+
+  actions.createEl("div", { cls: "morning-os-fab-label", text: "Views" });
+  const viewItems: { label: string; action: () => void }[] = [
+    { label: "🌅 Home",          action: () => void plugin.activateView() },
+    { label: "📥 Inbox",         action: () => void plugin.activateDump() },
+    { label: "❤️ Health",        action: () => void plugin.activatePillar("health") },
+    { label: "💼 Career",        action: () => void plugin.activatePillar("career") },
+    { label: "✨ Interests",     action: () => void plugin.activatePillar("interests") },
+    { label: "👨‍👩‍👧 Family",      action: () => void plugin.activatePillar("family") },
+    { label: "💞 Relationship",  action: () => void plugin.activatePillar("relationship") },
+    { label: "🗑 Trash",         action: () => void plugin.activateTrash() },
+  ];
+  for (const item of viewItems) {
+    const btn = actions.createEl("button", { cls: "morning-os-fab morning-os-fab-view", text: item.label });
+    btn.addEventListener("click", () => { hide(); item.action(); });
+  }
+
+  return { handle, actions, cleanup };
+}
+
+export const PILLARS = [
+  { key: "health",       label: "Health",       tabs: ["Physical", "Mental/ADHD"] },
+  { key: "career",       label: "Career",       tabs: ["Applications", "Leads", "Follow-ups"] },
+  { key: "interests",    label: "Interests",    tabs: [] },
+  { key: "family",       label: "Family",       tabs: [] },
+  { key: "relationship", label: "Relationship", tabs: [] },
+] as const;
+
+type SortField = "created" | "modified" | "completed" | "name";
+type SortDir = "asc" | "desc";
+
+function sortTasks(tasks: Task[], field: SortField, dir: SortDir): Task[] {
+  return [...tasks].sort((a, b) => {
+    let va = field === "name" ? a.text : (a[field] ?? "");
+    let vb = field === "name" ? b.text : (b[field] ?? "");
+    if (va < vb) return dir === "asc" ? -1 : 1;
+    if (va > vb) return dir === "asc" ? 1 : -1;
+    return 0;
+  });
+}
+
+const URGENCY_DOT: Record<string, string> = { low: "#3fb950", med: "#c9a84c", high: "#e5534b", none: "transparent" };
+const URGENCY_LABEL: Record<string, string> = { low: "L", med: "M", high: "H", none: "" };
+
+type MenuAction = { label: string; danger?: boolean; action: () => void };
+
+function openContextMenu(anchor: HTMLElement, items: MenuAction[]) {
+  document.querySelector(".mos-ctx-menu")?.remove();
+  const menu = document.body.createEl("div", { cls: "mos-ctx-menu" });
+  const rect = anchor.getBoundingClientRect();
+  menu.style.position = "fixed";
+  menu.style.top = `${rect.bottom + 4}px`;
+  menu.style.left = `${rect.left}px`;
+  menu.style.zIndex = "9999";
+
+  for (const item of items) {
+    const btn = menu.createEl("button", {
+      cls: "mos-ctx-item" + (item.danger ? " mos-ctx-item-danger" : ""),
+      text: item.label,
+    });
+    btn.addEventListener("click", () => { menu.remove(); item.action(); });
+  }
+
+  const close = (e: MouseEvent) => {
+    if (!menu.contains(e.target as Node)) { menu.remove(); document.removeEventListener("mousedown", close); }
+  };
+  document.addEventListener("mousedown", close);
+}
+
+function renderTaskRowShared(
+  parent: HTMLElement,
+  task: Task,
+  app: App,
+  onRefresh: () => void,
+  clearView: string,
+  isInbox = false,
+  plugin?: MorningOSPlugin
+) {
+  const row = parent.createEl("div", { cls: "morning-os-task-row" + (task.done ? " morning-os-task-done" : "") });
+  const checkbox = row.createEl("input", { type: "checkbox" });
+  checkbox.checked = task.done;
+
+  // Urgency dot
+  const dot = row.createEl("span", { cls: "mos-urgency-dot", attr: { title: `Urgency: ${task.urgency}` } });
+  dot.style.background = URGENCY_DOT[task.urgency] ?? URGENCY_DOT.med;
+  dot.textContent = URGENCY_LABEL[task.urgency] ?? "M";
+
+  // Inline text — double-click to edit
+  const textSpan = row.createEl("span", { cls: "morning-os-task-text", text: task.text });
+  textSpan.addEventListener("dblclick", () => {
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = task.text;
+    input.className = "morning-os-wins-input mos-inline-edit";
+    textSpan.replaceWith(input);
+    input.focus();
+    let saving = false;
+    const save = async () => {
+      if (saving) return;
+      saving = true;
+      const newText = input.value.trim();
+      if (newText && newText !== task.text) {
+        const reg = await loadRegistry(app);
+        const idx = reg.findIndex(t => t.id === task.id);
+        if (idx !== -1) { reg[idx].text = newText; reg[idx].modified = todayStr(); }
+        await saveRegistry(app, reg);
+        onRefresh();
+      } else {
+        input.replaceWith(textSpan);
+      }
+    };
+    input.addEventListener("blur", () => { void save(); });
+    input.addEventListener("keydown", (e: KeyboardEvent) => {
+      if (e.key === "Enter") void save();
+      if (e.key === "Escape") input.replaceWith(textSpan);
+    });
+  });
+
+  if (task.remind_date) {
+    row.createEl("span", { cls: "morning-os-reminder-badge", text: `⏰ ${task.remind_date}` });
+  }
+
+  // Inline today buttons (all views) — icon only, shown on hover
+  const regBtn = row.createEl("button", { cls: "mos-today-btn", attr: { title: "Move to Today (Regular)" } });
+  regBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`;
+  regBtn.addEventListener("click", () => {
+    void moveTaskToToday(app, task.id, "regular").then(async () => {
+      if (plugin) { await plugin.autoRefreshBrief(); plugin.refreshView(); }
+      onRefresh();
+    });
+  });
+
+  const redBtn2 = row.createEl("button", { cls: "mos-today-btn mos-today-btn-red", attr: { title: "Move to Today (Red alert)" } });
+  redBtn2.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/><polyline points="15 18 21 12 15 6"/></svg>`;
+  redBtn2.addEventListener("click", () => {
+    void moveTaskToToday(app, task.id, "red").then(async () => {
+      if (plugin) { await plugin.autoRefreshBrief(); plugin.refreshView(); }
+      onRefresh();
+    });
+  });
+
+  // ⋯ context menu
+  const moreBtn = row.createEl("button", { cls: "mos-more-btn", text: "⋯" });
+  moreBtn.addEventListener("click", () => {
+    const menuItems: MenuAction[] = [];
+
+    menuItems.push({
+      label: "✎ Edit metadata",
+      action: () => {
+        new TaskEditModal(app, task, async (updated) => {
+          const reg = await loadRegistry(app);
+          const idx = reg.findIndex(t => t.id === updated.id);
+          if (idx !== -1) reg[idx] = updated;
+          await saveRegistry(app, reg);
+          if (plugin) plugin.refreshView();
+          onRefresh();
+        }).open();
+      },
+    });
+
+    if (!isInbox) {
+      menuItems.push({
+        label: "✕ Remove from this view",
+        action: () => {
+          void clearTaskFromView(app, task.id, clearView).then(() => {
+            if (plugin) plugin.refreshView();
+            onRefresh();
+          });
+        },
+      });
+    }
+
+    menuItems.push({
+      label: "🗑 Delete",
+      danger: true,
+      action: () => {
+        void deleteTask(app, task.id).then(() => {
+          if (plugin) plugin.refreshView();
+          onRefresh();
+        });
+      },
+    });
+
+    openContextMenu(moreBtn, menuItems);
+  });
+
+  checkbox.addEventListener("change", () => {
+    row.toggleClass("morning-os-task-done", checkbox.checked);
+    void toggleTaskDone(app, task.id, checkbox.checked).then(() => {
+      if (plugin) plugin.refreshView();
+    });
+  });
+
+  return row;
+}
+
+function renderAddTaskInput(parent: HTMLElement, placeholder: string, onAdd: (text: string) => Promise<void>) {
+  const row = parent.createEl("div", { cls: "morning-os-wins-input-row" });
+  const input = row.createEl("input", { type: "text", cls: "morning-os-wins-input", placeholder });
+  const btn = row.createEl("button", { cls: "mos-btn mos-btn-primary", text: "Add" });
+  const add = async () => {
+    const text = input.value.trim();
+    if (!text) return;
+    await onAdd(text);
+    input.value = "";
+  };
+  btn.addEventListener("click", () => { void add(); });
+  input.addEventListener("keydown", (e: KeyboardEvent) => { if (e.key === "Enter") void add(); });
+}
+
+export class PillarView extends ItemView {
+  private settings: MorningOSSettings;
+  private plugin: MorningOSPlugin;
+  private registry: TaskRegistry = [];
+  private activeTab: string | null = null;
+  private pillarKey: string;
+  private sortField: SortField = "created";
+  private sortDir: SortDir = "asc";
+  private floatingCleanup: (() => void) | null = null;
+
+  constructor(leaf: WorkspaceLeaf, settings: MorningOSSettings, plugin: MorningOSPlugin, pillarKey: string) {
+    super(leaf);
+    this.settings = settings;
+    this.plugin = plugin;
+    this.pillarKey = pillarKey;
+  }
+
+  getViewType(): string { return `${VIEW_TYPE_PILLAR}-${this.pillarKey}`; }
+  getDisplayText(): string { return PILLARS.find(p => p.key === this.pillarKey)?.label ?? this.pillarKey; }
+  getIcon(): string { return "layers"; }
+
+  async onOpen() { this.registry = await loadRegistry(this.app); this.render(); }
+  async refresh() { this.registry = await loadRegistry(this.app); this.render(); }
+  async onClose() { this.floatingCleanup?.(); this.floatingCleanup = null; }
+
+  private render() {
+    const container = this.containerEl.children[1] as HTMLElement;
+    container.empty();
+    container.addClass("morning-os");
+    this.floatingCleanup?.();
+    this.floatingCleanup = mountFloatingPanel(container, this.plugin).cleanup;
+
+    const pillar = PILLARS.find(p => p.key === this.pillarKey);
+    if (!pillar) return;
+
+    const wrapper = container.createEl("div", { cls: "morning-os-scroll" });
+    const inner = wrapper.createEl("div", { cls: "morning-os-wrapper" });
+
+    const titleRow = inner.createEl("div", { cls: "mos-view-title-row" });
+    titleRow.createEl("h1", { cls: "morning-os-section-heading", text: pillar.label });
+    this.renderSortControls(titleRow);
+
+    if (pillar.tabs.length > 0) {
+      const tabBar = inner.createEl("div", { cls: "mos-pillar-tabs" });
+      const allTab = tabBar.createEl("button", { cls: "mos-btn mos-btn-tab" + (!this.activeTab ? " is-active" : ""), text: "All" });
+      allTab.addEventListener("click", () => { this.activeTab = null; this.render(); });
+      for (const tab of pillar.tabs) {
+        const btn = tabBar.createEl("button", { cls: "mos-btn mos-btn-tab" + (this.activeTab === tab ? " is-active" : ""), text: tab });
+        btn.addEventListener("click", () => { this.activeTab = tab; this.render(); });
+      }
+    }
+
+    let tasks = this.registry.filter(t =>
+      t.pillars.includes(this.pillarKey) &&
+      !t.deleted_from.includes(this.pillarKey) &&
+      (this.activeTab === null || t.tags[this.pillarKey] === this.activeTab)
+    );
+    tasks = sortTasks(tasks, this.sortField, this.sortDir);
+
+    // Remind today
+    const remindToday = tasks.filter(t => t.remind_date && t.remind_date <= todayStr() && !t.done);
+    if (remindToday.length > 0) {
+      inner.createEl("h2", { cls: "morning-os-section-heading", text: "Due reminders" });
+      const rc = inner.createEl("div", { cls: "morning-os-card" });
+      for (const t of remindToday) renderTaskRowShared(rc, t, this.app, () => void this.refresh(), this.pillarKey, false, this.plugin);
+    }
+
+    if (tasks.length === 0) {
+      inner.createEl("p", { cls: "morning-os-empty-state", text: "No tasks here yet." });
+    } else {
+      const card = inner.createEl("div", { cls: "morning-os-card" });
+      for (const t of tasks) renderTaskRowShared(card, t, this.app, () => void this.refresh(), this.pillarKey, false, this.plugin);
+    }
+
+    renderAddTaskInput(inner, "Add task… (#p/pillar, #t/tab, @remind(YYYY-MM-DD))", async (text) => {
+      const activeTab = this.activeTab;
+      const tag = activeTab ? { [pillar.key]: activeTab } : {};
+      const task = createTask(text, { pillars: [pillar.key], tags: tag });
+      const reg = await loadRegistry(this.app);
+      reg.push(task);
+      await saveRegistry(this.app, reg);
+      await this.refresh();
+    });
+  }
+
+  private renderSortControls(parent: HTMLElement) {
+    const wrap = parent.createEl("div", { cls: "mos-sort-controls" });
+    const fields: SortField[] = ["created", "modified", "completed", "name"];
+    const select = wrap.createEl("select", { cls: "mos-btn mos-btn-select" });
+    for (const f of fields) {
+      const opt = select.createEl("option", { value: f, text: f });
+      if (f === this.sortField) opt.selected = true;
+    }
+    select.addEventListener("change", () => { this.sortField = select.value as SortField; this.render(); });
+
+    const dirBtn = wrap.createEl("button", { cls: "mos-btn mos-btn-icon", text: this.sortDir === "asc" ? "↑" : "↓" });
+    dirBtn.addEventListener("click", () => { this.sortDir = this.sortDir === "asc" ? "desc" : "asc"; this.render(); });
+  }
+}
+
+export class DumpView extends ItemView {
+  private settings: MorningOSSettings;
+  private plugin: MorningOSPlugin;
+  private registry: TaskRegistry = [];
+  private sortField: SortField = "created";
+  private sortDir: SortDir = "desc";
+  private floatingCleanup: (() => void) | null = null;
+
+  constructor(leaf: WorkspaceLeaf, settings: MorningOSSettings, plugin: MorningOSPlugin) {
+    super(leaf);
+    this.settings = settings;
+    this.plugin = plugin;
+  }
+
+  getViewType(): string { return VIEW_TYPE_DUMP; }
+  getDisplayText(): string { return "Inbox"; }
+  getIcon(): string { return "inbox"; }
+
+  async onOpen() { this.registry = await loadRegistry(this.app); this.render(); }
+  async refresh() { this.registry = await loadRegistry(this.app); this.render(); }
+  async onClose() { this.floatingCleanup?.(); this.floatingCleanup = null; }
+
+  private render() {
+    const container = this.containerEl.children[1] as HTMLElement;
+    container.empty();
+    container.addClass("morning-os");
+    this.floatingCleanup?.();
+    this.floatingCleanup = mountFloatingPanel(container, this.plugin).cleanup;
+
+    const wrapper = container.createEl("div", { cls: "morning-os-scroll" });
+    const inner = wrapper.createEl("div", { cls: "morning-os-wrapper" });
+
+    const titleRow = inner.createEl("div", { cls: "mos-view-title-row" });
+    titleRow.createEl("h1", { cls: "morning-os-section-heading", text: "Inbox" });
+    this.renderSortControls(titleRow);
+
+    renderAddTaskInput(inner, "Capture a task… (#p/pillar, #t/tab, @remind(YYYY-MM-DD))", async (text) => {
+      const task = createTask(text);
+      const reg = await loadRegistry(this.app);
+      reg.push(task);
+      await saveRegistry(this.app, reg);
+      await this.refresh();
+    });
+
+    let tasks = this.registry.filter(t => !t.deleted_from.includes("dump") && !t.deleted);
+    tasks = sortTasks(tasks, this.sortField, this.sortDir);
+
+    if (tasks.length === 0) {
+      inner.createEl("p", { cls: "morning-os-empty-state", text: "All clear. Capture fast, organize later." });
+    } else {
+      const card = inner.createEl("div", { cls: "morning-os-card" });
+      for (const t of tasks) renderTaskRowShared(card, t, this.app, () => void this.refresh(), "inbox", true, this.plugin);
+    }
+  }
+
+  private renderSortControls(parent: HTMLElement) {
+    const wrap = parent.createEl("div", { cls: "mos-sort-controls" });
+    const fields: SortField[] = ["created", "modified", "completed", "name"];
+    const select = wrap.createEl("select", { cls: "mos-btn mos-btn-select" });
+    for (const f of fields) {
+      const opt = select.createEl("option", { value: f, text: f });
+      if (f === this.sortField) opt.selected = true;
+    }
+    select.addEventListener("change", () => { this.sortField = select.value as SortField; this.render(); });
+    const dirBtn = wrap.createEl("button", { cls: "mos-btn mos-btn-icon", text: this.sortDir === "asc" ? "↑" : "↓" });
+    dirBtn.addEventListener("click", () => { this.sortDir = this.sortDir === "asc" ? "desc" : "asc"; this.render(); });
+  }
+}
+
+import { Modal as ObsidianModal } from "obsidian";
+
+class PriorityPickerModal extends ObsidianModal {
+  private onPick: (p: "red" | "regular") => Promise<void>;
+
+  constructor(app: App, onPick: (p: "red" | "regular") => Promise<void>) {
+    super(app);
+    this.onPick = onPick;
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.addClass("mos-feedback-modal");
+    contentEl.createEl("h2", { text: "Move to Today" });
+    contentEl.createEl("p", { text: "Choose priority:" });
+    const row = contentEl.createEl("div", { cls: "mos-feedback-type-row" });
+    const redBtn = row.createEl("button", { cls: "mos-btn mos-btn-seg", text: "🔴 Red alert" });
+    const regBtn = row.createEl("button", { cls: "mos-btn mos-btn-seg", text: "Regular" });
+    redBtn.addEventListener("click", () => { void this.onPick("red").then(() => this.close()); });
+    regBtn.addEventListener("click", () => { void this.onPick("regular").then(() => this.close()); });
+  }
+
+  onClose() { this.contentEl.empty(); }
+}
+
+class TaskEditModal extends ObsidianModal {
+  private task: Task;
+  private onSave: (task: Task) => Promise<void>;
+
+  constructor(app: App, task: Task, onSave: (task: Task) => Promise<void>) {
+    super(app);
+    this.task = { ...task, pillars: [...task.pillars], tags: { ...task.tags } };
+    this.onSave = onSave;
+  }
+
+  private field(parent: HTMLElement, label: string): HTMLElement {
+    const wrap = parent.createEl("div", { cls: "mos-edit-field" });
+    wrap.createEl("label", { cls: "mos-edit-label", text: label });
+    return wrap;
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.addClass("mos-edit-modal");
+    contentEl.createEl("h2", { cls: "mos-edit-title", text: "Edit task" });
+
+    // Text
+    const textWrap = this.field(contentEl, "Text");
+    const textInput = textWrap.createEl("input", { type: "text", cls: "mos-edit-input" });
+    textInput.value = this.task.text;
+    textInput.addEventListener("input", () => { this.task.text = textInput.value.trim(); });
+
+    // Urgency
+    const urgWrap = this.field(contentEl, "Urgency");
+    const urgGroup = urgWrap.createEl("div", { cls: "mos-edit-btn-group" });
+    for (const u of ["none", "low", "med", "high"] as const) {
+      const btn = urgGroup.createEl("button", {
+        cls: "mos-btn mos-btn-seg" + (this.task.urgency === u ? " is-active" : ""),
+        text: u === "none" ? "—" : u,
+      });
+      btn.addEventListener("click", () => {
+        this.task.urgency = u;
+        urgGroup.querySelectorAll(".mos-edit-seg-btn").forEach(b => b.removeClass("is-active"));
+        btn.addClass("is-active");
+      });
+    }
+
+    // Pillars
+    const pillarsWrap = this.field(contentEl, "Pillars");
+    const pillarsGrid = pillarsWrap.createEl("div", { cls: "mos-edit-pillars-grid" });
+    for (const pillar of PILLARS) {
+      const cell = pillarsGrid.createEl("div", { cls: "mos-edit-pillar-cell" });
+      const cb = cell.createEl("input", { type: "checkbox" });
+      cb.checked = this.task.pillars.includes(pillar.key);
+      cell.createEl("span", { cls: "mos-edit-pillar-label", text: pillar.label });
+
+      if (pillar.tabs.length > 0) {
+        const tabSel = cell.createEl("select", { cls: "mos-edit-select" });
+        tabSel.createEl("option", { value: "", text: "— tab —" });
+        for (const tab of pillar.tabs) {
+          const opt = tabSel.createEl("option", { value: tab, text: tab });
+          if (this.task.tags[pillar.key] === tab) opt.selected = true;
+        }
+        tabSel.style.display = cb.checked ? "block" : "none";
+        cb.addEventListener("change", () => { tabSel.style.display = cb.checked ? "block" : "none"; });
+        tabSel.addEventListener("change", () => { this.task.tags[pillar.key] = tabSel.value; });
+      }
+
+      cb.addEventListener("change", () => {
+        if (cb.checked) { if (!this.task.pillars.includes(pillar.key)) this.task.pillars.push(pillar.key); }
+        else { this.task.pillars = this.task.pillars.filter(p => p !== pillar.key); delete this.task.tags[pillar.key]; }
+      });
+    }
+
+    // Remind date
+    const remindWrap = this.field(contentEl, "Remind date");
+    const remindInput = remindWrap.createEl("input", { type: "date", cls: "mos-edit-input" });
+    remindInput.value = this.task.remind_date ?? "";
+    remindInput.addEventListener("change", () => { this.task.remind_date = remindInput.value || null; });
+
+    const footer = contentEl.createEl("div", { cls: "mos-edit-footer" });
+    const saveBtn = footer.createEl("button", { cls: "mos-btn mos-btn-primary", text: "Save" });
+    const cancelBtn = footer.createEl("button", { cls: "mos-btn", text: "Cancel" });
+    saveBtn.addEventListener("click", () => { void this.onSave(this.task).then(() => this.close()); });
+    cancelBtn.addEventListener("click", () => this.close());
+  }
+
+  onClose() { this.contentEl.empty(); }
+}
+
+export class TrashView extends ItemView {
+  private settings: MorningOSSettings;
+  private plugin: MorningOSPlugin;
+  private registry: TaskRegistry = [];
+  private floatingCleanup: (() => void) | null = null;
+  private renderGen = 0;
+
+  constructor(leaf: WorkspaceLeaf, settings: MorningOSSettings, plugin: MorningOSPlugin) {
+    super(leaf);
+    this.settings = settings;
+    this.plugin = plugin;
+  }
+
+  getViewType(): string { return VIEW_TYPE_TRASH; }
+  getDisplayText(): string { return "Trash"; }
+  getIcon(): string { return "trash"; }
+
+  async onOpen() { this.registry = await loadRegistry(this.app); this.render(); }
+  async refresh() { this.registry = await loadRegistry(this.app); this.render(); }
+  async onClose() { this.floatingCleanup?.(); this.floatingCleanup = null; }
+
+  private render() {
+    const container = this.containerEl.children[1] as HTMLElement;
+    container.empty();
+    container.addClass("morning-os");
+    this.floatingCleanup?.();
+    this.floatingCleanup = mountFloatingPanel(container, this.plugin).cleanup;
+
+    const wrapper = container.createEl("div", { cls: "morning-os-scroll" });
+    const inner = wrapper.createEl("div", { cls: "morning-os-wrapper" });
+    inner.createEl("h1", { cls: "morning-os-section-heading", text: "Trash" });
+
+    // Deleted tasks
+    const deletedTasks = this.registry.filter(t => t.deleted);
+    inner.createEl("h2", { cls: "morning-os-section-heading", text: `Tasks (${deletedTasks.length})` });
+    if (deletedTasks.length === 0) {
+      inner.createEl("p", { cls: "morning-os-empty-state", text: "No deleted tasks." });
+    } else {
+      const card = inner.createEl("div", { cls: "morning-os-card" });
+      for (const task of deletedTasks) {
+        const row = card.createEl("div", { cls: "morning-os-task-row morning-os-task-done" });
+        row.createEl("span", { cls: "morning-os-task-text", text: task.text });
+        row.createEl("span", { cls: "morning-os-reminder-badge", text: task.modified });
+        const restoreBtn = row.createEl("button", { cls: "mos-task-action-btn", text: "Restore" });
+        restoreBtn.addEventListener("click", () => {
+          void restoreTask(this.app, task.id).then(() => {
+            this.plugin.refreshView();
+            void this.refresh();
+          });
+        });
+      }
+    }
+
+    // Dismissed reminders
+    this.renderDismissedReminders(inner);
+  }
+
+  private renderDismissedReminders(parent: HTMLElement) {
+    parent.createEl("h2", { cls: "morning-os-section-heading", text: "Dismissed reminders" });
+
+    const remindersPath = `${this.settings.briefsDir}/reminders.json`;
+    const gen = ++this.renderGen;
+    void (async () => {
+      const exists = await this.app.vault.adapter.exists(remindersPath);
+      if (gen !== this.renderGen) return;
+      if (!exists) {
+        parent.createEl("p", { cls: "morning-os-empty-state", text: "No dismissed reminders." });
+        return;
+      }
+      type ReminderEntry = { text: string; source_date: string; remind_date: string; dismissed: boolean };
+      let reminders: ReminderEntry[] = [];
+      try {
+        reminders = JSON.parse(await this.app.vault.adapter.read(remindersPath)) as ReminderEntry[];
+      } catch { return; }
+      if (gen !== this.renderGen) return;
+
+      const dismissed = reminders.filter(r => r.dismissed);
+      if (dismissed.length === 0) {
+        parent.createEl("p", { cls: "morning-os-empty-state", text: "No dismissed reminders." });
+        return;
+      }
+
+      const card = parent.createEl("div", { cls: "morning-os-card" });
+      for (const r of dismissed) {
+        const row = card.createEl("div", { cls: "morning-os-task-row morning-os-task-done" });
+        row.createEl("span", { cls: "morning-os-task-text", text: r.text });
+        row.createEl("span", { cls: "morning-os-reminder-badge", text: `noted ${r.source_date}` });
+        const restoreBtn = row.createEl("button", { cls: "mos-task-action-btn", text: "Restore" });
+        restoreBtn.addEventListener("click", () => {
+          void (async () => {
+            const raw = await this.app.vault.adapter.read(remindersPath);
+            const all = JSON.parse(raw) as ReminderEntry[];
+            const idx = all.findIndex(e => e.text === r.text && e.source_date === r.source_date && e.remind_date === r.remind_date);
+            if (idx !== -1) all[idx].dismissed = false;
+            await this.app.vault.adapter.write(remindersPath, JSON.stringify(all, null, 2));
+            this.plugin.refreshView();
+            void this.refresh();
+          })();
+        });
+      }
+    })();
+  }
+}
+
+export class CaptureModal extends ObsidianModal {
+  private onCapture: (text: string) => Promise<void>;
+
+  constructor(app: App, onCapture: (text: string) => Promise<void>) {
+    super(app);
+    this.onCapture = onCapture;
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.addClass("mos-feedback-modal");
+    contentEl.createEl("h2", { text: "Capture task" });
+
+    const input = contentEl.createEl("input", {
+      type: "text",
+      cls: "morning-os-wins-input",
+    });
+    input.placeholder = "Task text… (#p/career, #t/applications, @remind(YYYY-MM-DD))";
+    input.style.width = "100%";
+
+    const footer = contentEl.createEl("div", { cls: "mos-feedback-modal-footer" });
+    const hint = footer.createEl("span", { cls: "mos-feedback-status", text: "Enter to save" });
+    void hint;
+
+    const save = async () => {
+      const text = input.value.trim();
+      if (!text) return;
+      await this.onCapture(text);
+      this.close();
+    };
+
+    input.addEventListener("keydown", (e: KeyboardEvent) => {
+      if (e.key === "Enter") void save();
+      if (e.key === "Escape") this.close();
+    });
+
+    // Focus immediately so user can type without clicking
+    window.setTimeout(() => input.focus(), 50);
+  }
+
+  onClose() { this.contentEl.empty(); }
+}
+
 class FeedbackModal extends Modal {
   private type: "bug" | "feature" | null = null;
   private description = "";
@@ -632,13 +1417,13 @@ class FeedbackModal extends Modal {
     contentEl.createEl("p", { cls: "mos-feedback-modal-sub", text: "Your feedback shapes what gets built next." });
 
     const typeRow = contentEl.createEl("div", { cls: "mos-feedback-type-row" });
-    const bugBtn = typeRow.createEl("button", { cls: "mos-feedback-type-btn", text: "🐛 Report a bug" });
-    const featBtn = typeRow.createEl("button", { cls: "mos-feedback-type-btn", text: "✨ Request a feature" });
+    const bugBtn = typeRow.createEl("button", { cls: "mos-btn mos-btn-seg", text: "🐛 Report a bug" });
+    const featBtn = typeRow.createEl("button", { cls: "mos-btn mos-btn-seg", text: "✨ Request a feature" });
 
     const select = (selected: "bug" | "feature") => {
       this.type = selected;
-      bugBtn.toggleClass("mos-feedback-type-active", selected === "bug");
-      featBtn.toggleClass("mos-feedback-type-active", selected === "feature");
+      bugBtn.toggleClass("is-active", selected === "bug");
+      featBtn.toggleClass("is-active", selected === "feature");
     };
 
     bugBtn.addEventListener("click", () => select("bug"));
@@ -651,7 +1436,7 @@ class FeedbackModal extends Modal {
 
     const footer = contentEl.createEl("div", { cls: "mos-feedback-modal-footer" });
     const status = footer.createEl("span", { cls: "mos-feedback-status" });
-    const submitBtn = footer.createEl("button", { cls: "mos-feedback-submit-btn", text: "Submit →" });
+    const submitBtn = footer.createEl("button", { cls: "mos-btn mos-btn-primary", text: "Submit →" });
 
     submitBtn.addEventListener("click", () => {
       void (async () => {
