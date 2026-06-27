@@ -1,6 +1,7 @@
 import { App } from "obsidian";
 import type { MorningOSSettings } from "../settings";
 import { parseDailyNote } from "./vault-reader";
+import { loadRegistry } from "../task-registry";
 
 async function findMostRecentDailyNote(
   beforeDate: string,
@@ -22,6 +23,10 @@ export async function scaffoldDailyNote(
   app: App,
   settings: MorningOSSettings
 ): Promise<void> {
+  // Registry-mode: tasks live in tasks.json, no daily note needed
+  const registry = await loadRegistry(app);
+  if (registry.length > 0) return;
+
   const notePath = `${settings.dailyNoteDir}/${dateStr}.md`;
   if (await app.vault.adapter.exists(notePath)) return;
 

@@ -172,3 +172,12 @@ export async function parseGoals(app: App, settings: MorningOSSettings): Promise
 
   return { short_term: shortTerm, long_term: longTerm };
 }
+
+export async function parseIdentityAnchor(app: App, settings: MorningOSSettings): Promise<string[]> {
+  const content = await readVaultFile(settings.sourceIdentity, app);
+  if (content === null) return [];
+  return content
+    .split("\n")
+    .map(l => l.trim().replace(/^-+\s*/, ""))
+    .filter(l => l && !l.startsWith("#"));
+}

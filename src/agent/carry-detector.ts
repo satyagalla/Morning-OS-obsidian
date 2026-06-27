@@ -1,11 +1,13 @@
 import { App } from "obsidian";
 import type { MorningOSSettings } from "../settings";
 import type { TaskItem } from "./vault-reader";
+import type { BriefTask } from "../types";
 import { findMostRecentBrief } from "./find-recent-brief";
 
 export interface TaskWithCarry {
   text: string;
   carried_from: string | null;
+  id?: string;
 }
 
 export interface CarriedTasks {
@@ -59,7 +61,7 @@ export async function detectCarries(
     yesterdayTasks = [
       ...(found.brief?.tasks?.red_alert ?? []),
       ...(found.brief?.tasks?.regular ?? []),
-    ];
+    ] as BriefTask[];
   }
 
   const result: CarriedTasks = { red_alert: [], regular: [] };
@@ -68,13 +70,16 @@ export async function detectCarries(
     for (const task of todayTasks[category]) {
       if (task.done) continue;
       let carriedFrom: string | null = null;
-      for (const prev of yesterdayTasks) {
-        if (fuzzyMatch(task.text, prev.text)) {
+      const taskId = (task as { id?: string }).id;
+      for (const prev of yesterdayTasks as BriefTask[]) {
+        // Prefer exact ID match; fall back to fuzzy text
+        const matched = (taskId && prev.id && taskId === prev.id) || fuzzyMatch(task.text, prev.text);
+        if (matched) {
           carriedFrom = prev.carried_from ?? prevStr;
           break;
         }
       }
-      result[category].push({ text: task.text, carried_from: carriedFrom });
+      result[category].push({ text: task.text, carried_from: carriedFrom, id: taskId });
     }
   }
 

@@ -1,5 +1,5 @@
 import type { MorningOSSettings } from "../settings";
-import type { DailyBrief, Reminder, SuggestionSource } from "../types";
+import type { DailyBrief, BriefTask, Reminder, SuggestionSource } from "../types";
 import type { CarriedTasks, TaskWithCarry } from "./carry-detector";
 import type { ParsedGoals } from "./vault-reader";
 

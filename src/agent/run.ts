@@ -1,7 +1,8 @@
 import { App, Notice } from "obsidian";
 import type { MorningOSSettings } from "../settings";
 import type { DailyBrief } from "../types";
-import { parseDailyNote, parseYesterdayWins, parseCompletedTasks, parseBulletFile, parseGoals } from "./vault-reader";
+import { parseYesterdayWins, parseBulletFile, parseGoals } from "./vault-reader";
+import { loadRegistry, clearNextDayTasks } from "../task-registry";
 import { detectCarries } from "./carry-detector";
 import { computeFeedback } from "./feedback";
 import { callLLM } from "./llm";
@@ -134,16 +135,26 @@ function parseLLMResponse(raw: string): LLMOutput {
 export async function runAgent(app: App, settings: MorningOSSettings): Promise<AgentResult> {
   const dateStr = todayStr();
 
-  const dailyData = await parseDailyNote(dateStr, app, settings);
-  if (dailyData === null) {
-    throw new Error(`No daily note found for ${dateStr}. Create ${settings.dailyNoteDir}/${dateStr}.md first.`);
-  }
+  // Clear previous-day completed tasks from today view
+  await clearNextDayTasks(app);
+
+  const registry = await loadRegistry(app);
+
+  const redItems = registry.filter(t => t.in_today && t.priority === "red");
+  const regularItems = registry.filter(t => t.in_today && t.priority === "regular");
+  const dailyData = {
+    red_alert: redItems.map(t => ({ id: t.id, text: t.text, done: t.done, remind_date: t.remind_date })),
+    regular: regularItems.map(t => ({ id: t.id, text: t.text, done: t.done, remind_date: t.remind_date })),
+    wins: [] as { text: string; done: boolean; remind_date?: string | null }[],
+    reminders: [] as string[],
+  };
 
   const d = new Date(dateStr + "T12:00:00");
   d.setDate(d.getDate() - 1);
   const yesterdayStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const yesterdayCompleted = registry.filter(t => t.done && t.completed === yesterdayStr).map(t => t.text);
 
-  const [tacticalRules, emotionalRules, technicalTasks, hobbyTasksRaw, goals, yesterdayWins, yesterdayCompleted] =
+  const [tacticalRules, emotionalRules, technicalTasks, hobbyTasksRaw, goals, yesterdayWins] =
     await Promise.all([
       parseBulletFile(settings.sourceTacticalRules, app),
       parseBulletFile(settings.sourceEmotionalRules, app),
@@ -151,7 +162,6 @@ export async function runAgent(app: App, settings: MorningOSSettings): Promise<A
       parseBulletFile(settings.sourceHobbyTasks, app),
       parseGoals(app, settings),
       parseYesterdayWins(dateStr, app, settings),
-      parseCompletedTasks(yesterdayStr, app, settings),
     ]);
 
   const allTaskItems = [...dailyData.red_alert, ...dailyData.regular, ...dailyData.wins];
@@ -183,8 +193,8 @@ export async function runAgent(app: App, settings: MorningOSSettings): Promise<A
     .map(r => ({ text: r.text, source_date: r.source_date, remind_date: r.remind_date }));
 
   const completedTasks = {
-    red_alert: dailyData.red_alert.filter(t => t.done).map(t => t.text),
-    regular: dailyData.regular.filter(t => t.done).map(t => t.text),
+    red_alert: registry.filter(t => t.done && t.completed === dateStr && t.priority === "red").map(t => t.text),
+    regular: registry.filter(t => t.done && t.completed === dateStr && t.priority === "regular").map(t => t.text),
   };
 
   const carriedTasks = await detectCarries(
@@ -324,10 +334,16 @@ export async function refreshBrief(app: App, settings: MorningOSSettings): Promi
   }
   if (settings.modeWins) cachedLLM.wins = existingBrief.wins;
 
-  const dailyData = await parseDailyNote(dateStr, app, settings);
-  if (dailyData === null) {
-    throw new Error(`No daily note found for ${dateStr}. Create ${settings.dailyNoteDir}/${dateStr}.md first.`);
-  }
+  const registry = await loadRegistry(app);
+
+  const redItemsRefresh = registry.filter(t => t.in_today && t.priority === "red");
+  const regularItemsRefresh = registry.filter(t => t.in_today && t.priority === "regular");
+  const dailyData = {
+    red_alert: redItemsRefresh.map(t => ({ id: t.id, text: t.text, done: t.done, remind_date: t.remind_date })),
+    regular: regularItemsRefresh.map(t => ({ id: t.id, text: t.text, done: t.done, remind_date: t.remind_date })),
+    wins: [] as { text: string; done: boolean; remind_date?: string | null }[],
+    reminders: [] as string[],
+  };
 
   const [tacticalRules, emotionalRules, technicalTasks, hobbyTasksRaw, goals, yesterdayWins] =
     await Promise.all([
