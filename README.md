@@ -1,7 +1,7 @@
 # Morning OS
 
-[![Obsidian Plugin](https://img.shields.io/badge/Obsidian-Plugin-7c3aed?logo=obsidian&logoColor=white)](https://obsidian.md/plugins/morning-os)
-[![Downloads](https://img.shields.io/badge/dynamic/json?url=https://raw.githubusercontent.com/obsidianmd/obsidian-releases/master/community-plugin-stats.json&query=%24%5B%22morning-os%22%5D.downloads&label=downloads&color=7c3aed)](https://obsidian.md/plugins/morning-os)
+[![Obsidian Plugin](https://img.shields.io/badge/Obsidian-Plugin-7c3aed?logo=obsidian&logoColor=white)](https://community.obsidian.md/plugins/morning-os)
+[![Downloads](https://img.shields.io/badge/dynamic/json?url=https://raw.githubusercontent.com/obsidianmd/obsidian-releases/master/community-plugin-stats.json&query=%24%5B%22morning-os%22%5D.downloads&label=downloads&color=7c3aed)](https://community.obsidian.md/plugins/morning-os)
 
 > Your Obsidian vault, processed every morning. Morning OS reads your goals, tasks, and rules — and generates a personalized briefing dashboard. Spend your morning focused, not reorganizing.
 
