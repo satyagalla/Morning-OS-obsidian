@@ -14,6 +14,7 @@ export interface MorningOSSettings {
   sourceGoals: string;
   sourceTechnicalTasks: string;
   sourceHobbyTasks: string;
+  sourceIdentity: string;
 
   // Daily note section headings
   sectionRedAlert: string;
@@ -90,6 +91,7 @@ export const DEFAULT_SETTINGS: MorningOSSettings = {
   sourceGoals: "Essential/State of Mind/Long-term and Short-term.md",
   sourceTechnicalTasks: "Essential/Pending Tasks/Technical Tasks.md",
   sourceHobbyTasks: "Essential/Pending Tasks/Hobby Tasks.md",
+  sourceIdentity: "Essential/Identity-Anchor.md",
 
   sectionRedAlert: "Red alert",
   sectionRegular: "Regular",
@@ -392,7 +394,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Daily notes folder")
-      .setDesc("Where your YYYY-MM-DD.md daily notes live.")
+      .setDesc("Legacy fallback — not used when tasks.json registry is active.")
       .addText((text) =>
         text
           .setPlaceholder("Essential/Daily")
@@ -446,6 +448,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Technical tasks file")
+      .setDesc("Legacy — tasks now live in the registry. Kept for brief context.")
       .addText((text) =>
         text
           .setValue(this.plugin.settings.sourceTechnicalTasks)
@@ -454,10 +457,20 @@ export class MorningOSSettingTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("Hobby tasks file")
+      .setDesc("Legacy — tasks now live in the registry. Kept for brief context.")
       .addText((text) =>
         text
           .setValue(this.plugin.settings.sourceHobbyTasks)
           .onChange(async (value) => { await this.save({ sourceHobbyTasks: value }, "Vault paths"); })
+      );
+
+    new Setting(containerEl)
+      .setName("Identity Anchor file")
+      .setDesc("5 static lines rendered at the top of the Home view.")
+      .addText((text) =>
+        text
+          .setValue(this.plugin.settings.sourceIdentity)
+          .onChange(async (value) => { await this.save({ sourceIdentity: value }, "Vault paths"); })
       );
   }
 
