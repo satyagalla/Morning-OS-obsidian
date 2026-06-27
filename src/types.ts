@@ -1,7 +1,27 @@
-export interface Task {
+export interface BriefTask {
   text: string;
   carried_from: string | null;
+  id?: string;
 }
+
+export interface Task {
+  id: string;
+  text: string;
+  done: boolean;
+  created: string;
+  modified: string;
+  completed: string | null;
+  priority: "red" | "regular";
+  urgency: "low" | "med" | "high" | "none";
+  pillars: string[];
+  tags: Record<string, string>;
+  in_today: boolean;
+  remind_date: string | null;
+  deleted_from: string[];
+  deleted: boolean;
+}
+
+export type TaskRegistry = Task[];
 
 export type SuggestionSource =
   | "tasks"
@@ -37,8 +57,8 @@ export interface DailyBrief {
     long_term: string[];
   };
   tasks: {
-    red_alert: Task[];
-    regular: Task[];
+    red_alert: BriefTask[];
+    regular: BriefTask[];
     completed_red_alert: string[];
     completed_regular: string[];
   };
