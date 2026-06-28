@@ -1,9 +1,9 @@
 import { Plugin, WorkspaceLeaf, Notice } from "obsidian";
-import { MorningView, VIEW_TYPE_MORNING, PillarView, DumpView, TrashView, PILLARS, VIEW_TYPE_PILLAR, VIEW_TYPE_DUMP, VIEW_TYPE_TRASH, CaptureModal } from "./view";
+import { MorningView, VIEW_TYPE_MORNING, PillarView, DumpView, TrashView, VIEW_TYPE_PILLAR, VIEW_TYPE_DUMP, VIEW_TYPE_TRASH, CaptureModal } from "./view";
 import { MorningOSSettings, DEFAULT_SETTINGS, MorningOSSettingTab } from "./settings";
 import { runAgent, refreshBrief, AgentResult } from "./agent/run";
 import { scaffoldDailyNote } from "./agent/scaffold-daily-note";
-import { loadRegistry, saveRegistry, createTask } from "./task-registry";
+import { loadRegistry, saveRegistry, createTask, setTaskStatus } from "./task-registry";
 import { parseBulletFile, parseDailyNote } from "./agent/vault-reader";
 import { todayStr } from "./utils";
 
@@ -23,7 +23,7 @@ export default class MorningOSPlugin extends Plugin {
     this.registerView(VIEW_TYPE_MORNING, (leaf) => new MorningView(leaf, this.settings, this));
     this.registerView(VIEW_TYPE_DUMP, (leaf) => new DumpView(leaf, this.settings, this));
     this.registerView(VIEW_TYPE_TRASH, (leaf) => new TrashView(leaf, this.settings, this));
-    for (const pillar of PILLARS) {
+    for (const pillar of this.settings.pillars) {
       const key = pillar.key;
       this.registerView(`${VIEW_TYPE_PILLAR}-${key}`, (leaf) => new PillarView(leaf, this.settings, this, key));
     }
@@ -150,11 +150,23 @@ export default class MorningOSPlugin extends Plugin {
     for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_TRASH)) {
       void (leaf.view as TrashView).refresh();
     }
-    for (const pillar of PILLARS) {
+    for (const pillar of this.settings.pillars) {
       for (const leaf of this.app.workspace.getLeavesOfType(`${VIEW_TYPE_PILLAR}-${pillar.key}`)) {
         void (leaf.view as PillarView).refresh();
       }
     }
+  }
+
+  async reregisterPillarViews() {
+    for (const pillar of this.settings.pillars) {
+      this.app.workspace.getLeavesOfType(`${VIEW_TYPE_PILLAR}-${pillar.key}`)
+        .forEach(l => l.detach());
+    }
+    for (const pillar of this.settings.pillars) {
+      const key = pillar.key;
+      this.registerView(`${VIEW_TYPE_PILLAR}-${key}`, (leaf) => new PillarView(leaf, this.settings, this, key));
+    }
+    this.refreshView();
   }
 
   async activateDump() {
@@ -209,9 +221,9 @@ export default class MorningOSPlugin extends Plugin {
     const dailyData = await parseDailyNote(today, this.app, this.settings);
     if (dailyData) {
       for (const t of dailyData.red_alert.filter(t => !t.done))
-        add(t.text, { priority: "red", in_today: false });
+        add(t.text, { status_priority: "red", is_today: false });
       for (const t of dailyData.regular.filter(t => !t.done))
-        add(t.text, { priority: "regular", in_today: false });
+        add(t.text, { status_priority: "regular", is_today: false });
     }
 
     // Technical tasks → dump
