@@ -4,82 +4,29 @@ import { parseChangelog } from "./agent/parse-changelog";
 
 const WEBHOOK_BUGS     = "https://discord.com/api/webhooks/1514853476990062683/hNbPlOaE13qKD33xxzDUMmUMhtyUZDqKIIr703U9ri8ug4_ujRqhcp2ohDR18DEU-0x6";
 const WEBHOOK_FEATURES = "https://discord.com/api/webhooks/1514853636856090737/zyUYjvGXZdBdrRkv7lBLe4Vaie0YLPENaZgy72xIYNiIWgLyb71ZT7qi7-axEz-Utd0d";
-import { DailyBrief, BriefTask, Task, TaskRegistry } from "./types";
+import { DailyBrief, Task, TaskRegistry } from "./types";
 import { MorningOSSettings } from "./settings";
 import type MorningOSPlugin from "./main";
 import { renderOnboarding } from "./onboarding";
 import { scaffoldDailyNote } from "./agent/scaffold-daily-note";
 import { todayStr } from "./utils";
-import { loadRegistry, saveRegistry, toggleTaskDone, updateTask, createTask, clearTaskFromView, moveTaskToToday, deleteTask, restoreTask } from "./task-registry";
+import { loadRegistry, saveRegistry, setTaskStatus, updateTask, createTask, moveTaskToToday, deleteTask, restoreTask, getActiveReminders, getChildren } from "./task-registry";
+import type { PillarConfig } from "./types";
 import { parseIdentityAnchor } from "./agent/vault-reader";
 
 export const VIEW_TYPE_PILLAR = "morning-os-pillar-view";
 export const VIEW_TYPE_DUMP = "morning-os-inbox-view";
 export const VIEW_TYPE_TRASH = "morning-os-trash-view";
 
-const NAV_ITEMS = [
-  { id: "home",         label: "🌅 Home",         type: "morning-os-view" },
-  { id: "dump",         label: "📥 Inbox",         type: "morning-os-inbox-view" },
-  { id: "health",       label: "❤️ Health",        type: "morning-os-pillar-view-health" },
-  { id: "career",       label: "💼 Career",        type: "morning-os-pillar-view-career" },
-  { id: "interests",    label: "✨ Interests",     type: "morning-os-pillar-view-interests" },
-  { id: "family",       label: "👨‍👩‍👧 Family",      type: "morning-os-pillar-view-family" },
-  { id: "relationship", label: "💞 Relationship",  type: "morning-os-pillar-view-relationship" },
-  { id: "trash",        label: "🗑 Trash",          type: VIEW_TYPE_TRASH },
-] as const;
-
-function renderNavBar(container: HTMLElement, activeType: string, plugin: MorningOSPlugin) {
-  const nav = container.createEl("div", { cls: "mos-nav-bar" });
-  for (const item of NAV_ITEMS) {
-    const btn = nav.createEl("button", {
-      cls: "mos-nav-btn" + (activeType === item.type ? " is-active" : ""),
-      text: item.label,
-    });
-    btn.addEventListener("click", () => {
-      if (item.id === "home") void plugin.activateView();
-      else if (item.id === "dump") void plugin.activateDump();
-      else if (item.id === "trash") void plugin.activateTrash();
-      else void plugin.activatePillar(item.id);
-    });
-  }
+function buildNavItems(pillars: PillarConfig[]) {
+  return [
+    { id: "home",  label: "🌅 Home",  type: VIEW_TYPE_MORNING },
+    { id: "dump",  label: "📥 Inbox", type: VIEW_TYPE_DUMP },
+    ...pillars.map(p => ({ id: p.key, label: `${p.icon} ${p.label}`, type: `${VIEW_TYPE_PILLAR}-${p.key}` })),
+    { id: "trash", label: "🗑 Trash", type: VIEW_TYPE_TRASH },
+  ];
 }
 
-export function renderNavPopover(anchor: HTMLElement, plugin: MorningOSPlugin) {
-  document.querySelector(".mos-nav-popover")?.remove();
-
-  // Walk up to the actual ribbon button element
-  let btn: HTMLElement = anchor;
-  while (btn.parentElement && !btn.classList.contains("side-dock-ribbon-action")) {
-    btn = btn.parentElement;
-  }
-
-  const popover = document.body.createEl("div", { cls: "mos-nav-popover" });
-  const rect = btn.getBoundingClientRect();
-  popover.style.position = "fixed";
-  popover.style.left = `${rect.right + 8}px`;
-  popover.style.top = `${rect.top}px`;
-  popover.style.zIndex = "9999";
-
-  for (const item of NAV_ITEMS) {
-    const btn = popover.createEl("button", { cls: "mos-nav-popover-item", text: item.label });
-    btn.addEventListener("click", () => {
-      popover.remove();
-      if (item.id === "home") void plugin.activateView();
-      else if (item.id === "dump") void plugin.activateDump();
-      else if (item.id === "trash") void plugin.activateTrash();
-      else void plugin.activatePillar(item.id);
-    });
-  }
-
-  // Close on outside click
-  const close = (e: MouseEvent) => {
-    if (!popover.contains(e.target as Node) && e.target !== anchor) {
-      popover.remove();
-      document.removeEventListener("mousedown", close);
-    }
-  };
-  document.addEventListener("mousedown", close);
-}
 
 export const VIEW_TYPE_MORNING = "morning-os-view";
 
@@ -107,9 +54,8 @@ export class MorningView extends ItemView {
 
   async onOpen() {
     if (!this.settings.onboarded) {
-      await this.loadBrief();
+      await this.loadRegistryAndIdentity();
       await this.loadWins();
-      await this.loadSuggestionReaction();
       this.render();
       return;
     }
@@ -117,19 +63,23 @@ export class MorningView extends ItemView {
     const today = todayStr();
     await scaffoldDailyNote(today, this.app, this.settings);
 
+    // Auto-promote tasks with due date_remind to today
+    await this.promoteReminders();
+
+    // Always load registry and render immediately — don't block on agent
+    await this.loadRegistryAndIdentity();
+    await this.loadBrief();
+    await this.loadWins();
+    await this.loadSuggestionReaction();
+    this.render();
+
+    // Trigger agent in background if brief doesn't exist for today
     const briefPath = `${this.settings.briefsDir}/${today}.json`;
     const briefExists = await this.app.vault.adapter.exists(briefPath);
     const alreadyRan = this.plugin.settings.agentLastRunDate === today && briefExists;
     if (!alreadyRan) {
-      await this.plugin.triggerAgent();
-      return;
+      void this.plugin.triggerAgent();
     }
-
-    await this.loadBrief();
-    await this.loadWins();
-    await this.loadSuggestionReaction();
-    await this.loadRegistryAndIdentity();
-    this.render();
   }
 
   async onClose() {
@@ -149,6 +99,22 @@ export class MorningView extends ItemView {
     this.render();
   }
 
+  private async promoteReminders() {
+    const today = todayStr();
+    const registry = await loadRegistry(this.app);
+    const due = registry.filter(t =>
+      !t.is_deleted && !t.is_today &&
+      t.status_completion === "open" &&
+      t.date_remind !== null && t.date_remind <= today
+    );
+    if (!due.length) return;
+    for (const t of due) {
+      t.is_today = true;
+      t.date_modified = today;
+    }
+    await saveRegistry(this.app, registry);
+  }
+
   private async loadRegistryAndIdentity() {
     this.registry = await loadRegistry(this.app);
     this.identityLines = await parseIdentityAnchor(this.app, this.settings);
@@ -166,14 +132,14 @@ export class MorningView extends ItemView {
   }
 
   private async loadWins() {
-    if (!this.brief) return;
-    const notePath = `${this.settings.dailyNoteDir}/${this.brief.date}.md`;
+    const today = todayStr();
+    const notePath = `${this.settings.dailyNoteDir}/${today}.md`;
     const file = this.app.vault.getAbstractFileByPath(notePath);
-    if (!(file instanceof TFile)) {
-      this.wins = this.brief.wins.slice();
-      return;
+    if (file instanceof TFile) {
+      this.wins = this.parseWinsFromNote(await this.app.vault.read(file));
+    } else {
+      this.wins = this.brief?.wins?.slice() ?? [];
     }
-    this.wins = this.parseWinsFromNote(await this.app.vault.read(file));
   }
 
   private parseWinsFromNote(content: string): string[] {
@@ -197,11 +163,11 @@ export class MorningView extends ItemView {
   }
 
   private async loadSuggestionReaction() {
-    if (!this.brief) return;
-    const count = this.brief.suggestions.length;
+    const count = this.brief?.suggestions?.length ?? 0;
     this.suggestionReactions = Array<"up" | "down" | null>(count).fill(null);
+    if (!count) return;
     const file = this.app.vault.getAbstractFileByPath(
-      `${this.settings.feedbackDir}/reactions/${this.brief.date}.json`
+      `${this.settings.feedbackDir}/reactions/${todayStr()}.json`
     );
     if (!(file instanceof TFile)) return;
     try {
@@ -220,14 +186,6 @@ export class MorningView extends ItemView {
 
     if (!this.settings.onboarded) {
       renderOnboarding(container, this.plugin);
-      return;
-    }
-
-    if (!this.brief) {
-      container.createEl("div", {
-        cls: "morning-os-empty",
-        text: "No brief for today. Run the briefing agent or check _generated/briefs/",
-      });
       return;
     }
 
@@ -254,7 +212,6 @@ export class MorningView extends ItemView {
     const left = body.createEl("div", { cls: "morning-os-left" });
     const right = body.createEl("div", { cls: "morning-os-right" });
 
-    this.renderReminders(left);
     this.renderTasks(left);
     this.renderTacticalRules(right);
 
@@ -283,7 +240,7 @@ export class MorningView extends ItemView {
 
   private renderHeader(parent: HTMLElement) {
     const header = parent.createEl("div", { cls: "morning-os-header" });
-    const dateObj = new Date(this.brief!.date + "T00:00:00");
+    const dateObj = new Date(todayStr() + "T00:00:00");
     header.createEl("div", {
       cls: "morning-os-date-weekday",
       text: dateObj.toLocaleDateString("en-US", { weekday: "long" }),
@@ -314,8 +271,10 @@ export class MorningView extends ItemView {
   }
 
   private renderGoals(parent: HTMLElement) {
-    const { short_term, long_term } = this.brief!.goals;
-    const { short_term_count = 2, long_term_count = 2 } = this.brief!.meta?.goals ?? {};
+    const goals = this.brief?.goals;
+    if (!goals?.short_term?.length && !goals?.long_term?.length) return;
+    const { short_term, long_term } = goals;
+    const { short_term_count = 2, long_term_count = 2 } = this.brief?.meta?.goals ?? {};
 
     const stVisible = short_term.slice(0, short_term_count);
     const stHidden  = short_term.slice(short_term_count);
@@ -353,131 +312,124 @@ export class MorningView extends ItemView {
   }
 
   private renderTasks(parent: HTMLElement) {
-    const completedRed = this.brief!.tasks.completed_red_alert ?? [];
-    const completedRegular = this.brief!.tasks.completed_regular ?? [];
-    const hasAny = this.brief!.tasks.red_alert.length > 0 || this.brief!.tasks.regular.length > 0 || completedRed.length > 0 || completedRegular.length > 0;
+    const today = todayStr();
+    const redOpen    = this.registry.filter(t => t.is_today && !t.is_deleted && t.status_priority === "red" && t.status_completion !== "done");
+    const regOpen    = this.registry.filter(t => t.is_today && !t.is_deleted && t.status_priority === "regular" && t.status_completion !== "done");
+    const redDone    = this.registry.filter(t => t.is_today && !t.is_deleted && t.status_priority === "red" && t.status_completion === "done" && t.date_completed === today);
+    const regDone    = this.registry.filter(t => t.is_today && !t.is_deleted && t.status_priority === "regular" && t.status_completion === "done" && t.date_completed === today);
 
-    if (!hasAny) {
+    if (!redOpen.length && !regOpen.length && !redDone.length && !regDone.length) {
       const empty = parent.createEl("div", { cls: "morning-os-card morning-os-card-empty" });
       empty.createEl("p", { cls: "morning-os-empty-state", text: "You're all caught up for today." });
       empty.createEl("p", { cls: "morning-os-empty-state", text: "Pick tasks from the Inbox or Pillar views to get started." });
       return;
     }
 
-    if (this.brief!.tasks.red_alert.length > 0 || completedRed.length > 0) {
+    if (redOpen.length > 0 || redDone.length > 0) {
       parent.createEl("h2", { cls: "morning-os-section-heading morning-os-red-heading", text: "Red alert" });
       const card = parent.createEl("div", { cls: "morning-os-card morning-os-card-red" });
-      this.renderTaskList(card, this.brief!.tasks.red_alert);
-      this.renderCompletedList(card, completedRed);
+      this.renderRegistryTaskList(card, redOpen);
+      this.renderRegistryDoneList(card, redDone);
     }
-    if (this.brief!.tasks.regular.length > 0 || completedRegular.length > 0) {
+    if (regOpen.length > 0 || regDone.length > 0) {
       parent.createEl("h2", { cls: "morning-os-section-heading", text: "Regular" });
       const card = parent.createEl("div", { cls: "morning-os-card" });
-      this.renderTaskList(card, this.brief!.tasks.regular);
-      this.renderCompletedList(card, completedRegular);
+      this.renderRegistryTaskList(card, regOpen);
+      this.renderRegistryDoneList(card, regDone);
     }
   }
 
-  private renderCompletedList(parent: HTMLElement, tasks: string[]) {
-    for (const text of tasks) {
-      const row = parent.createEl("div", { cls: "morning-os-task-row morning-os-task-done" });
-      const checkbox = row.createEl("input", { type: "checkbox" });
-      checkbox.checked = true;
-      row.createEl("span", { cls: "morning-os-task-text", text });
-      checkbox.addEventListener("change", () => {
-        row.toggleClass("morning-os-task-done", checkbox.checked);
-        void this.toggleTaskInNote(text, checkbox.checked);
-      });
-    }
-  }
-
-  private renderTaskList(parent: HTMLElement, tasks: BriefTask[]) {
+  private renderRegistryTaskList(parent: HTMLElement, tasks: Task[]) {
     for (const task of tasks) {
       const row = parent.createEl("div", { cls: "morning-os-task-row" });
       const checkbox = row.createEl("input", { type: "checkbox" });
       row.createEl("span", { cls: "morning-os-task-text", text: task.text });
-      if (task.carried_from) {
-        const days = this.daysBetween(task.carried_from, this.brief!.date);
-        row.createEl("span", { cls: "morning-os-carried-badge", text: `carried ${days}d` });
+      if (task.date_remind) {
+        row.createEl("span", { cls: "morning-os-reminder-badge", text: `⏰ ${task.date_remind}` });
       }
 
       const moreBtn = row.createEl("button", { cls: "mos-more-btn", text: "⋯" });
       moreBtn.addEventListener("click", () => {
-        const menuItems: MenuAction[] = [];
-        if (task.id) {
-          menuItems.push({
+        const flipPriority = task.status_priority === "red" ? "regular" : "red";
+        const flipLabel = task.status_priority === "red" ? "→ Move to Regular" : "🔴 Move to Red alert";
+        const menuItems: MenuAction[] = [
+          {
+            label: flipLabel,
+            action: () => {
+              void updateTask(this.app, task._id, { status_priority: flipPriority }).then(async () => {
+                await this.plugin.autoRefreshBrief();
+                this.plugin.refreshView();
+              });
+            },
+          },
+          {
             label: "✕ Remove from today",
             action: () => {
               void (async () => {
-                await updateTask(this.app, task.id!, { in_today: false });
+                await updateTask(this.app, task._id, { is_today: false });
                 await this.plugin.autoRefreshBrief();
                 this.plugin.refreshView();
               })();
             },
-          });
-          menuItems.push({
+          },
+          {
             label: "✎ Edit metadata",
             action: () => {
-              const fullTask = this.registry.find(t => t.id === task.id);
-              if (!fullTask) return;
-              new TaskEditModal(this.app, fullTask, async (updated) => {
+              new TaskEditModal(this.app, task, async (updated) => {
                 const reg = await loadRegistry(this.app);
-                const idx = reg.findIndex(t => t.id === updated.id);
+                const idx = reg.findIndex(t => t._id === updated._id);
                 if (idx !== -1) reg[idx] = updated;
                 await saveRegistry(this.app, reg);
                 this.plugin.refreshView();
-              }).open();
+              }, false, this.plugin.settings.pillars).open();
             },
-          });
-          menuItems.push({
+          },
+          {
             label: "🗑 Delete",
             danger: true,
-            action: () => {
-              void deleteTask(this.app, task.id!).then(() => this.plugin.refreshView());
-            },
-          });
-        }
+            action: () => void deleteTask(this.app, task._id).then(() => this.plugin.refreshView()),
+          },
+        ];
         openContextMenu(moreBtn, menuItems);
       });
 
       checkbox.addEventListener("change", () => {
         row.toggleClass("morning-os-task-done", checkbox.checked);
-        if (task.id) {
-          void toggleTaskDone(this.app, task.id, checkbox.checked).then(() => this.plugin.refreshView());
-        } else {
-          void this.toggleTaskInNote(task.text, checkbox.checked);
-        }
+        void setTaskStatus(this.app, task._id, checkbox.checked ? "done" : "open")
+          .then(() => this.plugin.refreshView());
       });
     }
   }
 
-  private async toggleTaskInNote(taskText: string, checked: boolean) {
-    const notePath = `${this.settings.dailyNoteDir}/${this.brief!.date}.md`;
-    const file = this.app.vault.getAbstractFileByPath(notePath);
-    if (!(file instanceof TFile)) return;
-    const content = await this.app.vault.read(file);
-    const escaped = taskText.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    // matches both "- [ ] task", "- [x] task", and plain "- task"
-    const regex = new RegExp(`^- (?:\\[[xX ]\\] )?${escaped}$`, "m");
-    const newContent = content.replace(regex, `- [${checked ? "x" : " "}] ${taskText}`);
-    if (newContent !== content) await this.app.vault.modify(file, newContent);
+  private renderRegistryDoneList(parent: HTMLElement, tasks: Task[]) {
+    for (const task of tasks) {
+      const row = parent.createEl("div", { cls: "morning-os-task-row morning-os-task-done" });
+      const checkbox = row.createEl("input", { type: "checkbox" });
+      checkbox.checked = true;
+      row.createEl("span", { cls: "morning-os-task-text", text: task.text });
+      checkbox.addEventListener("change", () => {
+        row.toggleClass("morning-os-task-done", checkbox.checked);
+        void setTaskStatus(this.app, task._id, checkbox.checked ? "done" : "open")
+          .then(() => this.plugin.refreshView());
+      });
+    }
   }
 
   private renderTacticalRules(parent: HTMLElement) {
-    const hasTasks = this.brief!.tasks.red_alert.length > 0 || this.brief!.tasks.regular.length > 0;
-    if (!hasTasks || !this.brief!.tactical_rules?.length) return;
+    const hasTasks = this.registry.some(t => t.is_today && !t.is_deleted && t.status_completion !== "done");
+    if (!hasTasks || !this.brief?.tactical_rules?.length) return;
     parent.createEl("h2", { cls: "morning-os-section-heading", text: "Rules for today" });
     const card = parent.createEl("div", { cls: "morning-os-card morning-os-card-rules" });
     const list = card.createEl("ul");
-    for (const rule of this.brief!.tactical_rules) {
+    for (const rule of this.brief.tactical_rules) {
       list.createEl("li", { text: rule });
     }
   }
 
   private renderSuggestion(parent: HTMLElement) {
-    if (!this.brief!.suggestions?.length) return;
+    if (!this.brief?.suggestions?.length) return;
     parent.createEl("h2", { cls: "morning-os-section-heading", text: "Suggestions" });
-    this.brief!.suggestions.forEach((s, i) => {
+    this.brief.suggestions.forEach((s, i) => {
       const card = parent.createEl("div", { cls: "morning-os-card morning-os-suggestion-card" });
       card.createEl("p", { cls: "morning-os-suggestion-text", text: s.text });
 
@@ -517,7 +469,7 @@ export class MorningView extends ItemView {
   }
 
   private async writeSuggestionReactions() {
-    const today = this.brief!.date;
+    const today = todayStr();
     const dir = `${this.settings.feedbackDir}/reactions`;
     const filePath = `${dir}/${today}.json`;
     const payload = JSON.stringify(
@@ -534,63 +486,38 @@ export class MorningView extends ItemView {
   }
 
   private renderReminders(parent: HTMLElement) {
-    if (!this.brief?.reminders?.length) return;
+    const reminders = getActiveReminders(this.registry);
+    if (!reminders.length) return;
 
     parent.createEl("h2", { cls: "morning-os-section-heading", text: "Reminders" });
     const card = parent.createEl("div", { cls: "morning-os-card" });
 
-    for (const reminder of this.brief.reminders) {
+    for (const task of reminders) {
       const row = card.createEl("div", { cls: "morning-os-task-row" });
       const checkbox = row.createEl("input", { type: "checkbox" });
-      row.createEl("span", { cls: "morning-os-task-text", text: reminder.text });
-      row.createEl("span", {
-        cls: "morning-os-reminder-badge",
-        text: `noted ${reminder.source_date}`,
-      });
-      checkbox.addEventListener("change", () => {
-        row.toggleClass("morning-os-task-done", checkbox.checked);
-        if (checkbox.checked) {
-          void this.dismissReminder(reminder.text, reminder.source_date, reminder.remind_date);
-        }
-      });
+      row.createEl("span", { cls: "morning-os-task-text", text: task.text });
+      row.createEl("span", { cls: "morning-os-reminder-badge", text: `⏰ ${task.date_remind}` });
 
+      // Dismiss = clear remind date (task stays open)
       const dismissBtn = row.createEl("button", { cls: "mos-task-action-btn mos-task-action-delete", text: "🗑" });
       dismissBtn.setAttribute("aria-label", "Dismiss reminder");
       dismissBtn.addEventListener("click", () => {
         row.remove();
-        void this.dismissReminder(reminder.text, reminder.source_date, reminder.remind_date);
+        void updateTask(this.app, task._id, { date_remind: null }).then(() => this.plugin.refreshView());
+      });
+
+      // Done = mark task done
+      checkbox.addEventListener("change", () => {
+        row.toggleClass("morning-os-task-done", checkbox.checked);
+        if (checkbox.checked) {
+          void setTaskStatus(this.app, task._id, "done").then(() => this.plugin.refreshView());
+        }
       });
     }
   }
 
-  private async dismissReminder(text: string, sourceDate: string, remindDate: string) {
-    const remindersPath = `${this.settings.briefsDir}/reminders.json`;
-    const exists = await this.app.vault.adapter.exists(remindersPath);
-    if (!exists) return;
-
-    try {
-      // Update reminders.json — mark dismissed
-      const data = JSON.parse(await this.app.vault.adapter.read(remindersPath)) as { text: string; source_date: string; remind_date: string; dismissed: boolean }[];
-      for (const r of data) {
-        if (r.text === text && r.source_date === sourceDate && r.remind_date === remindDate) {
-          r.dismissed = true;
-        }
-      }
-      await this.app.vault.adapter.write(remindersPath, JSON.stringify(data, null, 2));
-
-      // Also remove from today's brief.json so reload doesn't restore it
-      if (this.brief) {
-        this.brief.reminders = (this.brief.reminders ?? []).filter(
-          r => !(r.text === text && r.source_date === sourceDate && r.remind_date === remindDate)
-        );
-        const briefPath = `${this.settings.briefsDir}/${this.brief.date}.json`;
-        await this.app.vault.adapter.write(briefPath, JSON.stringify(this.brief, null, 2));
-      }
-    } catch { /* intentional — failure to dismiss reminder is non-critical */ }
-  }
-
   private renderPendingTasks(parent: HTMLElement) {
-    const tasks = this.brief!.technical_tasks ?? [];
+    const tasks = this.brief?.technical_tasks ?? [];
     const count = tasks.length;
     const wrap = parent.createEl("div", { cls: "morning-os-pending-wrap" });
     const toggle = wrap.createEl("div", { cls: "morning-os-pending-toggle" });
@@ -607,12 +534,12 @@ export class MorningView extends ItemView {
   }
 
   private renderHobbyTasks(parent: HTMLElement) {
-    if (!this.brief!.hobby_tasks?.length) return;
+    if (!this.brief?.hobby_tasks?.length) return;
     const section = parent.createEl("div", { cls: "morning-os-hobby" });
     section.createEl("h2", { cls: "morning-os-section-heading", text: "Hobby tasks" });
     const card = section.createEl("div", { cls: "morning-os-card morning-os-hobby-card" });
     const list = card.createEl("ul", { cls: "morning-os-hobby-list" });
-    for (const item of this.brief!.hobby_tasks) {
+    for (const item of this.brief!.hobby_tasks ?? []) {
       list.createEl("li", { text: item });
     }
   }
@@ -660,7 +587,7 @@ export class MorningView extends ItemView {
   }
 
   private async appendWinToNote(winText: string) {
-    const notePath = `${this.settings.dailyNoteDir}/${this.brief!.date}.md`;
+    const notePath = `${this.settings.dailyNoteDir}/${todayStr()}.md`;
     const file = this.app.vault.getAbstractFileByPath(notePath);
     if (!(file instanceof TFile)) return;
     let content = await this.app.vault.read(file);
@@ -767,39 +694,93 @@ function mountFloatingPanel(container: HTMLElement, plugin: MorningOSPlugin): { 
   runBtn.addEventListener("click", () => { void plugin.triggerAgent(); });
 
   actions.createEl("div", { cls: "morning-os-fab-label", text: "Views" });
-  const viewItems: { label: string; action: () => void }[] = [
-    { label: "🌅 Home",          action: () => void plugin.activateView() },
-    { label: "📥 Inbox",         action: () => void plugin.activateDump() },
-    { label: "❤️ Health",        action: () => void plugin.activatePillar("health") },
-    { label: "💼 Career",        action: () => void plugin.activatePillar("career") },
-    { label: "✨ Interests",     action: () => void plugin.activatePillar("interests") },
-    { label: "👨‍👩‍👧 Family",      action: () => void plugin.activatePillar("family") },
-    { label: "💞 Relationship",  action: () => void plugin.activatePillar("relationship") },
-    { label: "🗑 Trash",         action: () => void plugin.activateTrash() },
-  ];
-  for (const item of viewItems) {
+  for (const item of buildNavItems(plugin.settings.pillars)) {
     const btn = actions.createEl("button", { cls: "morning-os-fab morning-os-fab-view", text: item.label });
-    btn.addEventListener("click", () => { hide(); item.action(); });
+    btn.addEventListener("click", () => {
+      hide();
+      if (item.id === "home")  void plugin.activateView();
+      else if (item.id === "dump")  void plugin.activateDump();
+      else if (item.id === "trash") void plugin.activateTrash();
+      else void plugin.activatePillar(item.id);
+    });
   }
 
   return { handle, actions, cleanup };
 }
 
-export const PILLARS = [
-  { key: "health",       label: "Health",       tabs: ["Physical", "Mental/ADHD"] },
-  { key: "career",       label: "Career",       tabs: ["Applications", "Leads", "Follow-ups"] },
-  { key: "interests",    label: "Interests",    tabs: [] },
-  { key: "family",       label: "Family",       tabs: [] },
-  { key: "relationship", label: "Relationship", tabs: [] },
-] as const;
+type FilterState = {
+  priority?: "red" | "regular";
+  urgency?: "none" | "low" | "med" | "high";
+  remind?: "has" | "due";
+  status?: "open" | "done" | "dismissed";
+};
 
-type SortField = "created" | "modified" | "completed" | "name";
+function applyFilters(tasks: Task[], filters: FilterState): Task[] {
+  const today = todayStr();
+  return tasks.filter(t => {
+    if (filters.priority && t.status_priority !== filters.priority) return false;
+    if (filters.urgency && t.status_urgency !== filters.urgency) return false;
+    if (filters.remind === "has" && !t.date_remind) return false;
+    if (filters.remind === "due" && !(t.date_remind && t.date_remind <= today)) return false;
+    if (filters.status && t.status_completion !== filters.status) return false;
+    return true;
+  });
+}
+
+function renderFilterSelects(
+  parent: HTMLElement,
+  filters: FilterState,
+  onChange: (f: FilterState) => void,
+  showUrgency = false
+) {
+  const mkSelect = (
+    opts: { value: string; label: string }[],
+    current: string | undefined,
+    onchange: (v: string) => void
+  ) => {
+    const sel = parent.createEl("select", { cls: "mos-btn mos-btn-select mos-filter-select" });
+    for (const o of opts) {
+      const opt = sel.createEl("option", { value: o.value, text: o.label });
+      if ((current ?? "") === o.value) opt.selected = true;
+    }
+    sel.addEventListener("change", () => onchange(sel.value));
+  };
+
+  mkSelect(
+    [{ value: "", label: "Priority: All" }, { value: "red", label: "🔴 Red" }, { value: "regular", label: "Regular" }],
+    filters.priority,
+    v => onChange({ ...filters, priority: v as FilterState["priority"] || undefined })
+  );
+
+  mkSelect(
+    [{ value: "", label: "Status: All" }, { value: "open", label: "Open" }, { value: "done", label: "Done" }, { value: "dismissed", label: "Dismissed" }],
+    filters.status,
+    v => onChange({ ...filters, status: v as FilterState["status"] || undefined })
+  );
+
+  if (showUrgency) {
+    mkSelect(
+      [{ value: "", label: "Urgency: All" }, { value: "none", label: "—" }, { value: "low", label: "Low" }, { value: "med", label: "Med" }, { value: "high", label: "High" }],
+      filters.urgency,
+      v => onChange({ ...filters, urgency: v as FilterState["urgency"] || undefined })
+    );
+  }
+
+  mkSelect(
+    [{ value: "", label: "Remind: All" }, { value: "has", label: "Has reminder" }, { value: "due", label: "Due today" }],
+    filters.remind,
+    v => onChange({ ...filters, remind: v as FilterState["remind"] || undefined })
+  );
+}
+
+
+type SortField = "date_created" | "date_modified" | "date_completed" | "name";
 type SortDir = "asc" | "desc";
 
 function sortTasks(tasks: Task[], field: SortField, dir: SortDir): Task[] {
   return [...tasks].sort((a, b) => {
-    let va = field === "name" ? a.text : (a[field] ?? "");
-    let vb = field === "name" ? b.text : (b[field] ?? "");
+    const va = field === "name" ? a.text : (a[field] ?? "");
+    const vb = field === "name" ? b.text : (b[field] ?? "");
     if (va < vb) return dir === "asc" ? -1 : 1;
     if (va > vb) return dir === "asc" ? 1 : -1;
     return 0;
@@ -839,18 +820,18 @@ function renderTaskRowShared(
   task: Task,
   app: App,
   onRefresh: () => void,
-  clearView: string,
-  isInbox = false,
-  plugin?: MorningOSPlugin
+  plugin?: MorningOSPlugin,
+  showUrgency = false
 ) {
-  const row = parent.createEl("div", { cls: "morning-os-task-row" + (task.done ? " morning-os-task-done" : "") });
+  const isDone = task.status_completion === "done";
+  const row = parent.createEl("div", { cls: "morning-os-task-row" + (isDone ? " morning-os-task-done" : "") });
   const checkbox = row.createEl("input", { type: "checkbox" });
-  checkbox.checked = task.done;
+  checkbox.checked = isDone;
 
   // Urgency dot
-  const dot = row.createEl("span", { cls: "mos-urgency-dot", attr: { title: `Urgency: ${task.urgency}` } });
-  dot.style.background = URGENCY_DOT[task.urgency] ?? URGENCY_DOT.med;
-  dot.textContent = URGENCY_LABEL[task.urgency] ?? "M";
+  const dot = row.createEl("span", { cls: "mos-urgency-dot", attr: { title: `Urgency: ${task.status_urgency}` } });
+  dot.style.background = URGENCY_DOT[task.status_urgency] ?? URGENCY_DOT.none;
+  dot.textContent = URGENCY_LABEL[task.status_urgency] ?? "";
 
   // Inline text — double-click to edit
   const textSpan = row.createEl("span", { cls: "morning-os-task-text", text: task.text });
@@ -868,8 +849,8 @@ function renderTaskRowShared(
       const newText = input.value.trim();
       if (newText && newText !== task.text) {
         const reg = await loadRegistry(app);
-        const idx = reg.findIndex(t => t.id === task.id);
-        if (idx !== -1) { reg[idx].text = newText; reg[idx].modified = todayStr(); }
+        const idx = reg.findIndex(t => t._id === task._id);
+        if (idx !== -1) { reg[idx].text = newText; reg[idx].date_modified = todayStr(); }
         await saveRegistry(app, reg);
         onRefresh();
       } else {
@@ -883,15 +864,15 @@ function renderTaskRowShared(
     });
   });
 
-  if (task.remind_date) {
-    row.createEl("span", { cls: "morning-os-reminder-badge", text: `⏰ ${task.remind_date}` });
+  if (task.date_remind) {
+    row.createEl("span", { cls: "morning-os-reminder-badge", text: `⏰ ${task.date_remind}` });
   }
 
   // Inline today buttons (all views) — icon only, shown on hover
   const regBtn = row.createEl("button", { cls: "mos-today-btn", attr: { title: "Move to Today (Regular)" } });
   regBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`;
   regBtn.addEventListener("click", () => {
-    void moveTaskToToday(app, task.id, "regular").then(async () => {
+    void moveTaskToToday(app, task._id, "regular").then(async () => {
       if (plugin) { await plugin.autoRefreshBrief(); plugin.refreshView(); }
       onRefresh();
     });
@@ -900,7 +881,7 @@ function renderTaskRowShared(
   const redBtn2 = row.createEl("button", { cls: "mos-today-btn mos-today-btn-red", attr: { title: "Move to Today (Red alert)" } });
   redBtn2.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/><polyline points="15 18 21 12 15 6"/></svg>`;
   redBtn2.addEventListener("click", () => {
-    void moveTaskToToday(app, task.id, "red").then(async () => {
+    void moveTaskToToday(app, task._id, "red").then(async () => {
       if (plugin) { await plugin.autoRefreshBrief(); plugin.refreshView(); }
       onRefresh();
     });
@@ -916,32 +897,20 @@ function renderTaskRowShared(
       action: () => {
         new TaskEditModal(app, task, async (updated) => {
           const reg = await loadRegistry(app);
-          const idx = reg.findIndex(t => t.id === updated.id);
+          const idx = reg.findIndex(t => t._id === updated._id);
           if (idx !== -1) reg[idx] = updated;
           await saveRegistry(app, reg);
           if (plugin) plugin.refreshView();
           onRefresh();
-        }).open();
+        }, showUrgency, plugin?.settings.pillars ?? []).open();
       },
     });
-
-    if (!isInbox) {
-      menuItems.push({
-        label: "✕ Remove from this view",
-        action: () => {
-          void clearTaskFromView(app, task.id, clearView).then(() => {
-            if (plugin) plugin.refreshView();
-            onRefresh();
-          });
-        },
-      });
-    }
 
     menuItems.push({
       label: "🗑 Delete",
       danger: true,
       action: () => {
-        void deleteTask(app, task.id).then(() => {
+        void deleteTask(app, task._id).then(() => {
           if (plugin) plugin.refreshView();
           onRefresh();
         });
@@ -953,7 +922,7 @@ function renderTaskRowShared(
 
   checkbox.addEventListener("change", () => {
     row.toggleClass("morning-os-task-done", checkbox.checked);
-    void toggleTaskDone(app, task.id, checkbox.checked).then(() => {
+    void setTaskStatus(app, task._id, checkbox.checked ? "done" : "open").then(() => {
       if (plugin) plugin.refreshView();
     });
   });
@@ -981,9 +950,10 @@ export class PillarView extends ItemView {
   private registry: TaskRegistry = [];
   private activeTab: string | null = null;
   private pillarKey: string;
-  private sortField: SortField = "created";
+  private sortField: SortField = "date_created";
   private sortDir: SortDir = "asc";
   private floatingCleanup: (() => void) | null = null;
+  private filters: FilterState = {};
 
   constructor(leaf: WorkspaceLeaf, settings: MorningOSSettings, plugin: MorningOSPlugin, pillarKey: string) {
     super(leaf);
@@ -993,7 +963,7 @@ export class PillarView extends ItemView {
   }
 
   getViewType(): string { return `${VIEW_TYPE_PILLAR}-${this.pillarKey}`; }
-  getDisplayText(): string { return PILLARS.find(p => p.key === this.pillarKey)?.label ?? this.pillarKey; }
+  getDisplayText(): string { return this.plugin.settings.pillars.find(p => p.key === this.pillarKey)?.label ?? this.pillarKey; }
   getIcon(): string { return "layers"; }
 
   async onOpen() { this.registry = await loadRegistry(this.app); this.render(); }
@@ -1007,14 +977,14 @@ export class PillarView extends ItemView {
     this.floatingCleanup?.();
     this.floatingCleanup = mountFloatingPanel(container, this.plugin).cleanup;
 
-    const pillar = PILLARS.find(p => p.key === this.pillarKey);
+    const pillar = this.plugin.settings.pillars.find(p => p.key === this.pillarKey);
     if (!pillar) return;
 
     const wrapper = container.createEl("div", { cls: "morning-os-scroll" });
     const inner = wrapper.createEl("div", { cls: "morning-os-wrapper" });
 
     const titleRow = inner.createEl("div", { cls: "mos-view-title-row" });
-    titleRow.createEl("h1", { cls: "morning-os-section-heading", text: pillar.label });
+    titleRow.createEl("h1", { cls: "morning-os-section-heading", text: `${pillar.icon} ${pillar.label}` });
     this.renderSortControls(titleRow);
 
     if (pillar.tabs.length > 0) {
@@ -1022,31 +992,56 @@ export class PillarView extends ItemView {
       const allTab = tabBar.createEl("button", { cls: "mos-btn mos-btn-tab" + (!this.activeTab ? " is-active" : ""), text: "All" });
       allTab.addEventListener("click", () => { this.activeTab = null; this.render(); });
       for (const tab of pillar.tabs) {
-        const btn = tabBar.createEl("button", { cls: "mos-btn mos-btn-tab" + (this.activeTab === tab ? " is-active" : ""), text: tab });
-        btn.addEventListener("click", () => { this.activeTab = tab; this.render(); });
+        const btn = tabBar.createEl("button", { cls: "mos-btn mos-btn-tab" + (this.activeTab === tab?.key ? " is-active" : ""), text: tab.label });
+        btn.addEventListener("click", () => { this.activeTab = tab.key; this.render(); });
       }
     }
 
-    let tasks = this.registry.filter(t =>
-      t.pillars.includes(this.pillarKey) &&
-      !t.deleted_from.includes(this.pillarKey) &&
+    renderFilterSelects(titleRow, this.filters, (f) => { this.filters = f; this.render(); });
+
+    // Active tab config (for field rendering)
+    const activeTabConfig = pillar.tabs.find(t => t.key === this.activeTab) ?? null;
+
+    // Records section
+    const records = this.registry.filter(t =>
+      t.is_entity && !t.is_deleted && t.pillars.includes(this.pillarKey) &&
       (this.activeTab === null || t.tags[this.pillarKey] === this.activeTab)
     );
-    tasks = sortTasks(tasks, this.sortField, this.sortDir);
-
-    // Remind today
-    const remindToday = tasks.filter(t => t.remind_date && t.remind_date <= todayStr() && !t.done);
-    if (remindToday.length > 0) {
-      inner.createEl("h2", { cls: "morning-os-section-heading", text: "Due reminders" });
-      const rc = inner.createEl("div", { cls: "morning-os-card" });
-      for (const t of remindToday) renderTaskRowShared(rc, t, this.app, () => void this.refresh(), this.pillarKey, false, this.plugin);
+    if (records.length > 0) {
+      inner.createEl("h2", { cls: "morning-os-section-heading", text: "Records" });
+      const recordsCard = inner.createEl("div", { cls: "morning-os-card" });
+      for (const record of records) {
+        this.renderRecordCard(recordsCard, record, activeTabConfig);
+      }
     }
 
-    if (tasks.length === 0) {
+    // "Add record" button
+    const addRecordBtn = inner.createEl("button", { cls: "mos-btn mos-btn-inline", text: "+ Add record" });
+    addRecordBtn.addEventListener("click", async () => {
+      const name = prompt("Record name:");
+      if (!name?.trim()) return;
+      const tag = this.activeTab ? { [pillar.key]: this.activeTab } : {};
+      const task = createTask(name.trim(), { is_entity: true, pillars: [pillar.key], tags: tag });
+      const reg = await loadRegistry(this.app);
+      reg.push(task);
+      await saveRegistry(this.app, reg);
+      await this.refresh();
+    });
+
+    // Flat tasks section
+    let tasks = this.registry.filter(t =>
+      !t.is_deleted && !t.is_entity && t.parent_id === null &&
+      t.pillars.includes(this.pillarKey) &&
+      (this.activeTab === null || t.tags[this.pillarKey] === this.activeTab)
+    );
+    tasks = applyFilters(tasks, this.filters);
+    tasks = sortTasks(tasks, this.sortField, this.sortDir);
+
+    if (tasks.length === 0 && records.length === 0) {
       inner.createEl("p", { cls: "morning-os-empty-state", text: "No tasks here yet." });
-    } else {
+    } else if (tasks.length > 0) {
       const card = inner.createEl("div", { cls: "morning-os-card" });
-      for (const t of tasks) renderTaskRowShared(card, t, this.app, () => void this.refresh(), this.pillarKey, false, this.plugin);
+      for (const t of tasks) renderTaskRowShared(card, t, this.app, () => void this.refresh(), this.plugin);
     }
 
     renderAddTaskInput(inner, "Add task… (#p/pillar, #t/tab, @remind(YYYY-MM-DD))", async (text) => {
@@ -1060,9 +1055,107 @@ export class PillarView extends ItemView {
     });
   }
 
+  private renderRecordCard(parent: HTMLElement, record: Task, tabConfig: { key: string; label: string; fields: { key: string; label: string }[] } | null) {
+    const card = parent.createEl("div", { cls: "mos-record-card" });
+    const header = card.createEl("div", { cls: "mos-record-header" });
+
+    let expanded = false;
+    const toggle = header.createEl("span", { cls: "mos-record-toggle", text: "▶" });
+    header.createEl("span", { cls: "mos-record-name", text: record.text });
+
+    // Meta chips
+    if (tabConfig?.fields.length) {
+      const meta = header.createEl("div", { cls: "mos-record-meta" });
+      for (const field of tabConfig.fields) {
+        const val = record.tags[field.key];
+        if (val) meta.createEl("span", { cls: "mos-meta-chip", text: `${field.label}: ${val}` });
+      }
+    }
+
+    // ⋯ menu
+    const moreBtn = header.createEl("button", { cls: "mos-more-btn", text: "⋯" });
+    moreBtn.addEventListener("click", () => {
+      const menuItems: MenuAction[] = [
+        {
+          label: "✎ Edit record",
+          action: () => new TaskEditModal(this.app, record, async (updated) => {
+            const reg = await loadRegistry(this.app);
+            const idx = reg.findIndex(t => t._id === updated._id);
+            if (idx !== -1) reg[idx] = updated;
+            await saveRegistry(this.app, reg);
+            this.plugin.refreshView();
+          }, false, this.plugin.settings.pillars).open(),
+        },
+        {
+          label: "🗑 Delete record",
+          danger: true,
+          action: async () => {
+            const reg = await loadRegistry(this.app);
+            for (const t of reg) {
+              if (t._id === record._id || t.parent_id === record._id) {
+                t.is_deleted = true;
+              }
+            }
+            await saveRegistry(this.app, reg);
+            this.plugin.refreshView();
+          },
+        },
+      ];
+      openContextMenu(moreBtn, menuItems);
+    });
+
+    // Expandable body
+    const body = card.createEl("div", { cls: "mos-record-body" });
+    body.style.display = "none";
+
+    toggle.addEventListener("click", () => {
+      expanded = !expanded;
+      toggle.textContent = expanded ? "▼" : "▶";
+      body.style.display = expanded ? "block" : "none";
+    });
+
+    // Description
+    if (record.description) {
+      const desc = body.createEl("div", { cls: "mos-record-description", text: record.description });
+      desc.addEventListener("click", () => {
+        const ta = document.createElement("textarea");
+        ta.className = "mos-record-description-edit morning-os-wins-input";
+        ta.value = record.description;
+        desc.replaceWith(ta);
+        ta.focus();
+        const save = async () => {
+          const reg = await loadRegistry(this.app);
+          const idx = reg.findIndex(t => t._id === record._id);
+          if (idx !== -1) { reg[idx].description = ta.value; reg[idx].date_modified = todayStr(); }
+          await saveRegistry(this.app, reg);
+          await this.refresh();
+        };
+        ta.addEventListener("blur", () => void save());
+      });
+    }
+
+    // Children
+    const children = getChildren(this.registry, record._id);
+    const childrenEl = body.createEl("div", { cls: "mos-record-children" });
+    if (children.length > 0) {
+      body.createEl("div", { cls: "morning-os-section-heading", text: "Tasks" });
+      for (const child of children) {
+        renderTaskRowShared(childrenEl, child, this.app, () => void this.refresh(), this.plugin);
+      }
+    }
+
+    renderAddTaskInput(body, "Add task to this record…", async (text) => {
+      const task = createTask(text, { pillars: record.pillars, tags: { ...record.tags }, parent_id: record._id });
+      const reg = await loadRegistry(this.app);
+      reg.push(task);
+      await saveRegistry(this.app, reg);
+      await this.refresh();
+    });
+  }
+
   private renderSortControls(parent: HTMLElement) {
     const wrap = parent.createEl("div", { cls: "mos-sort-controls" });
-    const fields: SortField[] = ["created", "modified", "completed", "name"];
+    const fields: SortField[] = ["date_created", "date_modified", "date_completed", "name"];
     const select = wrap.createEl("select", { cls: "mos-btn mos-btn-select" });
     for (const f of fields) {
       const opt = select.createEl("option", { value: f, text: f });
@@ -1079,9 +1172,10 @@ export class DumpView extends ItemView {
   private settings: MorningOSSettings;
   private plugin: MorningOSPlugin;
   private registry: TaskRegistry = [];
-  private sortField: SortField = "created";
-  private sortDir: SortDir = "desc";
+  private sortField: SortField = "date_created";
+  private sortDir: SortDir = "desc" as SortDir;
   private floatingCleanup: (() => void) | null = null;
+  private filters: FilterState = {};
 
   constructor(leaf: WorkspaceLeaf, settings: MorningOSSettings, plugin: MorningOSPlugin) {
     super(leaf);
@@ -1119,20 +1213,23 @@ export class DumpView extends ItemView {
       await this.refresh();
     });
 
-    let tasks = this.registry.filter(t => !t.deleted_from.includes("dump") && !t.deleted);
+    renderFilterSelects(titleRow, this.filters, (f) => { this.filters = f; this.render(); }, true);
+
+    let tasks = this.registry.filter(t => !t.is_deleted);
+    tasks = applyFilters(tasks, this.filters);
     tasks = sortTasks(tasks, this.sortField, this.sortDir);
 
     if (tasks.length === 0) {
       inner.createEl("p", { cls: "morning-os-empty-state", text: "All clear. Capture fast, organize later." });
     } else {
       const card = inner.createEl("div", { cls: "morning-os-card" });
-      for (const t of tasks) renderTaskRowShared(card, t, this.app, () => void this.refresh(), "inbox", true, this.plugin);
+      for (const t of tasks) renderTaskRowShared(card, t, this.app, () => void this.refresh(), this.plugin, true);
     }
   }
 
   private renderSortControls(parent: HTMLElement) {
     const wrap = parent.createEl("div", { cls: "mos-sort-controls" });
-    const fields: SortField[] = ["created", "modified", "completed", "name"];
+    const fields: SortField[] = ["date_created", "date_modified", "date_completed", "name"];
     const select = wrap.createEl("select", { cls: "mos-btn mos-btn-select" });
     for (const f of fields) {
       const opt = select.createEl("option", { value: f, text: f });
@@ -1172,11 +1269,15 @@ class PriorityPickerModal extends ObsidianModal {
 class TaskEditModal extends ObsidianModal {
   private task: Task;
   private onSave: (task: Task) => Promise<void>;
+  private showUrgency: boolean;
+  private pillarConfigs: PillarConfig[];
 
-  constructor(app: App, task: Task, onSave: (task: Task) => Promise<void>) {
+  constructor(app: App, task: Task, onSave: (task: Task) => Promise<void>, showUrgency = false, pillarConfigs: PillarConfig[] = []) {
     super(app);
     this.task = { ...task, pillars: [...task.pillars], tags: { ...task.tags } };
     this.onSave = onSave;
+    this.showUrgency = showUrgency;
+    this.pillarConfigs = pillarConfigs;
   }
 
   private field(parent: HTMLElement, label: string): HTMLElement {
@@ -1196,53 +1297,81 @@ class TaskEditModal extends ObsidianModal {
     textInput.value = this.task.text;
     textInput.addEventListener("input", () => { this.task.text = textInput.value.trim(); });
 
-    // Urgency
-    const urgWrap = this.field(contentEl, "Urgency");
-    const urgGroup = urgWrap.createEl("div", { cls: "mos-edit-btn-group" });
-    for (const u of ["none", "low", "med", "high"] as const) {
-      const btn = urgGroup.createEl("button", {
-        cls: "mos-btn mos-btn-seg" + (this.task.urgency === u ? " is-active" : ""),
-        text: u === "none" ? "—" : u,
+    // Status
+    const statusWrap = this.field(contentEl, "Status");
+    const statusGroup = statusWrap.createEl("div", { cls: "mos-edit-btn-group" });
+    for (const s of ["open", "done", "dismissed"] as const) {
+      const btn = statusGroup.createEl("button", {
+        cls: "mos-btn mos-btn-seg" + (this.task.status_completion === s ? " is-active" : ""),
+        text: s,
       });
       btn.addEventListener("click", () => {
-        this.task.urgency = u;
-        urgGroup.querySelectorAll(".mos-edit-seg-btn").forEach(b => b.removeClass("is-active"));
+        this.task.status_completion = s;
+        statusGroup.querySelectorAll(".mos-btn").forEach(b => b.removeClass("is-active"));
         btn.addClass("is-active");
       });
     }
 
-    // Pillars
-    const pillarsWrap = this.field(contentEl, "Pillars");
-    const pillarsGrid = pillarsWrap.createEl("div", { cls: "mos-edit-pillars-grid" });
-    for (const pillar of PILLARS) {
-      const cell = pillarsGrid.createEl("div", { cls: "mos-edit-pillar-cell" });
-      const cb = cell.createEl("input", { type: "checkbox" });
-      cb.checked = this.task.pillars.includes(pillar.key);
-      cell.createEl("span", { cls: "mos-edit-pillar-label", text: pillar.label });
-
-      if (pillar.tabs.length > 0) {
-        const tabSel = cell.createEl("select", { cls: "mos-edit-select" });
-        tabSel.createEl("option", { value: "", text: "— tab —" });
-        for (const tab of pillar.tabs) {
-          const opt = tabSel.createEl("option", { value: tab, text: tab });
-          if (this.task.tags[pillar.key] === tab) opt.selected = true;
-        }
-        tabSel.style.display = cb.checked ? "block" : "none";
-        cb.addEventListener("change", () => { tabSel.style.display = cb.checked ? "block" : "none"; });
-        tabSel.addEventListener("change", () => { this.task.tags[pillar.key] = tabSel.value; });
+    // Urgency — inbox only
+    if (this.showUrgency) {
+      const urgWrap = this.field(contentEl, "Urgency");
+      const urgGroup = urgWrap.createEl("div", { cls: "mos-edit-btn-group" });
+      for (const u of ["none", "low", "med", "high"] as const) {
+        const btn = urgGroup.createEl("button", {
+          cls: "mos-btn mos-btn-seg" + (this.task.status_urgency === u ? " is-active" : ""),
+          text: u === "none" ? "—" : u,
+        });
+        btn.addEventListener("click", () => {
+          this.task.status_urgency = u;
+          urgGroup.querySelectorAll(".mos-btn").forEach(b => b.removeClass("is-active"));
+          btn.addClass("is-active");
+        });
       }
+    }
 
-      cb.addEventListener("change", () => {
-        if (cb.checked) { if (!this.task.pillars.includes(pillar.key)) this.task.pillars.push(pillar.key); }
-        else { this.task.pillars = this.task.pillars.filter(p => p !== pillar.key); delete this.task.tags[pillar.key]; }
-      });
+    // Description (entity/record only)
+    if (this.task.is_entity) {
+      const descWrap = this.field(contentEl, "Description");
+      const descArea = descWrap.createEl("textarea", { cls: "mos-edit-input" });
+      (descArea as HTMLTextAreaElement).rows = 3;
+      descArea.value = this.task.description ?? "";
+      descArea.addEventListener("input", () => { this.task.description = (descArea as HTMLTextAreaElement).value; });
+    }
+
+    // Pillars
+    if (this.pillarConfigs.length > 0) {
+      const pillarsWrap = this.field(contentEl, "Pillars");
+      const pillarsGrid = pillarsWrap.createEl("div", { cls: "mos-edit-pillars-grid" });
+      for (const pillar of this.pillarConfigs) {
+        const cell = pillarsGrid.createEl("div", { cls: "mos-edit-pillar-cell" });
+        const cb = cell.createEl("input", { type: "checkbox" });
+        cb.checked = this.task.pillars.includes(pillar.key);
+        cell.createEl("span", { cls: "mos-edit-pillar-label", text: pillar.label });
+
+        if (pillar.tabs.length > 0) {
+          const tabSel = cell.createEl("select", { cls: "mos-edit-select" });
+          tabSel.createEl("option", { value: "", text: "— tab —" });
+          for (const tab of pillar.tabs) {
+            const opt = tabSel.createEl("option", { value: tab.key, text: tab.label });
+            if (this.task.tags[pillar.key] === tab.key) opt.selected = true;
+          }
+          tabSel.style.display = cb.checked ? "block" : "none";
+          cb.addEventListener("change", () => { tabSel.style.display = cb.checked ? "block" : "none"; });
+          tabSel.addEventListener("change", () => { this.task.tags[pillar.key] = tabSel.value; });
+        }
+
+        cb.addEventListener("change", () => {
+          if (cb.checked) { if (!this.task.pillars.includes(pillar.key)) this.task.pillars.push(pillar.key); }
+          else { this.task.pillars = this.task.pillars.filter(p => p !== pillar.key); delete this.task.tags[pillar.key]; }
+        });
+      }
     }
 
     // Remind date
     const remindWrap = this.field(contentEl, "Remind date");
     const remindInput = remindWrap.createEl("input", { type: "date", cls: "mos-edit-input" });
-    remindInput.value = this.task.remind_date ?? "";
-    remindInput.addEventListener("change", () => { this.task.remind_date = remindInput.value || null; });
+    remindInput.value = this.task.date_remind ?? "";
+    remindInput.addEventListener("change", () => { this.task.date_remind = remindInput.value || null; });
 
     const footer = contentEl.createEl("div", { cls: "mos-edit-footer" });
     const saveBtn = footer.createEl("button", { cls: "mos-btn mos-btn-primary", text: "Save" });
@@ -1259,7 +1388,6 @@ export class TrashView extends ItemView {
   private plugin: MorningOSPlugin;
   private registry: TaskRegistry = [];
   private floatingCleanup: (() => void) | null = null;
-  private renderGen = 0;
 
   constructor(leaf: WorkspaceLeaf, settings: MorningOSSettings, plugin: MorningOSPlugin) {
     super(leaf);
@@ -1286,75 +1414,47 @@ export class TrashView extends ItemView {
     const inner = wrapper.createEl("div", { cls: "morning-os-wrapper" });
     inner.createEl("h1", { cls: "morning-os-section-heading", text: "Trash" });
 
-    // Deleted tasks
-    const deletedTasks = this.registry.filter(t => t.deleted);
-    inner.createEl("h2", { cls: "morning-os-section-heading", text: `Tasks (${deletedTasks.length})` });
-    if (deletedTasks.length === 0) {
-      inner.createEl("p", { cls: "morning-os-empty-state", text: "No deleted tasks." });
-    } else {
-      const card = inner.createEl("div", { cls: "morning-os-card" });
-      for (const task of deletedTasks) {
-        const row = card.createEl("div", { cls: "morning-os-task-row morning-os-task-done" });
-        row.createEl("span", { cls: "morning-os-task-text", text: task.text });
-        row.createEl("span", { cls: "morning-os-reminder-badge", text: task.modified });
-        const restoreBtn = row.createEl("button", { cls: "mos-task-action-btn", text: "Restore" });
-        restoreBtn.addEventListener("click", () => {
-          void restoreTask(this.app, task.id).then(() => {
-            this.plugin.refreshView();
-            void this.refresh();
-          });
-        });
-      }
-    }
-
-    // Dismissed reminders
-    this.renderDismissedReminders(inner);
+    this.renderTrashSection(inner, this.registry.filter(t => t.is_deleted), "Deleted");
   }
 
-  private renderDismissedReminders(parent: HTMLElement) {
-    parent.createEl("h2", { cls: "morning-os-section-heading", text: "Dismissed reminders" });
+  private renderTrashSection(parent: HTMLElement, tasks: Task[], label: string) {
+    parent.createEl("h2", { cls: "morning-os-section-heading", text: `${label} (${tasks.length})` });
+    if (tasks.length === 0) {
+      parent.createEl("p", { cls: "morning-os-empty-state", text: `No ${label.toLowerCase()} tasks.` });
+      return;
+    }
+    const card = parent.createEl("div", { cls: "morning-os-card" });
+    for (const task of tasks) {
+      const row = card.createEl("div", { cls: "morning-os-task-row morning-os-task-done" });
+      row.createEl("span", { cls: "morning-os-task-text", text: task.text });
+      row.createEl("span", { cls: "morning-os-reminder-badge", text: task.date_modified });
 
-    const remindersPath = `${this.settings.briefsDir}/reminders.json`;
-    const gen = ++this.renderGen;
-    void (async () => {
-      const exists = await this.app.vault.adapter.exists(remindersPath);
-      if (gen !== this.renderGen) return;
-      if (!exists) {
-        parent.createEl("p", { cls: "morning-os-empty-state", text: "No dismissed reminders." });
-        return;
-      }
-      type ReminderEntry = { text: string; source_date: string; remind_date: string; dismissed: boolean };
-      let reminders: ReminderEntry[] = [];
-      try {
-        reminders = JSON.parse(await this.app.vault.adapter.read(remindersPath)) as ReminderEntry[];
-      } catch { return; }
-      if (gen !== this.renderGen) return;
+      const restoreBtn = row.createEl("button", { cls: "mos-task-action-btn", text: "Restore" });
+      restoreBtn.addEventListener("click", () => {
+        void (async () => {
+          const reg = await loadRegistry(this.app);
+          const idx = reg.findIndex(t => t._id === task._id);
+          if (idx !== -1) {
+            reg[idx].is_deleted = false;
+            reg[idx].status_completion = "open";
+            reg[idx].date_modified = todayStr();
+          }
+          await saveRegistry(this.app, reg);
+          this.plugin.refreshView();
+          void this.refresh();
+        })();
+      });
 
-      const dismissed = reminders.filter(r => r.dismissed);
-      if (dismissed.length === 0) {
-        parent.createEl("p", { cls: "morning-os-empty-state", text: "No dismissed reminders." });
-        return;
-      }
-
-      const card = parent.createEl("div", { cls: "morning-os-card" });
-      for (const r of dismissed) {
-        const row = card.createEl("div", { cls: "morning-os-task-row morning-os-task-done" });
-        row.createEl("span", { cls: "morning-os-task-text", text: r.text });
-        row.createEl("span", { cls: "morning-os-reminder-badge", text: `noted ${r.source_date}` });
-        const restoreBtn = row.createEl("button", { cls: "mos-task-action-btn", text: "Restore" });
-        restoreBtn.addEventListener("click", () => {
-          void (async () => {
-            const raw = await this.app.vault.adapter.read(remindersPath);
-            const all = JSON.parse(raw) as ReminderEntry[];
-            const idx = all.findIndex(e => e.text === r.text && e.source_date === r.source_date && e.remind_date === r.remind_date);
-            if (idx !== -1) all[idx].dismissed = false;
-            await this.app.vault.adapter.write(remindersPath, JSON.stringify(all, null, 2));
-            this.plugin.refreshView();
-            void this.refresh();
-          })();
-        });
-      }
-    })();
+      const permDeleteBtn = row.createEl("button", { cls: "mos-task-action-btn mos-task-action-delete", text: "Delete permanently" });
+      permDeleteBtn.addEventListener("click", () => {
+        void (async () => {
+          const reg = await loadRegistry(this.app);
+          await saveRegistry(this.app, reg.filter(t => t._id !== task._id));
+          this.plugin.refreshView();
+          void this.refresh();
+        })();
+      });
+    }
   }
 }
 
