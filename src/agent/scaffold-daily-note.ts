@@ -36,6 +36,8 @@ export async function scaffoldDailyNote(
   const redAlert: string[] = [];
   const regular: string[] = [];
 
+  let prevReminderLines: string[] = [];
+
   if (prev) {
     const parsed = await parseDailyNote(prev.date, app, settings);
     if (parsed) {
@@ -47,8 +49,25 @@ export async function scaffoldDailyNote(
         const taskText = t.remind_date ? `${t.text} @remind(${t.remind_date})` : t.text;
         return `- [ ] ${taskText}`;
       }));
+      prevReminderLines = parsed.reminders;
     }
   }
+
+  // reminders.json lives one level up from briefsDir (_generated/reminders.json)
+  const remindersPath = `${settings.briefsDir}/../reminders.json`;
+  let jsonReminderLines: string[] = [];
+  if (await app.vault.adapter.exists(remindersPath)) {
+    try {
+      const allReminders: Array<{ text: string; source_date: string; remind_date: string; dismissed: boolean }> =
+        JSON.parse(await app.vault.adapter.read(remindersPath));
+      jsonReminderLines = allReminders
+        .filter(r => !r.dismissed && r.remind_date <= dateStr)
+        .map(r => `- ${r.text}`);
+    } catch {}
+  }
+
+  // Deduplicate by string equality; prevReminderLines first to preserve note-local order
+  const reminderLines = [...new Set([...prevReminderLines.map(r => `- ${r}`), ...jsonReminderLines])];
 
   const lines: string[] = [
     `## ${settings.sectionRedAlert}`,
@@ -58,6 +77,11 @@ export async function scaffoldDailyNote(
     ...regular,
     ``,
     `## ${settings.sectionWins}`,
+    ``,
+    `## ${settings.sectionThoughts}`,
+    ``,
+    `## Reminders`,
+    ...reminderLines,
     ``,
   ];
 

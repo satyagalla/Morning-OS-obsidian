@@ -1,29 +1,33 @@
 import { App } from "obsidian";
 import type { MorningOSSettings } from "../settings";
-import type { TaskItem } from "./vault-reader";
 import { fuzzyMatch } from "./carry-detector";
+import { findMostRecentHistory } from "./history";
 import { findMostRecentBrief } from "./find-recent-brief";
 
 export async function computeFeedback(
-  todayTasks: { red_alert: TaskItem[]; regular: TaskItem[] },
+  todayTasks: { red_alert: { text: string; status_completion?: string; done?: boolean }[]; regular: { text: string; status_completion?: string; done?: boolean }[] },
   todayStr: string,
   app: App,
   settings: MorningOSSettings
 ): Promise<void> {
-  const found = await findMostRecentBrief(todayStr, app, settings);
-  if (!found) return;
+  const [historyFound, briefFound] = await Promise.all([
+    findMostRecentHistory(todayStr, app, settings.carryLookbackDays),
+    findMostRecentBrief(todayStr, app, settings),
+  ]);
+  if (!historyFound && !briefFound) return;
 
-  const yesterdayStr = found.date;
-  const yesterdayBrief = found.brief;
+  const yesterdayStr = historyFound?.date ?? briefFound?.date ?? "";
+  const yesterdayBrief = briefFound?.brief;
+  const yesterdaySnapshot = historyFound?.snapshot;
 
   const todayAllTexts: string[] = [
-    ...todayTasks.red_alert.filter(t => !t.done).map(t => t.text),
-    ...todayTasks.regular.filter(t => !t.done).map(t => t.text),
+    ...todayTasks.red_alert.filter(t => t.status_completion !== "done" && !t.done).map(t => t.text),
+    ...todayTasks.regular.filter(t => t.status_completion !== "done" && !t.done).map(t => t.text),
   ];
 
-  const yesterdayAllTasks: { text: string; carried_from?: string | null }[] = [
-    ...(yesterdayBrief?.tasks?.red_alert ?? []),
-    ...(yesterdayBrief?.tasks?.regular ?? []),
+  const yesterdayAllTasks = [
+    ...(yesterdaySnapshot?.tasks?.red_alert ?? []),
+    ...(yesterdaySnapshot?.tasks?.regular ?? []),
   ];
 
   const resolved: string[] = [];

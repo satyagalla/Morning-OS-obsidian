@@ -1,6 +1,5 @@
 import type { MorningOSSettings } from "../settings";
-import type { DailyBrief, BriefTask, Reminder, SuggestionSource } from "../types";
-import type { CarriedTasks, TaskWithCarry } from "./carry-detector";
+import type { DailyBrief, SuggestionSource } from "../types";
 import type { ParsedGoals } from "./vault-reader";
 
 const VALID_SOURCES = new Set<string>(["tasks", "goals", "technical_backlog", "carried_tasks", "wins"]);
@@ -12,32 +11,11 @@ export interface LLMOutput {
   hobby_tasks?: string[];
   goals?: { short_term?: string[]; long_term?: string[] };
   technical_tasks?: string[];
-  tasks?: { red_alert?: string[]; regular?: string[] };
   wins?: string[];
-}
-
-function reorderTasks(
-  carried: TaskWithCarry[],
-  llmOrder: string[]
-): TaskWithCarry[] {
-  const result: TaskWithCarry[] = [];
-  const remaining = [...carried];
-
-  for (const text of llmOrder) {
-    const idx = remaining.findIndex(t => t.text === text);
-    if (idx !== -1) {
-      result.push(remaining.splice(idx, 1)[0]);
-    }
-  }
-  // Append any tasks the LLM omitted (safety net)
-  result.push(...remaining);
-  return result;
 }
 
 export function assembleBrief(
   dateStr: string,
-  carriedTasks: CarriedTasks,
-  completedTasks: { red_alert: string[]; regular: string[] },
   parsedGoals: ParsedGoals,
   allTacticalRules: string[],
   allEmotionalRules: string[],
@@ -45,8 +23,7 @@ export function assembleBrief(
   allTechnicalTasks: string[],
   yesterdayWins: string[],
   llmOutput: LLMOutput | null,
-  settings: MorningOSSettings,
-  reminders: Reminder[] = []
+  settings: MorningOSSettings
 ): DailyBrief {
   const tacticalRules =
     settings.modeTacticalRules && llmOutput?.tactical_rules
@@ -84,14 +61,6 @@ export function assembleBrief(
       ? llmOutput.technical_tasks.slice(0, settings.technicalTasksCount)
       : allTechnicalTasks.slice(0, settings.technicalTasksCount);
 
-  const tasks: CarriedTasks =
-    settings.modeTasks && llmOutput?.tasks
-      ? {
-          red_alert: reorderTasks(carriedTasks.red_alert, llmOutput.tasks.red_alert ?? []),
-          regular: reorderTasks(carriedTasks.regular, llmOutput.tasks.regular ?? []),
-        }
-      : carriedTasks;
-
   const wins =
     settings.modeWins && llmOutput?.wins
       ? llmOutput.wins
@@ -107,16 +76,10 @@ export function assembleBrief(
     },
     identity: { rules: identityRules },
     goals,
-    tasks: {
-      ...tasks,
-      completed_red_alert: completedTasks.red_alert,
-      completed_regular: completedTasks.regular,
-    },
     tactical_rules: tacticalRules,
     technical_tasks: technicalTasks,
     hobby_tasks: hobbyTasks,
     suggestions,
     wins,
-    reminders,
   };
 }

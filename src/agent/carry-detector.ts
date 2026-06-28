@@ -1,13 +1,12 @@
 import { App } from "obsidian";
 import type { MorningOSSettings } from "../settings";
-import type { TaskItem } from "./vault-reader";
-import type { BriefTask } from "../types";
-import { findMostRecentBrief } from "./find-recent-brief";
+import { findMostRecentHistory } from "./history";
+import type { SnapshotTask } from "./history";
 
 export interface TaskWithCarry {
   text: string;
   carried_from: string | null;
-  id?: string;
+  _id?: string;
 }
 
 export interface CarriedTasks {
@@ -48,38 +47,38 @@ export function fuzzyMatch(a: string, b: string): boolean {
 }
 
 export async function detectCarries(
-  todayTasks: { red_alert: TaskItem[]; regular: TaskItem[] },
+  todayTasks: { red_alert: { _id?: string; id?: string; text: string; done?: boolean; status_completion?: string }[]; regular: { _id?: string; id?: string; text: string; done?: boolean; status_completion?: string }[] },
   todayStr: string,
   app: App,
   settings: MorningOSSettings
 ): Promise<CarriedTasks> {
-  const found = await findMostRecentBrief(todayStr, app, settings);
+  const found = await findMostRecentHistory(todayStr, app, settings.carryLookbackDays);
   const prevStr = found?.date ?? null;
-  let yesterdayTasks: TaskWithCarry[] = [];
-
-  if (found) {
-    yesterdayTasks = [
-      ...(found.brief?.tasks?.red_alert ?? []),
-      ...(found.brief?.tasks?.regular ?? []),
-    ] as BriefTask[];
-  }
+  const yesterdayTasks: SnapshotTask[] = found
+    ? [
+        ...(found.snapshot.tasks.red_alert ?? []),
+        ...(found.snapshot.tasks.regular ?? []),
+      ]
+    : [];
 
   const result: CarriedTasks = { red_alert: [], regular: [] };
 
   for (const category of ["red_alert", "regular"] as const) {
     for (const task of todayTasks[category]) {
-      if (task.done) continue;
+      const isDone = task.done === true || task.status_completion === "done";
+      if (isDone) continue;
+
+      const taskId = task._id ?? (task as { id?: string }).id;
       let carriedFrom: string | null = null;
-      const taskId = (task as { id?: string }).id;
-      for (const prev of yesterdayTasks as BriefTask[]) {
-        // Prefer exact ID match; fall back to fuzzy text
-        const matched = (taskId && prev.id && taskId === prev.id) || fuzzyMatch(task.text, prev.text);
+
+      for (const prev of yesterdayTasks) {
+        const matched = (taskId && taskId === prev._id) || fuzzyMatch(task.text, prev.text);
         if (matched) {
           carriedFrom = prev.carried_from ?? prevStr;
           break;
         }
       }
-      result[category].push({ text: task.text, carried_from: carriedFrom, id: taskId });
+      result[category].push({ text: task.text, carried_from: carriedFrom, _id: taskId });
     }
   }
 
