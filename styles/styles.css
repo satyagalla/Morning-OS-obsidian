@@ -1,4 +1,23 @@
 /* ── Morning OS Design Tokens ── */
+:root {
+  --mos-system:      #4a9d7f;
+  --mos-system-dim:  color-mix(in srgb, #4a9d7f 12%, transparent);
+  --mos-system-glow: color-mix(in srgb, #4a9d7f 28%, transparent);
+  --mos-accent:      #c9a84c;
+  --mos-accent-dim:  color-mix(in srgb, #c9a84c 12%, transparent);
+  --mos-accent-glow: color-mix(in srgb, #c9a84c 28%, transparent);
+  --mos-red:         #e5534b;
+  --mos-green:       #3fb950;
+  --mos-radius-sm:   6px;
+  --mos-radius-md:   10px;
+  --mos-radius-lg:   14px;
+  --mos-transition:  140ms ease;
+}
+.theme-light {
+  --mos-system: #1a7d5f;
+  --mos-accent: #8a6200;
+}
+
 .morning-os {
   /* Amber accent — productivity signals (carried tasks, focus rings, suggestions) */
   --mos-accent:      #c9a84c;
@@ -1173,6 +1192,237 @@ h3[data-dirty]::after {
   justify-content: center;
   color: #fff;
   opacity: 0.85;
+}
+
+/* ── View title row — sort + filters ── */
+.mos-view-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.mos-view-title-row h1 {
+  flex: 1;
+  margin: 0;
+}
+
+/* ── Settings tab bar ── */
+.mos-settings-tab-bar {
+  display: flex;
+  gap: 4px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+.mos-settings-tab {
+  all: unset;
+  box-sizing: border-box;
+  padding: 6px 14px;
+  border-radius: var(--mos-radius-sm);
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--mos-text-secondary);
+  background: color-mix(in srgb, var(--text-normal) 6%, transparent);
+  transition: background 120ms ease, color 120ms ease;
+}
+.mos-settings-tab:hover { background: color-mix(in srgb, var(--mos-system) 15%, transparent); color: var(--mos-system); }
+.mos-settings-tab.is-active { background: var(--mos-system); color: #fff; }
+
+/* ── Pillar builder — two-panel ── */
+.mos-pillars-layout {
+  display: flex;
+  gap: 0;
+  min-height: 400px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--mos-radius-md);
+  overflow: hidden;
+}
+.mos-pillars-left {
+  width: 220px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--background-modifier-border);
+  background: color-mix(in srgb, var(--text-normal) 3%, transparent);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.mos-pillars-right {
+  flex: 1;
+  padding: 16px;
+  overflow-y: auto;
+}
+.mos-pillars-nav-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.mos-pillars-nav-item {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  padding: 7px 10px;
+  border-radius: var(--mos-radius-sm);
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 120ms ease, color 120ms ease;
+}
+.mos-pillars-nav-item:hover { background: color-mix(in srgb, var(--mos-system) 12%, transparent); color: var(--mos-system); }
+.mos-pillars-nav-item.is-active { background: var(--mos-system); color: #fff; }
+.mos-pillars-reorder {
+  display: none;
+  gap: 2px;
+}
+.mos-pillars-nav-row:hover .mos-pillars-reorder { display: flex; }
+.mos-pillars-nav-divider {
+  height: 1px;
+  background: var(--background-modifier-border);
+  margin: 6px 0;
+}
+.mos-pillars-add-row {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.mos-icon-input { width: 48px !important; text-align: center; }
+.mos-pillars-empty {
+  color: var(--mos-text-faint);
+  font-style: italic;
+  font-size: 13px;
+  margin-top: 40px;
+  text-align: center;
+}
+.mos-pillars-detail-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.mos-pillars-detail-preview {
+  font-size: 18px;
+  font-weight: 600;
+  flex: 1;
+}
+.mos-btn-danger { color: var(--mos-red) !important; }
+.mos-btn-danger:hover { background: color-mix(in srgb, var(--mos-red) 15%, transparent) !important; }
+.mos-pillars-sub-heading {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--mos-text-faint);
+  margin: 14px 0 6px;
+}
+.mos-pillars-tab-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.mos-pillars-tab-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border-radius: var(--mos-radius-sm);
+  font-size: 12px;
+  cursor: pointer;
+  background: color-mix(in srgb, var(--text-normal) 6%, transparent);
+  color: var(--mos-text-secondary);
+  transition: background 120ms ease, color 120ms ease;
+}
+.mos-pillars-tab-btn:hover { background: color-mix(in srgb, var(--mos-system) 15%, transparent); color: var(--mos-system); }
+.mos-pillars-tab-btn.is-active { background: var(--mos-system); color: #fff; }
+.mos-pillars-tab-detail {
+  padding: 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--mos-radius-sm);
+  margin-bottom: 12px;
+  background: color-mix(in srgb, var(--text-normal) 2%, transparent);
+}
+.mos-icon-picker-btn {
+  all: unset;
+  font-size: 24px;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: var(--mos-radius-sm);
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  line-height: 1.4;
+}
+.mos-icon-picker-btn:hover { border-color: var(--mos-system); }
+
+.mos-emoji-picker-wrap {
+  margin-top: 8px;
+}
+.mos-emoji-picker-wrap emoji-picker {
+  --border-radius: var(--mos-radius-md);
+  --background: var(--background-secondary);
+  --border-color: var(--background-modifier-border);
+  width: 100%;
+  max-width: 340px;
+}
+
+.mos-pillar-builder-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0;
+  flex-wrap: wrap;
+}
+.mos-pillar-builder-icon { font-size: 18px; width: 24px; }
+.mos-pillar-builder-label { flex: 1; font-size: 13px; }
+
+/* ── Record cards ── */
+.mos-record-card {
+  border-radius: var(--mos-radius-sm);
+  border: 1px solid var(--background-modifier-border);
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+.mos-record-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--text-normal) 3%, transparent);
+  cursor: pointer;
+}
+.mos-record-toggle { font-size: 10px; color: var(--mos-text-faint); flex-shrink: 0; }
+.mos-record-name { font-size: 13px; font-weight: 500; flex: 1; }
+.mos-record-meta { display: flex; flex-wrap: wrap; gap: 4px; }
+.mos-meta-chip {
+  font-size: 11px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--mos-system) 12%, transparent);
+  color: var(--mos-system);
+}
+.mos-record-body { padding: 10px 12px; }
+.mos-record-description {
+  font-size: 13px;
+  color: var(--mos-text-secondary);
+  margin-bottom: 10px;
+  cursor: text;
+  white-space: pre-wrap;
+}
+.mos-record-description-edit {
+  width: 100%;
+  min-height: 60px;
+  margin-bottom: 10px;
+}
+.mos-record-children { margin-top: 8px; }
+
+/* ── Filter selects — same style as sort, sit in title row ── */
+.mos-filter-select {
+  font-size: 11px !important;
+  padding: 4px 22px 4px 8px !important;
 }
 
 /* ── Inline today buttons ── */
