@@ -1,5 +1,6 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
 import type MorningOSPlugin from "./main";
+import type { PillarConfig, TabConfig, FieldDef } from "./types";
 
 export interface MorningOSSettings {
   // Plugin display paths
@@ -71,6 +72,7 @@ export interface MorningOSSettings {
   onboarded: boolean;
 
   lastSeenVersion: string;
+  pillars: PillarConfig[];
 }
 
 export const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
@@ -138,6 +140,21 @@ export const DEFAULT_SETTINGS: MorningOSSettings = {
   onboarded: false,
 
   lastSeenVersion: "",
+
+  pillars: [
+    { key: "health",       label: "Health",         icon: "❤️",  tabs: [
+      { key: "physical",  label: "Physical",    fields: [], view_mode: "cards" },
+      { key: "mental",    label: "Mental/ADHD", fields: [], view_mode: "cards" },
+    ]},
+    { key: "career",       label: "Career",         icon: "💼",  tabs: [
+      { key: "applications", label: "Applications", fields: [], view_mode: "cards" },
+      { key: "leads",        label: "Leads",        fields: [], view_mode: "cards" },
+      { key: "followups",    label: "Follow-ups",   fields: [], view_mode: "cards" },
+    ]},
+    { key: "interests",    label: "Interests",      icon: "✨",  tabs: [] },
+    { key: "family",       label: "Family",         icon: "👨‍👩‍👧", tabs: [] },
+    { key: "relationship", label: "Relationships",  icon: "💞",  tabs: [] },
+  ],
 };
 
 const PROVIDERS = {
@@ -200,29 +217,48 @@ export class MorningOSSettingTab extends PluginSettingTab {
     if (this.dirtySections.has(text)) s.settingEl.setAttribute("data-dirty", "true");
   }
 
+  private activeSettingsTab = "briefing";
+
+  private renderTabBar(containerEl: HTMLElement) {
+    const tabs = [
+      { key: "briefing", label: "Briefing" },
+      { key: "ai",       label: "AI" },
+      { key: "vault",    label: "Vault" },
+      { key: "display",  label: "Display" },
+      { key: "pillars",  label: "Pillars" },
+      { key: "about",    label: "About" },
+    ];
+    const bar = containerEl.createEl("div", { cls: "mos-settings-tab-bar" });
+    for (const tab of tabs) {
+      const btn = bar.createEl("button", {
+        cls: "mos-settings-tab" + (this.activeSettingsTab === tab.key ? " is-active" : ""),
+        text: tab.label,
+      });
+      btn.addEventListener("click", () => {
+        this.activeSettingsTab = tab.key;
+        this.display();
+      });
+    }
+  }
+
   private rerender(): void {
-    const { containerEl } = this;
-    containerEl.empty();
-    this.renderAgentSection(containerEl);
-    this.renderAISection(containerEl);
-    this.renderPathsSection(containerEl);
-    this.renderHeadingsSection(containerEl);
-    this.renderCountsSection(containerEl);
-    this.renderModesSection(containerEl);
-    this.renderAboutSection(containerEl);
+    this.display();
   }
 
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
+    this.renderTabBar(containerEl);
 
-    this.renderAgentSection(containerEl);
-    this.renderAISection(containerEl);
-    this.renderPathsSection(containerEl);
-    this.renderHeadingsSection(containerEl);
-    this.renderCountsSection(containerEl);
-    this.renderModesSection(containerEl);
-    this.renderAboutSection(containerEl);
+    const content = containerEl.createEl("div", { cls: "mos-settings-content" });
+    switch (this.activeSettingsTab) {
+      case "briefing": this.renderAgentSection(content); break;
+      case "ai":       this.renderAISection(content); break;
+      case "vault":    this.renderPathsSection(content); this.renderHeadingsSection(content); break;
+      case "display":  this.renderCountsSection(content); this.renderModesSection(content); break;
+      case "pillars":  this.renderPillarsSection(content); break;
+      case "about":    this.renderAboutSection(content); break;
+    }
   }
 
   private renderAgentSection(containerEl: HTMLElement) {
@@ -601,5 +637,279 @@ export class MorningOSSettingTab extends PluginSettingTab {
     toggle("Technical tasks", "AI filters technical tasks. Off = top N items in order.", "modeTechnicalTasks");
     toggle("Tasks", "AI processes red alert and regular tasks. Off = read directly from daily note.", "modeTasks");
     toggle("Wins", "AI processes wins. Off = read directly from daily note.", "modeWins");
+  }
+
+  private selectedPillarKey: string | null = null;
+  private selectedTabKey: string | null = null;
+
+  private async savePillars() {
+    await this.save({ pillars: [...this.plugin.settings.pillars] });
+    await this.plugin.reregisterPillarViews();
+  }
+
+  private renderPillarsSection(containerEl: HTMLElement) {
+    const pillars = this.plugin.settings.pillars;
+    const saveDataOnly = async () => {
+      await this.plugin.saveData(this.plugin.settings);
+    };
+    const saveAndSync = async () => {
+      await this.plugin.saveData(this.plugin.settings);
+      await this.plugin.reregisterPillarViews();
+    };
+
+    if (this.selectedPillarKey && !pillars.find(p => p.key === this.selectedPillarKey)) {
+      this.selectedPillarKey = null; this.selectedTabKey = null;
+    }
+
+    const wrap = containerEl.createEl("div", { cls: "mos-pillars-layout" });
+    const left = wrap.createEl("div", { cls: "mos-pillars-left" });
+    const right = wrap.createEl("div", { cls: "mos-pillars-right" });
+
+    // ── LEFT: pillar list ──────────────────────────────────────────────────
+
+    const renderNavRow = (p: typeof pillars[0], pi: number) => {
+      const row = left.createEl("div", { cls: "mos-pillars-nav-row" });
+      const item = row.createEl("div", {
+        cls: "mos-pillars-nav-item" + (this.selectedPillarKey === p.key ? " is-active" : ""),
+        text: `${p.icon} ${p.label}`,
+        attr: { "data-key": p.key },
+      });
+      item.addEventListener("click", () => {
+        left.querySelectorAll(".mos-pillars-nav-item").forEach(el => el.removeClass("is-active"));
+        item.addClass("is-active");
+        this.selectedPillarKey = p.key;
+        this.selectedTabKey = null;
+        right.empty();
+        renderRight();
+      });
+
+      const reorder = row.createEl("div", { cls: "mos-pillars-reorder" });
+      if (pi > 0) {
+        reorder.createEl("button", { cls: "mos-btn mos-btn-icon", text: "↑" })
+          .addEventListener("click", async (e) => {
+            e.stopPropagation();
+            [pillars[pi - 1], pillars[pi]] = [pillars[pi], pillars[pi - 1]];
+            await saveDataOnly();
+            left.empty(); renderLeft();
+          });
+      }
+      if (pi < pillars.length - 1) {
+        reorder.createEl("button", { cls: "mos-btn mos-btn-icon", text: "↓" })
+          .addEventListener("click", async (e) => {
+            e.stopPropagation();
+            [pillars[pi], pillars[pi + 1]] = [pillars[pi + 1], pillars[pi]];
+            await saveDataOnly();
+            left.empty(); renderLeft();
+          });
+      }
+    };
+
+    const renderLeft = () => {
+      pillars.forEach((p, pi) => renderNavRow(p, pi));
+
+      left.createEl("div", { cls: "mos-pillars-nav-divider" });
+      const addRow = left.createEl("div", { cls: "mos-pillars-add-row" });
+      const labelIn = addRow.createEl("input", { type: "text", cls: "morning-os-wins-input", placeholder: "New pillar…" });
+      const addBtn = addRow.createEl("button", { cls: "mos-btn mos-btn-primary", text: "Add" });
+      const doAdd = async () => {
+        const l = labelIn.value.trim();
+        if (!l) return;
+        const k = l.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+        if (pillars.find(p => p.key === k)) return;
+        pillars.push({ key: k, label: l, icon: "📌", tabs: [] });
+        this.selectedPillarKey = k;
+        this.selectedTabKey = null;
+        labelIn.value = "";
+        await saveDataOnly();
+        // Surgically add the new nav row and re-render right
+        left.empty(); renderLeft();
+        right.empty(); renderRight();
+      };
+      addBtn.addEventListener("click", doAdd);
+      labelIn.addEventListener("keydown", (e: KeyboardEvent) => { if (e.key === "Enter") void doAdd(); });
+    };
+
+    // ── RIGHT: pillar detail ───────────────────────────────────────────────
+
+    const renderTabDetail = (tabDetailEl: HTMLElement, selectedTab: typeof pillars[0]["tabs"][0]) => {
+      tabDetailEl.empty();
+
+      // Tab name edit
+      new Setting(tabDetailEl).setName("Tab name").addText(t => {
+        t.setValue(selectedTab.label);
+        t.onChange(async v => {
+          selectedTab.label = v;
+          // Update pill label in-place
+          const pill = right.querySelector(`.mos-pillars-tab-btn[data-tabkey="${selectedTab.key}"] span`);
+          if (pill) pill.textContent = v;
+          await saveAndSync();
+        });
+      });
+
+      tabDetailEl.createEl("div", { cls: "mos-pillars-sub-heading", text: "Fields" });
+
+      const renderFieldRows = () => {
+        const existing = tabDetailEl.querySelectorAll(".mos-field-row");
+        existing.forEach(el => el.remove());
+        selectedTab.fields.forEach((field, fi) => {
+          const fRow = tabDetailEl.createEl("div", { cls: "mos-pillar-builder-row mos-field-row" });
+          fRow.createEl("span", { cls: "mos-pillar-builder-label", text: field.label });
+          fRow.createEl("span", { cls: "mos-meta-chip", text: field.type });
+          fRow.createEl("button", { cls: "mos-btn mos-btn-icon", text: "✕" })
+            .addEventListener("click", async () => {
+              selectedTab.fields.splice(fi, 1);
+              await saveDataOnly();
+              renderFieldRows();
+            });
+        });
+      };
+      renderFieldRows();
+
+      if (selectedTab.fields.length === 0) {
+        tabDetailEl.createEl("p", { cls: "mos-pillars-empty", text: "No fields yet." });
+      }
+
+      const addFRow = tabDetailEl.createEl("div", { cls: "mos-pillar-builder-row" });
+      const fLabelIn = addFRow.createEl("input", { type: "text", cls: "morning-os-wins-input", placeholder: "Field label" });
+      const fTypeSelect = addFRow.createEl("select", { cls: "mos-btn mos-btn-select" });
+      for (const ft of ["text", "url", "dropdown"]) fTypeSelect.createEl("option", { value: ft, text: ft });
+      const doAddField = async () => {
+        const l = fLabelIn.value.trim();
+        if (!l) return;
+        const k = l.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
+        selectedTab.fields.push({ key: k, label: l, type: fTypeSelect.value as FieldDef["type"] });
+        fLabelIn.value = "";
+        await saveDataOnly();
+        renderFieldRows();
+      };
+      addFRow.createEl("button", { cls: "mos-btn mos-btn-primary", text: "Add" })
+        .addEventListener("click", doAddField);
+      fLabelIn.addEventListener("keydown", (e: KeyboardEvent) => { if (e.key === "Enter") void doAddField(); });
+    };
+
+    const renderRight = () => {
+      if (!this.selectedPillarKey) {
+        right.createEl("p", { cls: "mos-pillars-empty", text: "← Select a pillar to edit" });
+        return;
+      }
+      const pillar = pillars.find(p => p.key === this.selectedPillarKey);
+      if (!pillar) return;
+
+      // Header
+      const ph = right.createEl("div", { cls: "mos-pillars-detail-header" });
+      const previewEl = ph.createEl("span", { cls: "mos-pillars-detail-preview", text: `${pillar.icon} ${pillar.label}` });
+      const navItem = left.querySelector(`.mos-pillars-nav-item[data-key="${pillar.key}"]`) as HTMLElement | null;
+
+      ph.createEl("button", { cls: "mos-btn mos-btn-inline mos-btn-danger", text: "Delete pillar" })
+        .addEventListener("click", async () => {
+          const idx = pillars.findIndex(p => p.key === pillar.key);
+          if (idx !== -1) pillars.splice(idx, 1);
+          this.selectedPillarKey = null;
+          await saveDataOnly();
+          left.empty(); renderLeft();
+          right.empty(); renderRight();
+        });
+
+      // Label
+      new Setting(right).setName("Label").addText(t => {
+        t.setValue(pillar.label);
+        t.onChange(async v => {
+          pillar.label = v;
+          previewEl.textContent = `${pillar.icon} ${pillar.label}`;
+          if (navItem) navItem.textContent = `${pillar.icon} ${pillar.label}`;
+          await saveAndSync();
+        });
+      });
+
+      // Icon picker
+      const iconSetting = new Setting(right).setName("Icon");
+      const iconBtn = iconSetting.controlEl.createEl("button", { cls: "mos-icon-picker-btn", text: pillar.icon });
+      iconBtn.addEventListener("click", () => {
+        const existing = right.querySelector(".mos-emoji-picker-wrap");
+        if (existing) { existing.remove(); return; }
+        const wrap = right.createEl("div", { cls: "mos-emoji-picker-wrap" });
+        // emoji-picker-element is a web component — just instantiate and append
+        import("emoji-picker-element").then(({ Picker }) => {
+          const picker = new Picker({ skinToneEmoji: "👋" });
+          picker.addEventListener("emoji-click", async (e: Event) => {
+            const unicode = (e as CustomEvent).detail?.unicode as string | undefined;
+            if (!unicode) return;
+            pillar.icon = unicode;
+            iconBtn.textContent = unicode;
+            previewEl.textContent = `${unicode} ${pillar.label}`;
+            if (navItem) navItem.textContent = `${unicode} ${pillar.label}`;
+            wrap.remove();
+            await saveAndSync();
+          });
+          wrap.appendChild(picker);
+        });
+      });
+
+      // Tabs section
+      right.createEl("div", { cls: "setting-item-heading mos-pillars-sub-heading", text: "Tabs" });
+
+      const tabNav = right.createEl("div", { cls: "mos-pillars-tab-nav" });
+      const tabDetailContainer = right.createEl("div");
+
+      const renderTabNav = () => {
+        tabNav.empty();
+        pillar.tabs.forEach(tab => {
+          const tabBtn = tabNav.createEl("div", {
+            cls: "mos-pillars-tab-btn" + (this.selectedTabKey === tab.key ? " is-active" : ""),
+            attr: { "data-tabkey": tab.key },
+          });
+          tabBtn.createEl("span", { text: tab.label });
+          tabBtn.createEl("button", { cls: "mos-btn mos-btn-icon", text: "✕" })
+            .addEventListener("click", async (e) => {
+              e.stopPropagation();
+              const ti = pillar.tabs.findIndex(t => t.key === tab.key);
+              if (ti !== -1) pillar.tabs.splice(ti, 1);
+              if (this.selectedTabKey === tab.key) {
+                this.selectedTabKey = null;
+                tabDetailContainer.empty();
+              }
+              await saveDataOnly();
+              renderTabNav();
+            });
+          tabBtn.addEventListener("click", () => {
+            this.selectedTabKey = this.selectedTabKey === tab.key ? null : tab.key;
+            tabNav.querySelectorAll(".mos-pillars-tab-btn").forEach(el => el.removeClass("is-active"));
+            if (this.selectedTabKey) tabBtn.addClass("is-active");
+            tabDetailContainer.empty();
+            const t = pillar.tabs.find(tb => tb.key === this.selectedTabKey);
+            if (t) renderTabDetail(tabDetailContainer, t);
+          });
+        });
+      };
+      renderTabNav();
+
+      // Render tab detail if one is already selected
+      const currentTab = pillar.tabs.find(t => t.key === this.selectedTabKey);
+      if (currentTab) renderTabDetail(tabDetailContainer, currentTab);
+
+      // Add tab
+      const addTabRow = right.createEl("div", { cls: "mos-pillar-builder-row" });
+      const tabLabelIn = addTabRow.createEl("input", { type: "text", cls: "morning-os-wins-input", placeholder: "New tab…" });
+      const doAddTab = async () => {
+        const l = tabLabelIn.value.trim();
+        if (!l) return;
+        const k = l.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
+        if (pillar.tabs.find(t => t.key === k)) return;
+        pillar.tabs.push({ key: k, label: l, fields: [], view_mode: "cards" });
+        this.selectedTabKey = k;
+        tabLabelIn.value = "";
+        await saveDataOnly();
+        renderTabNav();
+        const newTab = pillar.tabs.find(t => t.key === k)!;
+        tabDetailContainer.empty();
+        renderTabDetail(tabDetailContainer, newTab);
+      };
+      addTabRow.createEl("button", { cls: "mos-btn mos-btn-primary", text: "Add tab" })
+        .addEventListener("click", doAddTab);
+      tabLabelIn.addEventListener("keydown", (e: KeyboardEvent) => { if (e.key === "Enter") void doAddTab(); });
+    };
+
+    renderLeft();
+    renderRight();
   }
 }
