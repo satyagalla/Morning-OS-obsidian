@@ -1,24 +1,43 @@
-export interface BriefTask {
-  text: string;
-  carried_from: string | null;
-  id?: string;
+export type CompletionStatus = "open" | "done" | "dismissed";
+
+export interface FieldDef {
+  key: string;
+  label: string;
+  type: "text" | "url" | "dropdown";
+  options?: string[];
+}
+
+export interface TabConfig {
+  key: string;
+  label: string;
+  fields: FieldDef[];
+  view_mode: "cards" | "table";
+}
+
+export interface PillarConfig {
+  key: string;
+  label: string;
+  icon: string;
+  tabs: TabConfig[];
 }
 
 export interface Task {
-  id: string;
+  _id: string;
   text: string;
-  done: boolean;
-  created: string;
-  modified: string;
-  completed: string | null;
-  priority: "red" | "regular";
-  urgency: "low" | "med" | "high" | "none";
   pillars: string[];
   tags: Record<string, string>;
-  in_today: boolean;
-  remind_date: string | null;
-  deleted_from: string[];
-  deleted: boolean;
+  status_completion: CompletionStatus;
+  status_priority: "red" | "regular";
+  status_urgency: "none" | "low" | "med" | "high";
+  is_today: boolean;
+  is_deleted: boolean;
+  date_created: string;
+  date_modified: string;
+  date_completed: string | null;
+  date_remind: string | null;
+  is_entity: boolean;
+  description: string;
+  parent_id: string | null;
 }
 
 export type TaskRegistry = Task[];
@@ -35,37 +54,24 @@ export interface Suggestion {
   source: SuggestionSource;
 }
 
-export interface Reminder {
-  text: string;
-  source_date: string;
-  remind_date: string;
-}
-
 export interface DailyBrief {
   date: string;
-  meta: {
+  meta?: {
     goals: {
       short_term_count: number;
       long_term_count: number;
     };
   };
-  identity: {
+  identity?: {
     rules: string[];
   };
-  goals: {
+  goals?: {
     short_term: string[];
     long_term: string[];
   };
-  tasks: {
-    red_alert: BriefTask[];
-    regular: BriefTask[];
-    completed_red_alert: string[];
-    completed_regular: string[];
-  };
-  tactical_rules: string[];
-  technical_tasks: string[];
-  hobby_tasks: string[];
-  suggestions: Suggestion[];
-  wins: string[];
-  reminders?: Reminder[];
+  tactical_rules?: string[];
+  technical_tasks?: string[];
+  hobby_tasks?: string[];
+  suggestions?: Suggestion[];
+  wins?: string[];
 }

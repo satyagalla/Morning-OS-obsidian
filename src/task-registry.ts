@@ -1,5 +1,6 @@
 import { App } from "obsidian";
-import type { Task, TaskRegistry } from "./types";
+import type { Task, TaskRegistry, CompletionStatus } from "./types";
+import { writeHistorySnapshot } from "./agent/history";
 import { todayStr } from "./utils";
 
 const REGISTRY_PATH = "_generated/tasks.json";
@@ -13,10 +14,39 @@ export async function loadRegistry(app: App): Promise<TaskRegistry> {
   if (!exists) return [];
   try {
     const raw = await app.vault.adapter.read(REGISTRY_PATH);
-    return JSON.parse(raw) as TaskRegistry;
+    const tasks = JSON.parse(raw) as Record<string, unknown>[];
+    // Migrate old field names on read
+    return tasks.map(migrateTask);
   } catch {
     return [];
   }
+}
+
+function migrateTask(t: Record<string, unknown>): Task {
+  return {
+    _id:               (t._id ?? t.id ?? generateId()) as string,
+    text:              (t.text ?? "") as string,
+    pillars:           (t.pillars ?? []) as string[],
+    tags:              (t.tags ?? {}) as Record<string, string>,
+    status_completion: migrateCompletion(t),
+    status_priority:   (t.status_priority ?? t.priority ?? "regular") as "red" | "regular",
+    status_urgency:    (t.status_urgency ?? t.urgency ?? "none") as Task["status_urgency"],
+    is_today:          (t.is_today ?? t.in_today ?? false) as boolean,
+    is_deleted:        (t.is_deleted ?? t.deleted ?? false) as boolean,
+    is_entity:         (t.is_entity ?? false) as boolean,
+    description:       (t.description ?? "") as string,
+    parent_id:         (t.parent_id ?? null) as string | null,
+    date_created:      (t.date_created ?? t.created ?? todayStr()) as string,
+    date_modified:     (t.date_modified ?? t.modified ?? todayStr()) as string,
+    date_completed:    (t.date_completed ?? t.completed ?? null) as string | null,
+    date_remind:       (t.date_remind ?? t.remind_date ?? null) as string | null,
+  };
+}
+
+function migrateCompletion(t: Record<string, unknown>): CompletionStatus {
+  if (t.status_completion) return t.status_completion as CompletionStatus;
+  if (t.done === true) return "done";
+  return "open";
 }
 
 export async function saveRegistry(app: App, registry: TaskRegistry): Promise<void> {
@@ -24,16 +54,14 @@ export async function saveRegistry(app: App, registry: TaskRegistry): Promise<vo
   await app.vault.adapter.write(REGISTRY_PATH, JSON.stringify(registry, null, 2));
 }
 
-function parseTagsFromText(text: string): { cleanText: string; pillars: string[]; tags: Record<string, string>; remind_date: string | null } {
+function parseTagsFromText(text: string): { cleanText: string; pillars: string[]; tags: Record<string, string>; date_remind: string | null } {
   const pillars: string[] = [];
   const tags: Record<string, string> = {};
-  let remind_date: string | null = null;
+  let date_remind: string | null = null;
 
-  // #p/pillar → pillars array
   const pillarMatches = text.matchAll(/#p\/([\w-]+)/g);
   for (const m of pillarMatches) pillars.push(m[1]);
 
-  // #t/subtab — stored against most recently seen pillar
   const subtabMatches = text.matchAll(/#t\/([\w-]+)/g);
   const subtabList: string[] = [];
   for (const m of subtabMatches) subtabList.push(m[1]);
@@ -41,9 +69,8 @@ function parseTagsFromText(text: string): { cleanText: string; pillars: string[]
     tags[pillars[pillars.length - 1]] = subtabList[0];
   }
 
-  // @remind(YYYY-MM-DD)
   const remindMatch = text.match(/@remind\((\d{4}-\d{2}-\d{2})\)/);
-  if (remindMatch) remind_date = remindMatch[1];
+  if (remindMatch) date_remind = remindMatch[1];
 
   const cleanText = text
     .replace(/#p\/[\w-]+/g, "")
@@ -51,115 +78,102 @@ function parseTagsFromText(text: string): { cleanText: string; pillars: string[]
     .replace(/@remind\([^)]*\)/g, "")
     .trim();
 
-  return { cleanText, pillars, tags, remind_date };
+  return { cleanText, pillars, tags, date_remind };
 }
 
 export function createTask(
   rawText: string,
-  opts: Partial<Pick<Task, "priority" | "urgency" | "pillars" | "tags" | "in_today" | "remind_date">> = {}
+  opts: Partial<Pick<Task, "status_priority" | "status_urgency" | "pillars" | "tags" | "is_today" | "date_remind" | "is_entity" | "parent_id" | "description">> = {}
 ): Task {
   const today = todayStr();
   const parsed = parseTagsFromText(rawText);
-  // opts overrides parsed tags if explicitly provided
-  const pillars = opts.pillars !== undefined ? opts.pillars : parsed.pillars;
-  const tags = opts.tags !== undefined ? opts.tags : parsed.tags;
-  const remind_date = opts.remind_date !== undefined ? opts.remind_date : parsed.remind_date;
   return {
-    id: generateId(),
+    _id: generateId(),
     text: parsed.cleanText,
-    done: false,
-    created: today,
-    modified: today,
-    completed: null,
-    priority: opts.priority ?? "regular",
-    urgency: opts.urgency ?? "none",
-    pillars,
-    tags,
-    in_today: opts.in_today ?? false,
-    remind_date,
-    deleted_from: [],
-    deleted: false,
+    pillars: opts.pillars !== undefined ? opts.pillars : parsed.pillars,
+    tags: opts.tags !== undefined ? opts.tags : parsed.tags,
+    status_completion: "open",
+    status_priority: opts.status_priority ?? "regular",
+    status_urgency: opts.status_urgency ?? "none",
+    is_today: opts.is_today ?? false,
+    is_deleted: false,
+    is_entity: opts.is_entity ?? false,
+    description: opts.description ?? "",
+    parent_id: opts.parent_id ?? null,
+    date_created: today,
+    date_modified: today,
+    date_completed: null,
+    date_remind: opts.date_remind !== undefined ? opts.date_remind : parsed.date_remind,
   };
 }
 
-export async function addTask(app: App, task: Task): Promise<void> {
-  const registry = await loadRegistry(app);
-  registry.push(task);
-  await saveRegistry(app, registry);
+export function getChildren(registry: TaskRegistry, parentId: string): Task[] {
+  return registry.filter(t => t.parent_id === parentId && !t.is_deleted);
+}
+
+export function getRecords(registry: TaskRegistry, pillarKey: string, tabKey?: string): Task[] {
+  return registry.filter(t =>
+    t.is_entity && !t.is_deleted && t.pillars.includes(pillarKey) &&
+    (tabKey === undefined || t.tags[pillarKey] === tabKey)
+  );
 }
 
 export async function updateTask(app: App, id: string, patch: Partial<Task>): Promise<void> {
   const registry = await loadRegistry(app);
-  const idx = registry.findIndex(t => t.id === id);
+  const idx = registry.findIndex(t => t._id === id);
   if (idx === -1) return;
-  registry[idx] = { ...registry[idx], ...patch, modified: todayStr() };
+  registry[idx] = { ...registry[idx], ...patch, date_modified: todayStr() };
   await saveRegistry(app, registry);
 }
 
-export async function toggleTaskDone(app: App, id: string, done: boolean): Promise<void> {
+export async function setTaskStatus(app: App, id: string, status: CompletionStatus): Promise<void> {
   const today = todayStr();
   await updateTask(app, id, {
-    done,
-    completed: done ? today : null,
-    modified: today,
+    status_completion: status,
+    date_completed: status === "done" ? today : null,
   });
 }
 
 export async function moveTaskToToday(app: App, id: string, priority: "red" | "regular"): Promise<void> {
-  await updateTask(app, id, { in_today: true, priority });
-}
-
-export async function clearTaskFromView(app: App, id: string, view: string): Promise<void> {
-  const registry = await loadRegistry(app);
-  const idx = registry.findIndex(t => t.id === id);
-  if (idx === -1) return;
-  const task = registry[idx];
-  if (!task.deleted_from.includes(view)) {
-    task.deleted_from.push(view);
-    task.modified = todayStr();
-  }
-  await saveRegistry(app, registry);
-}
-
-export function getTodayTasks(registry: TaskRegistry): { red: Task[]; regular: Task[] } {
-  const today = todayStr();
-  return {
-    red: registry.filter(t => !t.deleted && t.in_today && t.priority === "red" && !t.deleted_from.includes("home") && !(t.done && t.completed !== today)),
-    regular: registry.filter(t => !t.deleted && t.in_today && t.priority === "regular" && !t.deleted_from.includes("home") && !(t.done && t.completed !== today)),
-  };
-}
-
-export function getPillarTasks(registry: TaskRegistry, pillar: string, tab?: string): Task[] {
-  return registry.filter(t =>
-    !t.deleted &&
-    t.pillars.includes(pillar) &&
-    !t.deleted_from.includes(pillar) &&
-    (tab === undefined || t.tags[pillar] === tab)
-  );
-}
-
-export function getDumpTasks(registry: TaskRegistry): Task[] {
-  return registry.filter(t => !t.deleted && !t.deleted_from.includes("inbox") && !t.deleted_from.includes("dump"));
+  await updateTask(app, id, { is_today: true, status_priority: priority });
 }
 
 export async function deleteTask(app: App, id: string): Promise<void> {
-  await updateTask(app, id, { deleted: true, in_today: false });
+  await updateTask(app, id, { is_deleted: true, is_today: false });
 }
 
 export async function restoreTask(app: App, id: string): Promise<void> {
-  await updateTask(app, id, { deleted: false });
+  await updateTask(app, id, { is_deleted: false });
 }
 
 export async function clearNextDayTasks(app: App): Promise<void> {
   const today = todayStr();
+  const d = new Date(today + "T12:00:00");
+  d.setDate(d.getDate() - 1);
+  const yesterdayStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
   const registry = await loadRegistry(app);
+
+  // Snapshot yesterday's state before clearing
+  await writeHistorySnapshot(app, yesterdayStr, registry);
+
   for (const task of registry) {
-    if (task.in_today && task.done && task.completed !== today) {
-      task.in_today = false;
-      task.modified = today;
+    if (task.is_today && task.status_completion === "done" && task.date_completed !== today) {
+      task.is_today = false;
+      task.date_modified = today;
     }
   }
   await saveRegistry(app, registry);
+}
+
+export function getActiveReminders(registry: TaskRegistry): Task[] {
+  const today = todayStr();
+  return registry.filter(t =>
+    !t.is_deleted &&
+    t.status_completion === "open" &&
+    t.date_remind !== null &&
+    t.date_remind <= today
+  );
 }
 
 export { generateId, REGISTRY_PATH };
