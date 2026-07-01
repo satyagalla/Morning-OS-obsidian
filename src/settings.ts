@@ -1,6 +1,6 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
 import type MorningOSPlugin from "./main";
-import type { PillarConfig, TabConfig, FieldDef } from "./types";
+import type { PillarConfig, TabConfig, FieldDef, LLMSectionMapping } from "./types";
 
 export interface MorningOSSettings {
   // Plugin display paths
@@ -67,6 +67,15 @@ export interface MorningOSSettings {
 
   // Dirty flag — true when settings changed since last agent run
   settingsChangedSinceRun: boolean;
+
+  // Wins log
+  sourceWins: string;
+
+  // LLM section mappings (pillar markdown sections → LLM context slots)
+  llmSectionMappings: LLMSectionMapping[];
+
+  // Migration
+  migrationComplete: boolean;
 
   // Onboarding
   onboarded: boolean;
@@ -137,23 +146,34 @@ export const DEFAULT_SETTINGS: MorningOSSettings = {
 
   settingsChangedSinceRun: false,
 
+  sourceWins: "Essential/Wins.md",
+
+  llmSectionMappings: [
+    { heading: "Tactical Rules",  target: "tactical_rules",  enabled: true },
+    { heading: "Emotional Rules", target: "emotional_rules", enabled: true },
+    { heading: "Short Term",      target: "goals_short",     enabled: true },
+    { heading: "Long Term",       target: "goals_long",      enabled: true },
+  ],
+
+  migrationComplete: false,
+
   onboarded: false,
 
   lastSeenVersion: "",
 
   pillars: [
-    { key: "health",       label: "Health",         icon: "❤️",  tabs: [
+    { key: "health",       label: "Health",         icon: "❤️",  feedToLLM: true,  tabs: [
       { key: "physical",  label: "Physical",    fields: [], view_mode: "cards" },
       { key: "mental",    label: "Mental/ADHD", fields: [], view_mode: "cards" },
     ]},
-    { key: "career",       label: "Career",         icon: "💼",  tabs: [
+    { key: "career",       label: "Career",         icon: "💼",  feedToLLM: true,  tabs: [
       { key: "applications", label: "Applications", fields: [], view_mode: "cards" },
       { key: "leads",        label: "Leads",        fields: [], view_mode: "cards" },
       { key: "followups",    label: "Follow-ups",   fields: [], view_mode: "cards" },
     ]},
-    { key: "interests",    label: "Interests",      icon: "✨",  tabs: [] },
-    { key: "family",       label: "Family",         icon: "👨‍👩‍👧", tabs: [] },
-    { key: "relationship", label: "Relationships",  icon: "💞",  tabs: [] },
+    { key: "interests",    label: "Interests",      icon: "✨",  feedToLLM: true,  tabs: [] },
+    { key: "family",       label: "Family",         icon: "👨‍👩‍👧", feedToLLM: false, tabs: [] },
+    { key: "relationship", label: "Relationships",  icon: "💞",  feedToLLM: false, tabs: [] },
   ],
 };
 
@@ -428,9 +448,51 @@ export class MorningOSSettingTab extends PluginSettingTab {
       text: "All paths are relative to your vault root. Change these only if your vault structure differs from the defaults.",
     });
 
+    const migrationDone = this.plugin.settings.migrationComplete;
+    const migrationSetting = new Setting(containerEl)
+      .setName("Migrate vault to pillars")
+      .setDesc(migrationDone
+        ? "Migration complete. Your vault is using the new pillar system."
+        : "Move your existing rules, goals, and tasks to the new pillar system. Old files are archived to _archive/pre-migration/.");
+
+    if (migrationDone) {
+      migrationSetting.setDesc("Migration complete. Your vault is using the new pillar system. Only re-run if you've added new content to old source files.");
+      migrationSetting.addButton(btn => {
+        btn.setButtonText("Migrated ✓").setDisabled(true);
+        btn.buttonEl.addClass("mos-btn-success");
+      });
+      migrationSetting.addButton(btn => {
+        btn.setButtonText("Re-run").onClick(async () => {
+          btn.setButtonText("Checking…");
+          btn.setDisabled(true);
+          try {
+            await this.plugin.migrateVault();
+            this.rerender();
+          } catch (e) {
+            btn.setButtonText("Failed ✗");
+            window.setTimeout(() => { btn.setButtonText("Re-run"); btn.setDisabled(false); }, 3000);
+          }
+        });
+      });
+    } else {
+      migrationSetting.addButton(btn =>
+        btn.setButtonText("Migrate").setCta().onClick(async () => {
+          btn.setButtonText("Migrating…");
+          btn.setDisabled(true);
+          try {
+            await this.plugin.migrateVault();
+            this.rerender();
+          } catch (e) {
+            btn.setButtonText("Failed ✗");
+            btn.setDisabled(false);
+          }
+        })
+      );
+    }
+
     new Setting(containerEl)
       .setName("Daily notes folder")
-      .setDesc("Legacy fallback — not used when tasks.json registry is active.")
+      .setDesc("Used by migration to archive old daily notes. Run migration to move these to _archive/daily-notes/ and remove this folder.")
       .addText((text) =>
         text
           .setPlaceholder("Essential/Daily")
@@ -507,6 +569,15 @@ export class MorningOSSettingTab extends PluginSettingTab {
         text
           .setValue(this.plugin.settings.sourceIdentity)
           .onChange(async (value) => { await this.save({ sourceIdentity: value }, "Vault paths"); })
+      );
+
+    new Setting(containerEl)
+      .setName("Wins log file")
+      .setDesc("Chronological wins log. Plugin appends here when you add a win from the Home view.")
+      .addText((text) =>
+        text
+          .setValue(this.plugin.settings.sourceWins)
+          .onChange(async (value) => { await this.save({ sourceWins: value }, "Vault paths"); })
       );
   }
 
@@ -651,6 +722,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
     const pillars = this.plugin.settings.pillars;
     const saveDataOnly = async () => {
       await this.plugin.saveData(this.plugin.settings);
+      this.plugin.refreshView();
     };
     const saveAndSync = async () => {
       await this.plugin.saveData(this.plugin.settings);
@@ -716,7 +788,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
         if (!l) return;
         const k = l.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
         if (pillars.find(p => p.key === k)) return;
-        pillars.push({ key: k, label: l, icon: "📌", tabs: [] });
+        pillars.push({ key: k, label: l, icon: "📌", tabs: [], feedToLLM: true });
         this.selectedPillarKey = k;
         this.selectedTabKey = null;
         labelIn.value = "";
@@ -746,6 +818,16 @@ export class MorningOSSettingTab extends PluginSettingTab {
         });
       });
 
+      // View mode toggle
+      new Setting(tabDetailEl).setName("View mode").setDesc("Cards show task cards with chips. Table shows a spreadsheet-style grid.").addDropdown(dd => {
+        dd.addOptions({ cards: "Cards", table: "Table" });
+        dd.setValue(selectedTab.view_mode ?? "cards");
+        dd.onChange(async v => {
+          selectedTab.view_mode = v as "cards" | "table";
+          await saveAndSync();
+        });
+      });
+
       tabDetailEl.createEl("div", { cls: "mos-pillars-sub-heading", text: "Fields" });
 
       const renderFieldRows = () => {
@@ -755,6 +837,15 @@ export class MorningOSSettingTab extends PluginSettingTab {
           const fRow = tabDetailEl.createEl("div", { cls: "mos-pillar-builder-row mos-field-row" });
           fRow.createEl("span", { cls: "mos-pillar-builder-label", text: field.label });
           fRow.createEl("span", { cls: "mos-meta-chip", text: field.type });
+          if (field.type === "dropdown") {
+            const optStr = (field.options ?? []).join(", ");
+            const optInput = fRow.createEl("input", { type: "text", cls: "morning-os-wins-input mos-field-options-inline", placeholder: "Options (comma-separated)" });
+            optInput.value = optStr;
+            optInput.addEventListener("change", async () => {
+              field.options = optInput.value.split(",").map(s => s.trim()).filter(Boolean);
+              await saveDataOnly();
+            });
+          }
           fRow.createEl("button", { cls: "mos-btn mos-btn-icon", text: "✕" })
             .addEventListener("click", async () => {
               selectedTab.fields.splice(fi, 1);
@@ -772,13 +863,28 @@ export class MorningOSSettingTab extends PluginSettingTab {
       const addFRow = tabDetailEl.createEl("div", { cls: "mos-pillar-builder-row" });
       const fLabelIn = addFRow.createEl("input", { type: "text", cls: "morning-os-wins-input", placeholder: "Field label" });
       const fTypeSelect = addFRow.createEl("select", { cls: "mos-btn mos-btn-select" });
-      for (const ft of ["text", "url", "dropdown"]) fTypeSelect.createEl("option", { value: ft, text: ft });
+      for (const ft of ["text", "url", "dropdown", "date"]) fTypeSelect.createEl("option", { value: ft, text: ft });
+      const fOptionsWrap = tabDetailEl.createEl("div", { cls: "mos-pillar-builder-row mos-field-options-row" });
+      fOptionsWrap.style.display = "none";
+      fOptionsWrap.createEl("label", { cls: "mos-edit-label", text: "Options (comma-separated)" });
+      const fOptionsIn = fOptionsWrap.createEl("input", { type: "text", cls: "morning-os-wins-input", placeholder: "Option 1, Option 2, Option 3" });
+      fTypeSelect.addEventListener("change", () => {
+        fOptionsWrap.style.display = fTypeSelect.value === "dropdown" ? "flex" : "none";
+      });
       const doAddField = async () => {
         const l = fLabelIn.value.trim();
         if (!l) return;
         const k = l.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
-        selectedTab.fields.push({ key: k, label: l, type: fTypeSelect.value as FieldDef["type"] });
+        const fieldType = fTypeSelect.value as FieldDef["type"];
+        const field: FieldDef = { key: k, label: l, type: fieldType };
+        if (fieldType === "dropdown") {
+          field.options = fOptionsIn.value.split(",").map(s => s.trim()).filter(Boolean);
+        }
+        selectedTab.fields.push(field);
         fLabelIn.value = "";
+        fOptionsIn.value = "";
+        fOptionsWrap.style.display = "none";
+        fTypeSelect.value = "text";
         await saveDataOnly();
         renderFieldRows();
       };
@@ -843,6 +949,12 @@ export class MorningOSSettingTab extends PluginSettingTab {
           });
           wrap.appendChild(picker);
         });
+      });
+
+      // Feed to LLM toggle
+      new Setting(right).setName("Feed to LLM").setDesc("Allow this pillar's markdown sections to feed into the briefing agent context.").addToggle(t => {
+        t.setValue(pillar.feedToLLM ?? true);
+        t.onChange(async v => { pillar.feedToLLM = v; await saveAndSync(); });
       });
 
       // Tabs section
