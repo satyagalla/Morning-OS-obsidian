@@ -305,13 +305,32 @@ export default class MorningOSPlugin extends Plugin {
 
     if (tasksAdded > 0) await saveRegistry(this.app, registry);
 
-    // 7. Migrate today's wins → Essential/Wins.md
-    if (dailyData) {
-      for (const win of dailyData.wins) {
-        await appendWinToLog(win.text, today, this.app, this.settings);
-      }
-      if (dailyData.wins.length) results.push(`✓ ${dailyData.wins.length} wins → Wins.md`);
+    // 7. Migrate ALL wins from all daily notes → Essential/Wins.md
+    const winsPath = this.settings.sourceWins;
+    if (!(await this.app.vault.adapter.exists(winsPath))) {
+      await this.app.vault.adapter.write(winsPath, "");
     }
+    let totalWins = 0;
+    const dailyDirPath = this.settings.dailyNoteDir;
+    if (await this.app.vault.adapter.exists(dailyDirPath)) {
+      const dailyListing = await this.app.vault.adapter.list(dailyDirPath);
+      const sortedFiles = dailyListing.files
+        .filter(f => /\d{4}-\d{2}-\d{2}\.md$/.test(f))
+        .sort(); // oldest first — appendWinToLog prepends date headings so newest ends up on top
+      for (const filePath of sortedFiles) {
+        const dateMatch = filePath.match(/(\d{4}-\d{2}-\d{2})\.md$/);
+        if (!dateMatch) continue;
+        const fileDate = dateMatch[1];
+        const parsed = await parseDailyNote(fileDate, this.app, this.settings);
+        if (!parsed) continue;
+        for (const win of parsed.wins) {
+          await appendWinToLog(win.text, fileDate, this.app, this.settings);
+          totalWins++;
+        }
+      }
+    }
+    if (totalWins > 0) results.push(`✓ ${totalWins} historical wins → Wins.md`);
+    else results.push(`✓ Created Wins.md`);
 
     // 8. Archive old source files (only if content was migrated)
     const archiveDir = "_archive/pre-migration";
@@ -330,32 +349,94 @@ export default class MorningOSPlugin extends Plugin {
       if (!(await this.app.vault.adapter.exists(archiveDir))) {
         await this.app.vault.adapter.mkdir(archiveDir);
       }
-      const content = await this.app.vault.adapter.read(entry.src);
-      await this.app.vault.adapter.write(entry.dest, content);
-      const file = this.app.vault.getAbstractFileByPath(entry.src);
-      if (file) await this.app.vault.delete(file);
+      // Copy if not already archived
+      if (!(await this.app.vault.adapter.exists(entry.dest))) {
+        const content = await this.app.vault.adapter.read(entry.src);
+        await this.app.vault.adapter.write(entry.dest, content);
+      }
+      // Always delete source via adapter to avoid stale cache
+      await this.app.vault.adapter.remove(entry.src);
       archived++;
     }
     if (archived > 0) results.push(`✓ ${archived} old files archived to _archive/pre-migration/`);
 
-    // 9. Archive daily notes folder and delete empty legacy folders
+    // 9. Archive daily notes in sync-safe batches
     const dailyDir = this.settings.dailyNoteDir;
     if (await this.app.vault.adapter.exists(dailyDir)) {
       const dailyArchiveDir = "_archive/daily-notes";
+      if (!(await this.app.vault.adapter.exists("_archive"))) {
+        await this.app.vault.adapter.mkdir("_archive");
+      }
       if (!(await this.app.vault.adapter.exists(dailyArchiveDir))) {
         await this.app.vault.adapter.mkdir(dailyArchiveDir);
       }
+
+      // Read remotely-save concurrency setting — fall back to 5 if not installed
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const remotelySave = (this.app as any).plugins?.plugins?.["remotely-save"];
+      const concurrency: number = remotelySave?.settings?.concurrency ?? 5;
+      const batchSize = Math.max(1, concurrency - 1);
+
+      const waitForSyncIdle = async () => {
+        if (!remotelySave) return;
+        // Give remotely-save a moment to pick up the changes
+        await new Promise(r => window.setTimeout(r, 500));
+        // Poll until isSyncing is false
+        while (remotelySave.isSyncing) {
+          await new Promise(r => window.setTimeout(r, 500));
+        }
+      };
+
       const listing = await this.app.vault.adapter.list(dailyDir);
-      for (const filePath of listing.files) {
-        const fileName = filePath.split("/").pop() ?? filePath;
-        const content = await this.app.vault.adapter.read(filePath);
-        await this.app.vault.adapter.write(`${dailyArchiveDir}/${fileName}`, content);
-        const file = this.app.vault.getAbstractFileByPath(filePath);
-        if (file) await this.app.vault.delete(file);
+      // Archive all files in the daily folder; delete empty ones outright
+      const dailyFiles = listing.files;
+      let archivedNotes = 0;
+
+      for (let i = 0; i < dailyFiles.length; i += batchSize) {
+        const batch = dailyFiles.slice(i, i + batchSize);
+
+        for (const filePath of batch) {
+          const fileName = filePath.split("/").pop() ?? filePath;
+          const destPath = `${dailyArchiveDir}/${fileName}`;
+          const content = await this.app.vault.adapter.read(filePath);
+          if (content.trim().length === 0) {
+            // Empty file — just delete, no value in archiving
+            await this.app.vault.adapter.remove(filePath);
+          } else {
+            // Copy if not already in archive, then delete source
+            if (!(await this.app.vault.adapter.exists(destPath))) {
+              await this.app.vault.adapter.write(destPath, content);
+            }
+            await this.app.vault.adapter.remove(filePath);
+          }
+          archivedNotes++;
+        }
+
+        // Trigger sync and wait for idle before next batch
+        if (remotelySave && i + batchSize < dailyFiles.length) {
+          if (!remotelySave.isSyncing) remotelySave.syncRun?.();
+          await waitForSyncIdle();
+        }
+
+        new Notice(`Morning OS: archiving daily notes... (${Math.min(i + batchSize, dailyFiles.length)}/${dailyFiles.length})`, 2000);
       }
-      const dailyFolder = this.app.vault.getAbstractFileByPath(dailyDir);
-      if (dailyFolder) await this.app.vault.delete(dailyFolder, true);
-      results.push(`✓ Daily notes archived to _archive/daily-notes/`);
+
+      // Clean up daily folder if now empty
+      if (await this.app.vault.adapter.exists(dailyDir)) {
+        const remaining = await this.app.vault.adapter.list(dailyDir);
+        if (remaining.files.length === 0) {
+          const dailyFolder = this.app.vault.getAbstractFileByPath(dailyDir);
+          if (dailyFolder) await this.app.vault.delete(dailyFolder, true);
+        }
+      }
+
+      // Final sync after all batches
+      if (remotelySave) {
+        if (!remotelySave.isSyncing) remotelySave.syncRun?.();
+        await waitForSyncIdle();
+      }
+
+      results.push(`✓ ${archivedNotes} daily notes archived to _archive/daily-notes/ (concurrency: ${concurrency})`);
     }
 
     // Delete now-empty legacy folders
