@@ -2,6 +2,10 @@ import esbuild from "esbuild";
 import process from "process";
 import fs from "fs";
 import path from "path";
+import { config } from "dotenv";
+
+// Load proxy env vars if present (never committed)
+config({ path: path.resolve("proxy/.env") });
 
 const prod = process.argv[2] === "production";
 const watch = process.argv[2] === "watch";
@@ -60,6 +64,10 @@ const ctx = await esbuild.context({
     "@lezer/lr",
     ...builtins,
   ],
+  define: {
+    "process.env.FEEDBACK_PROXY_URL": JSON.stringify(process.env.FEEDBACK_PROXY_URL ?? ""),
+    "process.env.FEEDBACK_SECRET":    JSON.stringify(process.env.FEEDBACK_SECRET ?? ""),
+  },
   loader: { ".md": "text" },
   format: "cjs",
   target: "es2018",

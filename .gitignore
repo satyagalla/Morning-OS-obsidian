@@ -23,3 +23,6 @@ agent-reports/
 CLAUDE.md
 CONTEXT.md
 screenshot-brief.json
+
+# Proxy (never commit secrets)
+proxy/
