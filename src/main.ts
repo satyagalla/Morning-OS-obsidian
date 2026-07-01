@@ -4,7 +4,7 @@ import { MorningOSSettings, DEFAULT_SETTINGS, MorningOSSettingTab } from "./sett
 import { runAgent, refreshBrief, AgentResult } from "./agent/run";
 import { scaffoldDailyNote } from "./agent/scaffold-daily-note";
 import { loadRegistry, saveRegistry, createTask, setTaskStatus } from "./task-registry";
-import { parseBulletFile, parseDailyNote } from "./agent/vault-reader";
+import { parseBulletFile, parseDailyNote, parseSectionFromFile, appendWinToLog } from "./agent/vault-reader";
 import { todayStr } from "./utils";
 
 export default class MorningOSPlugin extends Plugin {
@@ -14,6 +14,23 @@ export default class MorningOSPlugin extends Plugin {
 
   async onload() {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData()) as MorningOSSettings;
+
+    // Migrate feedToLLM onto existing pillar configs that predate the field
+    for (const pillar of this.settings.pillars) {
+      if (pillar.feedToLLM === undefined) {
+        pillar.feedToLLM = !["family", "relationship"].includes(pillar.key);
+      }
+    }
+
+    // Migrate llmSectionMappings if missing
+    if (!this.settings.llmSectionMappings?.length) {
+      this.settings.llmSectionMappings = DEFAULT_SETTINGS.llmSectionMappings;
+    }
+
+    // Migrate sourceWins if missing
+    if (!this.settings.sourceWins) {
+      this.settings.sourceWins = DEFAULT_SETTINGS.sourceWins;
+    }
 
     if (!this.settings.onboarded && this.settings.agentLastRunDate) {
       this.settings.onboarded = true;
@@ -30,39 +47,6 @@ export default class MorningOSPlugin extends Plugin {
 
     this.addRibbonIcon("sun", "Morning OS", () => {
       void this.activateView();
-    });
-
-    this.addCommand({
-      id: "run-agent",
-      name: "Run briefing agent",
-      callback: () => { void this.triggerAgent(); },
-    });
-
-    this.addCommand({
-      id: "refresh-brief",
-      name: "Refresh brief",
-      callback: () => { void this.triggerRefresh(); },
-    });
-
-    this.addCommand({
-      id: "capture-task",
-      name: "Capture task to Dump",
-      callback: () => {
-        new CaptureModal(this.app, async (text) => {
-          const task = createTask(text);
-          const reg = await loadRegistry(this.app);
-          reg.push(task);
-          await saveRegistry(this.app, reg);
-          this.refreshView();
-          new Notice("Morning OS: task captured ✓");
-        }).open();
-      },
-    });
-
-    this.addCommand({
-      id: "migrate-tasks",
-      name: "Migrate tasks from daily note + pending files",
-      callback: () => { void this.migrateExistingTasks(); },
     });
 
     this.settingTab = new MorningOSSettingTab(this.app, this);
@@ -203,40 +187,206 @@ export default class MorningOSPlugin extends Plugin {
     try { await refreshBrief(this.app, this.settings); } catch { /* non-critical */ }
   }
 
-  async migrateExistingTasks(): Promise<void> {
+  async migrateVault(): Promise<void> {
     const today = todayStr();
+    const userFolder = this.settings.dailyNoteDir.split("/")[0] || "Essential";
+    const results: string[] = [];
+
+    // Ensure Pillars directory exists
+    const pillarsDir = `${userFolder}/Pillars`;
+    if (!(await this.app.vault.adapter.exists(pillarsDir))) {
+      await this.app.vault.adapter.mkdir(pillarsDir);
+    }
+
+    // Helper: append missing bullets to a section in a pillar markdown (idempotent per bullet)
+    const appendSectionToPillar = async (pillarLabel: string, sectionHeading: string, bullets: string[]) => {
+      if (bullets.length === 0) return;
+      const path = `${pillarsDir}/${pillarLabel}.md`;
+      let content = (await this.app.vault.adapter.exists(path))
+        ? await this.app.vault.adapter.read(path)
+        : "";
+
+      // Read existing bullets in this section to avoid duplicates
+      const existingInSection = new Set(
+        content.split("\n")
+          .filter(l => l.trim().startsWith("- "))
+          .map(l => l.trim().replace(/^-\s+/, "").toLowerCase())
+      );
+
+      const missing = bullets.filter(b => !existingInSection.has(b.toLowerCase().trim()));
+      if (missing.length === 0) return;
+
+      const headingLine = `## ${sectionHeading}`;
+      if (content.includes(headingLine)) {
+        // Append missing bullets before next heading or at end
+        const lines = content.split("\n");
+        const headingIdx = lines.findIndex(l => l.trim() === headingLine);
+        let insertIdx = headingIdx + 1;
+        while (insertIdx < lines.length && !lines[insertIdx].startsWith("## ")) insertIdx++;
+        lines.splice(insertIdx, 0, ...missing.map(b => `- ${b}`));
+        content = lines.join("\n");
+      } else {
+        content = content.trimEnd() + (content ? "\n\n" : "") + `${headingLine}\n${missing.map(b => `- ${b}`).join("\n")}\n`;
+      }
+
+      await this.app.vault.adapter.write(path, content);
+    };
+
+    // 0. Create pillar markdown files for all pillars (idempotent — skip if already exists)
+    let pillarsCreated = 0;
+    for (const pillar of this.settings.pillars) {
+      const path = `${pillarsDir}/${pillar.label}.md`;
+      if (!(await this.app.vault.adapter.exists(path))) {
+        await this.app.vault.adapter.write(path, `# ${pillar.label}\n`);
+        pillarsCreated++;
+      }
+    }
+    if (pillarsCreated > 0) results.push(`✓ Created ${pillarsCreated} pillar markdown files`);
+
+    // 1. Migrate Tactical Rules → Health.md ## Tactical Rules
+    const tactical = await parseBulletFile(this.settings.sourceTacticalRules, this.app);
+    if (tactical.length) {
+      await appendSectionToPillar("Health", "Tactical Rules", tactical);
+      results.push(`✓ ${tactical.length} tactical rules → Health pillar`);
+    }
+
+    // 2. Migrate Emotional Rules → Health.md ## Emotional Rules
+    const emotional = await parseBulletFile(this.settings.sourceEmotionalRules, this.app);
+    if (emotional.length) {
+      await appendSectionToPillar("Health", "Emotional Rules", emotional);
+      results.push(`✓ ${emotional.length} emotional rules → Health pillar`);
+    }
+
+    // 3. Migrate Goals → Career.md ## Short Term / ## Long Term
+    const goalContent = await this.app.vault.adapter.exists(this.settings.sourceGoals)
+      ? await this.app.vault.adapter.read(this.settings.sourceGoals)
+      : "";
+    if (goalContent) {
+      const shortGoals = await parseSectionFromFile(this.settings.sourceGoals, this.settings.goalsShortTerm, this.app);
+      const longGoals  = await parseSectionFromFile(this.settings.sourceGoals, this.settings.goalsLongTerm, this.app);
+      if (shortGoals.length) { await appendSectionToPillar("Career", "Short Term", shortGoals); }
+      if (longGoals.length)  { await appendSectionToPillar("Career", "Long Term", longGoals); }
+      if (shortGoals.length || longGoals.length) {
+        results.push(`✓ Goals (${shortGoals.length} short, ${longGoals.length} long) → Career pillar`);
+      }
+    }
+
+    // 4. Migrate Technical Tasks → registry with career pillar
     const registry = await loadRegistry(this.app);
     const existingTexts = new Set(registry.map(t => t.text.toLowerCase().trim()));
-    let added = 0;
-
+    let tasksAdded = 0;
     const add = (text: string, opts: Parameters<typeof createTask>[1] = {}) => {
       const clean = text.trim();
       if (!clean || existingTexts.has(clean.toLowerCase())) return;
       existingTexts.add(clean.toLowerCase());
       registry.push(createTask(clean, opts));
-      added++;
+      tasksAdded++;
     };
 
-    // Today's daily note — red alert and regular (undone only), land in dump
+    const technical = await parseBulletFile(this.settings.sourceTechnicalTasks, this.app);
+    for (const t of technical) add(t, { pillars: ["career"] });
+    if (technical.length) results.push(`✓ ${technical.length} technical tasks → Career registry`);
+
+    // 5. Migrate Hobby Tasks → registry with interests pillar
+    const hobby = await parseBulletFile(this.settings.sourceHobbyTasks, this.app);
+    for (const t of hobby) add(t, { pillars: ["interests"] });
+    if (hobby.length) results.push(`✓ ${hobby.length} hobby tasks → Interests registry`);
+
+    // 6. Migrate today's daily note tasks → registry (undone only, no pillar)
     const dailyData = await parseDailyNote(today, this.app, this.settings);
     if (dailyData) {
       for (const t of dailyData.red_alert.filter(t => !t.done))
-        add(t.text, { status_priority: "red", is_today: false });
+        add(t.text, { status_priority: "red", is_today: true });
       for (const t of dailyData.regular.filter(t => !t.done))
-        add(t.text, { status_priority: "regular", is_today: false });
+        add(t.text, { status_priority: "regular", is_today: true });
+      const taskCount = dailyData.red_alert.filter(t => !t.done).length + dailyData.regular.filter(t => !t.done).length;
+      if (taskCount) results.push(`✓ ${taskCount} daily note tasks → registry (Today)`);
     }
 
-    // Technical tasks → dump
-    const technical = await parseBulletFile(this.settings.sourceTechnicalTasks, this.app);
-    for (const t of technical) add(t);
+    if (tasksAdded > 0) await saveRegistry(this.app, registry);
 
-    // Hobby tasks → dump
-    const hobby = await parseBulletFile(this.settings.sourceHobbyTasks, this.app);
-    for (const t of hobby) add(t);
+    // 7. Migrate today's wins → Essential/Wins.md
+    if (dailyData) {
+      for (const win of dailyData.wins) {
+        await appendWinToLog(win.text, today, this.app, this.settings);
+      }
+      if (dailyData.wins.length) results.push(`✓ ${dailyData.wins.length} wins → Wins.md`);
+    }
 
-    await saveRegistry(this.app, registry);
+    // 8. Archive old source files (only if content was migrated)
+    const archiveDir = "_archive/pre-migration";
+    const filesToArchive: { src: string; dest: string; migrated: boolean }[] = [
+      { src: this.settings.sourceTacticalRules, dest: `${archiveDir}/Tactical Rules.md`, migrated: tactical.length > 0 },
+      { src: this.settings.sourceEmotionalRules, dest: `${archiveDir}/Emotional Rules.md`, migrated: emotional.length > 0 },
+      { src: this.settings.sourceGoals, dest: `${archiveDir}/Goals.md`, migrated: goalContent.length > 0 },
+      { src: this.settings.sourceTechnicalTasks, dest: `${archiveDir}/Technical Tasks.md`, migrated: technical.length > 0 },
+      { src: this.settings.sourceHobbyTasks, dest: `${archiveDir}/Hobby Tasks.md`, migrated: hobby.length > 0 },
+    ];
+
+    let archived = 0;
+    for (const entry of filesToArchive) {
+      if (!entry.migrated) continue;
+      if (!(await this.app.vault.adapter.exists(entry.src))) continue;
+      if (!(await this.app.vault.adapter.exists(archiveDir))) {
+        await this.app.vault.adapter.mkdir(archiveDir);
+      }
+      const content = await this.app.vault.adapter.read(entry.src);
+      await this.app.vault.adapter.write(entry.dest, content);
+      const file = this.app.vault.getAbstractFileByPath(entry.src);
+      if (file) await this.app.vault.delete(file);
+      archived++;
+    }
+    if (archived > 0) results.push(`✓ ${archived} old files archived to _archive/pre-migration/`);
+
+    // 9. Archive daily notes folder and delete empty legacy folders
+    const dailyDir = this.settings.dailyNoteDir;
+    if (await this.app.vault.adapter.exists(dailyDir)) {
+      const dailyArchiveDir = "_archive/daily-notes";
+      if (!(await this.app.vault.adapter.exists(dailyArchiveDir))) {
+        await this.app.vault.adapter.mkdir(dailyArchiveDir);
+      }
+      const listing = await this.app.vault.adapter.list(dailyDir);
+      for (const filePath of listing.files) {
+        const fileName = filePath.split("/").pop() ?? filePath;
+        const content = await this.app.vault.adapter.read(filePath);
+        await this.app.vault.adapter.write(`${dailyArchiveDir}/${fileName}`, content);
+        const file = this.app.vault.getAbstractFileByPath(filePath);
+        if (file) await this.app.vault.delete(file);
+      }
+      const dailyFolder = this.app.vault.getAbstractFileByPath(dailyDir);
+      if (dailyFolder) await this.app.vault.delete(dailyFolder, true);
+      results.push(`✓ Daily notes archived to _archive/daily-notes/`);
+    }
+
+    // Delete now-empty legacy folders
+    const foldersToDelete = [
+      `${userFolder}/State of Mind`,
+      `${userFolder}/Pending Tasks`,
+    ];
+    for (const folderPath of foldersToDelete) {
+      if (!(await this.app.vault.adapter.exists(folderPath))) continue;
+      const listing = await this.app.vault.adapter.list(folderPath);
+      if (listing.files.length === 0 && listing.folders.length === 0) {
+        const folder = this.app.vault.getAbstractFileByPath(folderPath);
+        if (folder) await this.app.vault.delete(folder, true);
+        results.push(`✓ Deleted empty folder: ${folderPath}`);
+      }
+    }
+
+    this.settings.migrationComplete = true;
+    await this.saveData(this.settings);
     this.refreshView();
-    new Notice(`Morning OS: migrated ${added} tasks ✓`);
+
+    if (results.length === 0) {
+      new Notice("Morning OS: All content already migrated — nothing new to move.");
+    } else {
+      new Notice(`Morning OS migration complete:\n${results.join("\n")}`, 8000);
+    }
+  }
+
+  // Legacy alias kept for any command palette registrations
+  async migrateExistingTasks(): Promise<void> {
+    await this.migrateVault();
   }
 
   onunload() { /* intentional — no teardown needed beyond Obsidian's built-in deregister */ }
