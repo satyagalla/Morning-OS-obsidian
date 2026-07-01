@@ -1,7 +1,7 @@
 import { App, Notice } from "obsidian";
 import type { MorningOSSettings } from "../settings";
 import type { DailyBrief, Task, TaskRegistry } from "../types";
-import { parseYesterdayWins, parseBulletFile, parseGoals } from "./vault-reader";
+import { parseAllPillarSections, parseWinsFromLog } from "./vault-reader";
 import { loadRegistry, clearNextDayTasks } from "../task-registry";
 import { detectCarries } from "./carry-detector";
 import { computeFeedback } from "./feedback";
@@ -52,15 +52,29 @@ export async function runAgent(app: App, settings: MorningOSSettings): Promise<A
     .filter(t => t.status_completion === "done" && t.date_completed === yesterdayStr)
     .map(t => t.text);
 
-  const [tacticalRules, emotionalRules, technicalTasks, hobbyTasksRaw, goals, yesterdayWins] =
-    await Promise.all([
-      parseBulletFile(settings.sourceTacticalRules, app),
-      parseBulletFile(settings.sourceEmotionalRules, app),
-      parseBulletFile(settings.sourceTechnicalTasks, app),
-      parseBulletFile(settings.sourceHobbyTasks, app),
-      parseGoals(app, settings),
-      parseYesterdayWins(dateStr, app, settings),
-    ]);
+  // Gather context from pillar markdowns + registry + wins log
+  const mappings = settings.llmSectionMappings ?? [];
+  const getMappingHeading = (target: string) => mappings.find(m => m.target === target && m.enabled)?.heading;
+
+  const [tacticalRules, emotionalRules, goalsShort, goalsLong, yesterdayWins] = await Promise.all([
+    getMappingHeading("tactical_rules")  ? parseAllPillarSections(app, settings, getMappingHeading("tactical_rules")!)  : Promise.resolve([] as string[]),
+    getMappingHeading("emotional_rules") ? parseAllPillarSections(app, settings, getMappingHeading("emotional_rules")!) : Promise.resolve([] as string[]),
+    getMappingHeading("goals_short")     ? parseAllPillarSections(app, settings, getMappingHeading("goals_short")!)     : Promise.resolve([] as string[]),
+    getMappingHeading("goals_long")      ? parseAllPillarSections(app, settings, getMappingHeading("goals_long")!)      : Promise.resolve([] as string[]),
+    parseWinsFromLog(dateStr, app, settings),
+  ]);
+
+  const goals = { short_term: goalsShort, long_term: goalsLong };
+
+  const technicalTasks = registry
+    .filter(t => !t.is_deleted && !t.is_today && t.pillars.includes("career") && t.status_completion === "open")
+    .slice(0, settings.technicalTasksCount * 3)
+    .map(t => t.text);
+
+  const hobbyTasksRaw = registry
+    .filter(t => !t.is_deleted && !t.is_today && t.pillars.includes("interests") && t.status_completion === "open")
+    .slice(0, settings.hobbyTasksCount * 3)
+    .map(t => t.text);
 
   const todayForCarry = getTodayTasksForPrompt(registry);
   const carriedTasks = await detectCarries(todayForCarry, dateStr, app, settings);
@@ -159,15 +173,29 @@ export async function refreshBrief(app: App, settings: MorningOSSettings): Promi
   if (settings.modeTechnicalTasks) cachedLLM.technical_tasks  = existingBrief.technical_tasks;
   if (settings.modeWins)           cachedLLM.wins             = existingBrief.wins;
 
-  const [tacticalRules, emotionalRules, technicalTasks, hobbyTasksRaw, goals, yesterdayWins] =
-    await Promise.all([
-      parseBulletFile(settings.sourceTacticalRules, app),
-      parseBulletFile(settings.sourceEmotionalRules, app),
-      parseBulletFile(settings.sourceTechnicalTasks, app),
-      parseBulletFile(settings.sourceHobbyTasks, app),
-      parseGoals(app, settings),
-      parseYesterdayWins(dateStr, app, settings),
-    ]);
+  const registry = await loadRegistry(app);
+  const mappings = settings.llmSectionMappings ?? [];
+  const getMappingHeading = (target: string) => mappings.find(m => m.target === target && m.enabled)?.heading;
+
+  const [tacticalRules, emotionalRules, goalsShort, goalsLong, yesterdayWins] = await Promise.all([
+    getMappingHeading("tactical_rules")  ? parseAllPillarSections(app, settings, getMappingHeading("tactical_rules")!)  : Promise.resolve([] as string[]),
+    getMappingHeading("emotional_rules") ? parseAllPillarSections(app, settings, getMappingHeading("emotional_rules")!) : Promise.resolve([] as string[]),
+    getMappingHeading("goals_short")     ? parseAllPillarSections(app, settings, getMappingHeading("goals_short")!)     : Promise.resolve([] as string[]),
+    getMappingHeading("goals_long")      ? parseAllPillarSections(app, settings, getMappingHeading("goals_long")!)      : Promise.resolve([] as string[]),
+    parseWinsFromLog(dateStr, app, settings),
+  ]);
+
+  const goals = { short_term: goalsShort, long_term: goalsLong };
+
+  const technicalTasks = registry
+    .filter(t => !t.is_deleted && !t.is_today && t.pillars.includes("career") && t.status_completion === "open")
+    .slice(0, settings.technicalTasksCount * 3)
+    .map(t => t.text);
+
+  const hobbyTasksRaw = registry
+    .filter(t => !t.is_deleted && !t.is_today && t.pillars.includes("interests") && t.status_completion === "open")
+    .slice(0, settings.hobbyTasksCount * 3)
+    .map(t => t.text);
 
   const brief = assembleBrief(
     dateStr, goals, tacticalRules, emotionalRules,

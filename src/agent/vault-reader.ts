@@ -181,3 +181,93 @@ export async function parseIdentityAnchor(app: App, settings: MorningOSSettings)
     .map(l => l.trim().replace(/^-+\s*/, ""))
     .filter(l => l && !l.startsWith("#"));
 }
+
+// Parse a named section from a single markdown file — returns bullet texts
+export async function parseSectionFromFile(path: string, sectionHeading: string, app: App): Promise<string[]> {
+  const content = await readVaultFile(path, app);
+  if (content === null) return [];
+  return extractSection(content, sectionHeading).map(item => item.text);
+}
+
+// Gather a named section from ALL enabled pillar markdowns
+export async function parseAllPillarSections(
+  app: App,
+  settings: MorningOSSettings,
+  sectionHeading: string
+): Promise<string[]> {
+  const userFolder = settings.dailyNoteDir.split("/")[0] || "Essential";
+  const results: string[] = [];
+  for (const pillar of settings.pillars) {
+    if (!pillar.feedToLLM) continue;
+    const path = `${userFolder}/Pillars/${pillar.label}.md`;
+    const bullets = await parseSectionFromFile(path, sectionHeading, app);
+    results.push(...bullets);
+  }
+  return results;
+}
+
+// Parse yesterday's wins from Essential/Wins.md by date heading
+export async function parseWinsFromLog(
+  todayDateStr: string,
+  app: App,
+  settings: MorningOSSettings
+): Promise<string[]> {
+  const d = new Date(todayDateStr + "T12:00:00");
+  d.setDate(d.getDate() - 1);
+  const yesterdayStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const content = await readVaultFile(settings.sourceWins, app);
+  if (content === null) return [];
+  return extractSection(content, yesterdayStr).map(item => item.text);
+}
+
+// Append a win to Essential/Wins.md under today's date heading (idempotent per bullet)
+export async function appendWinToLog(
+  winText: string,
+  todayDateStr: string,
+  app: App,
+  settings: MorningOSSettings
+): Promise<void> {
+  const path = settings.sourceWins;
+  let content = "";
+  const exists = await app.vault.adapter.exists(path);
+  if (exists) {
+    content = await app.vault.adapter.read(path);
+  }
+
+  // Check for duplicate
+  const todaySection = extractSection(content, todayDateStr).map(i => i.text.toLowerCase());
+  if (todaySection.includes(winText.toLowerCase().trim())) return;
+
+  const headingLine = `## ${todayDateStr}`;
+  if (content.includes(headingLine)) {
+    // Insert after the heading, before the next heading
+    const lines = content.split("\n");
+    const headingIdx = lines.findIndex(l => l.trim() === headingLine);
+    let insertIdx = headingIdx + 1;
+    while (insertIdx < lines.length && !lines[insertIdx].startsWith("## ")) {
+      insertIdx++;
+    }
+    lines.splice(insertIdx, 0, `- ${winText}`);
+    content = lines.join("\n");
+  } else {
+    // Prepend new date heading at top
+    content = `${headingLine}\n- ${winText}\n\n${content}`.trim() + "\n";
+  }
+
+  const dir = path.split("/").slice(0, -1).join("/");
+  if (dir && !(await app.vault.adapter.exists(dir))) {
+    await app.vault.adapter.mkdir(dir);
+  }
+  await app.vault.adapter.write(path, content);
+}
+
+// Read today's wins from the log
+export async function readTodayWinsFromLog(
+  todayDateStr: string,
+  app: App,
+  settings: MorningOSSettings
+): Promise<string[]> {
+  const content = await readVaultFile(settings.sourceWins, app);
+  if (content === null) return [];
+  return extractSection(content, todayDateStr).map(item => item.text);
+}

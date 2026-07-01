@@ -3,7 +3,7 @@ export type CompletionStatus = "open" | "done" | "dismissed";
 export interface FieldDef {
   key: string;
   label: string;
-  type: "text" | "url" | "dropdown";
+  type: "text" | "url" | "dropdown" | "date";
   options?: string[];
 }
 
@@ -19,6 +19,13 @@ export interface PillarConfig {
   label: string;
   icon: string;
   tabs: TabConfig[];
+  feedToLLM: boolean;  // whether pillar markdown sections feed into LLM context
+}
+
+export interface LLMSectionMapping {
+  heading: string;    // e.g. "Tactical Rules", "Short Term"
+  target: "tactical_rules" | "emotional_rules" | "goals_short" | "goals_long";
+  enabled: boolean;
 }
 
 export interface Task {
