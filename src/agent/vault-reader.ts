@@ -238,20 +238,31 @@ export async function appendWinToLog(
   const todaySection = extractSection(content, todayDateStr).map(i => i.text.toLowerCase());
   if (todaySection.includes(winText.toLowerCase().trim())) return;
 
+  // Normalize line endings to LF
+  content = content.replace(/\r\n/g, "\n");
+
   const headingLine = `## ${todayDateStr}`;
   if (content.includes(headingLine)) {
-    // Insert after the heading, before the next heading
+    // Insert bullet directly after the last existing bullet under this heading
     const lines = content.split("\n");
     const headingIdx = lines.findIndex(l => l.trim() === headingLine);
     let insertIdx = headingIdx + 1;
+    // Skip past existing bullets, stop at next heading or end
     while (insertIdx < lines.length && !lines[insertIdx].startsWith("## ")) {
       insertIdx++;
+    }
+    // Insert before any trailing blank lines before the next section
+    while (insertIdx > headingIdx + 1 && lines[insertIdx - 1].trim() === "") {
+      insertIdx--;
     }
     lines.splice(insertIdx, 0, `- ${winText}`);
     content = lines.join("\n");
   } else {
-    // Prepend new date heading at top
-    content = `${headingLine}\n- ${winText}\n\n${content}`.trim() + "\n";
+    // Prepend new date heading at top, ensure single blank line between sections
+    const rest = content.trim();
+    content = rest
+      ? `${headingLine}\n- ${winText}\n\n${rest}\n`
+      : `${headingLine}\n- ${winText}\n`;
   }
 
   const dir = path.split("/").slice(0, -1).join("/");
