@@ -2,52 +2,30 @@ import { AbstractInputSuggest, TFolder, sanitizeHTMLToDom } from "obsidian";
 import type MorningOSPlugin from "./main";
 import { runAgent } from "./agent/run";
 
-const SAMPLE_TACTICAL_RULES = `- Start the hardest task within 15 minutes of sitting down
+const SAMPLE_HEALTH_CONTENT = `## Tactical Rules
+- Start the hardest task within 15 minutes of sitting down
 - One tab, one task. Close everything else
 - If stuck for 10 minutes, change the approach — don't stare harder
-- No meetings before noon
-- End the day by writing tomorrow's top 3`;
+- End the day by writing tomorrow's top 3
 
-const SAMPLE_EMOTIONAL_RULES = `- Builds things that matter, even if no one's watching yet
+## Emotional Rules
+- Builds things that matter, even if no one's watching yet
 - Protects mornings like they're sacred — low dopamine, high clarity
-- Trusts the process over the mood`;
+- Trusts the process over the mood
+`;
 
-const SAMPLE_GOALS = `## Short Term
+const SAMPLE_CAREER_CONTENT = `## Short Term
 - Reply to every message within 24 hours this week
 - Wake up before 8am for 5 days straight
 
 ## Long Term
 - Design a life where Mondays feel the same as Fridays
-- Become the person who finishes what they start`;
-
-const SAMPLE_TECHNICAL_TASKS = `## Top 3 pending
-- Set up CI/CD pipeline for the main project
-- Refactor the authentication module
-- Write integration tests for the API layer`;
-
-const SAMPLE_HOBBY_TASKS = `- Practice guitar for 20 minutes
-- Sketch one thing from observation
-- Try a new recipe this week`;
+- Become the person who finishes what they start
+`;
 
 function todayStr(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
-function dailyNoteTemplate(): string {
-  return `## Red alert
-- [ ] Reply to the email I've been avoiding since Monday
-
-## Regular
-- [ ] 90 minutes deep work — phone in another room
-- [ ] Clear 3 tabs I've had open all week
-- [ ] Write down what to do first thing tomorrow
-
-## Wins
-
-## Thoughts
-- First day using Morning OS
-`;
 }
 
 
@@ -88,30 +66,44 @@ async function scaffoldVault(plugin: MorningOSPlugin, rootPath: string): Promise
   const dateStr = todayStr();
   const log: string[] = [];
 
+  // Create required directories
   const dirs = [
-    `${rootPath}/Daily`,
-    `${rootPath}/State of Mind`,
-    `${rootPath}/Pending Tasks`,
-    `${rootPath}/_generated/briefs`,
-    `${rootPath}/_generated/feedback`,
-    `${rootPath}/_generated/feedback/reactions`,
+    `${rootPath}/Pillars`,
+    `_generated/briefs`,
+    `_generated/feedback`,
+    `_generated/feedback/reactions`,
   ];
-
   for (const dir of dirs) {
     await app.vault.adapter.mkdir(dir);
     log.push(`Creating ${dir}/ ✓`);
   }
 
-  const files: ScaffoldFile[] = [
-    { path: `${rootPath}/State of Mind/Tactical Rules.md`, content: SAMPLE_TACTICAL_RULES },
-    { path: `${rootPath}/State of Mind/Emotional Rules.md`, content: SAMPLE_EMOTIONAL_RULES },
-    { path: `${rootPath}/State of Mind/Long-term and Short-term.md`, content: SAMPLE_GOALS },
-    { path: `${rootPath}/Pending Tasks/Technical Tasks.md`, content: SAMPLE_TECHNICAL_TASKS },
-    { path: `${rootPath}/Pending Tasks/Hobby Tasks.md`, content: SAMPLE_HOBBY_TASKS },
-    { path: `${rootPath}/Daily/${dateStr}.md`, content: dailyNoteTemplate() },
+  // Create pillar markdown files (empty body, just the title heading)
+  const pillarFiles: ScaffoldFile[] = plugin.settings.pillars.map(p => ({
+    path: `${rootPath}/Pillars/${p.label}.md`,
+    content: "",
+  }));
+
+  // Pre-populate Health and Career with sample content
+  const healthFile = pillarFiles.find(f => f.path.includes("Health"));
+  const careerFile = pillarFiles.find(f => f.path.includes("Career"));
+  if (healthFile) healthFile.content = SAMPLE_HEALTH_CONTENT;
+  if (careerFile) careerFile.content = SAMPLE_CAREER_CONTENT;
+
+  // Create identity anchor
+  const allFiles: ScaffoldFile[] = [
+    ...pillarFiles,
+    {
+      path: `${rootPath}/Identity-Anchor.md`,
+      content: `- I build things that matter\n- I protect my mornings\n- I trust the process\n- I am more than my to-do list\n- I am figuring it out, and that is enough\n`,
+    },
+    {
+      path: `${rootPath}/Wins.md`,
+      content: "",
+    },
   ];
 
-  for (const file of files) {
+  for (const file of allFiles) {
     const exists = await app.vault.adapter.exists(file.path);
     if (exists) {
       log.push(`${file.path} exists, kept`);
@@ -121,14 +113,18 @@ async function scaffoldVault(plugin: MorningOSPlugin, rootPath: string): Promise
     }
   }
 
-  plugin.settings.dailyNoteDir = `${rootPath}/Daily`;
-  plugin.settings.briefsDir = `${rootPath}/_generated/briefs`;
-  plugin.settings.feedbackDir = `${rootPath}/_generated/feedback`;
-  plugin.settings.sourceTacticalRules = `${rootPath}/State of Mind/Tactical Rules.md`;
-  plugin.settings.sourceEmotionalRules = `${rootPath}/State of Mind/Emotional Rules.md`;
-  plugin.settings.sourceGoals = `${rootPath}/State of Mind/Long-term and Short-term.md`;
-  plugin.settings.sourceTechnicalTasks = `${rootPath}/Pending Tasks/Technical Tasks.md`;
-  plugin.settings.sourceHobbyTasks = `${rootPath}/Pending Tasks/Hobby Tasks.md`;
+  // Update settings paths
+  plugin.settings.dailyNoteDir    = `${rootPath}/Daily`;
+  plugin.settings.briefsDir       = `_generated/briefs`;
+  plugin.settings.feedbackDir     = `_generated/feedback`;
+  plugin.settings.sourceIdentity  = `${rootPath}/Identity-Anchor.md`;
+  plugin.settings.sourceWins      = `${rootPath}/Wins.md`;
+  // Legacy paths kept for migration fallback
+  plugin.settings.sourceTacticalRules  = `${rootPath}/Pillars/Health.md`;
+  plugin.settings.sourceEmotionalRules = `${rootPath}/Pillars/Health.md`;
+  plugin.settings.sourceGoals          = `${rootPath}/Pillars/Career.md`;
+  plugin.settings.sourceTechnicalTasks = `${rootPath}/Pillars/Career.md`;
+  plugin.settings.sourceHobbyTasks     = `${rootPath}/Pillars/Interests.md`;
   plugin.settings.onboarded = true;
   await plugin.saveData(plugin.settings);
 
@@ -138,8 +134,8 @@ async function scaffoldVault(plugin: MorningOSPlugin, rootPath: string): Promise
   const briefPath = `${plugin.settings.briefsDir}/${dateStr}.json`;
   const briefJson = JSON.parse(await app.vault.adapter.read(briefPath)) as import("./types").DailyBrief;
   briefJson.suggestions = [
-    { text: "Your rule says 'no meetings before noon' but you have a regular task every morning. Consider batching small tasks after lunch instead.", source: "tasks" },
-    { text: "You've been carrying 'reply to email' as a red alert — most dreaded replies take under 5 minutes once you start typing. Send it before deep work so it's not in the back of your mind.", source: "carried_tasks" },
+    { text: "Welcome to Morning OS. Add your rules and goals to your Health and Career pillars — the briefing agent will use them to personalise your daily brief.", source: "tasks" },
+    { text: "Start with your top 3 tasks for today: open the Inbox, add them, and move them to Today.", source: "tasks" },
   ];
   await app.vault.adapter.write(briefPath, JSON.stringify(briefJson, null, 2));
 
