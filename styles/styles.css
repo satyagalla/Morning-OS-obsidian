@@ -711,6 +711,12 @@
   background: color-mix(in srgb, var(--mos-system) 80%, #fff);
   color: #fff;
 }
+.mos-btn-success {
+  background: color-mix(in srgb, #3fb950 20%, transparent) !important;
+  color: #3fb950 !important;
+  border-color: #3fb950 !important;
+  cursor: default !important;
+}
 
 /* Full-width — FAB panel buttons, ctx menu items */
 .mos-btn.mos-btn-full {
@@ -1425,55 +1431,47 @@ h3[data-dirty]::after {
   padding: 4px 22px 4px 8px !important;
 }
 
-/* ── Inline today buttons ── */
-.mos-today-btn {
-  all: unset;
+/* ── Task action bar — visible on hover ── */
+.mos-task-action-bar {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
   flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.morning-os-task-row:hover .mos-task-action-bar,
+.mos-table-row:hover .mos-task-action-bar {
+  opacity: 1;
+}
+.mos-action-btn {
+  all: unset;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   border-radius: var(--mos-radius-sm);
-  color: var(--mos-text-faint);
+  font-size: 14px;
+  color: var(--text-muted);
   cursor: pointer;
-  opacity: 0;
-  transition: opacity 120ms ease, background 120ms ease, color 120ms ease;
+  transition: background 120ms ease, color 120ms ease;
 }
-.morning-os-task-row:hover .mos-today-btn {
-  opacity: 1;
-}
-.mos-today-btn:hover {
+.mos-action-btn:hover {
   background: color-mix(in srgb, var(--mos-system) 20%, transparent);
   color: var(--mos-system);
 }
-.mos-today-btn-red:hover {
+.mos-action-btn-red:hover {
   background: color-mix(in srgb, var(--mos-red) 20%, transparent);
   color: var(--mos-red);
 }
+.mos-action-btn-danger:hover {
+  background: color-mix(in srgb, var(--mos-red) 15%, transparent);
+  color: var(--mos-red);
+}
 
-/* ── ⋯ more button ── */
-.mos-more-btn {
-  flex-shrink: 0;
-  margin-left: auto;
-  background: none;
-  border: none;
-  color: var(--mos-text-faint);
-  cursor: pointer;
-  padding: 2px 6px;
-  border-radius: var(--mos-radius-sm);
-  font-size: 16px;
-  line-height: 1;
-  opacity: 0;
-  transition: opacity 120ms ease, color 120ms ease;
-}
-.morning-os-task-row:hover .mos-more-btn {
-  opacity: 1;
-}
-.mos-more-btn:hover {
-  color: var(--text-normal);
-  background: color-mix(in srgb, var(--text-normal) 8%, transparent);
-}
+/* ── (removed: mos-more-btn replaced by mos-task-action-bar) ── */
 
 /* ── Context menu ── */
 .mos-ctx-menu {
@@ -1592,5 +1590,148 @@ h3[data-dirty]::after {
   margin-top: 20px;
   padding-top: 12px;
   border-top: 1px solid var(--background-modifier-border);
+}
+
+/* ── Table View ── */
+.mos-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+  margin-top: 12px;
+}
+.mos-table-th {
+  text-align: left;
+  padding: 8px 10px;
+  font-weight: 600;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.mos-table-td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--background-modifier-border-hover, rgba(255,255,255,0.04));
+  vertical-align: middle;
+}
+.mos-table-row:hover {
+  background: var(--background-modifier-hover);
+}
+.mos-table-row-done .mos-table-name span {
+  text-decoration: line-through;
+  opacity: 0.5;
+}
+.mos-table-check { width: 32px; text-align: center; }
+.mos-table-actions { width: 40px; text-align: center; }
+.mos-table-name { font-weight: 500; }
+.mos-table-empty { opacity: 0.35; }
+.mos-table-select {
+  background: transparent;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 0.82rem;
+  color: var(--text-normal);
+}
+.mos-table-date-input {
+  background: transparent;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 0.82rem;
+  color: var(--text-normal);
+}
+.mos-table-inline-edit {
+  background: var(--background-primary);
+  border: 1px solid var(--mos-system);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 0.88rem;
+  color: var(--text-normal);
+  width: 100%;
+}
+.mos-table-add-row {
+  margin-top: 8px;
+}
+
+/* ── Meta chips on task rows ── */
+.mos-task-meta-chips {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: 8px;
+  flex-wrap: wrap;
+}
+.mos-task-meta-chips .mos-meta-chip {
+  font-size: 0.72rem;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--mos-system-dim);
+  color: var(--text-muted);
+}
+
+/* ── Field options row in settings ── */
+.mos-field-options-row {
+  padding-left: 24px;
+  align-items: center;
+  gap: 8px;
+}
+.mos-field-options-row .mos-edit-label {
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+/* ── Edit modal field rows ── */
+.mos-edit-field-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+/* ── Pillar Notes Section ── */
+.mos-pillar-notes {
+  margin-bottom: 16px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  padding: 12px 16px;
+  background: var(--background-primary-alt);
+}
+.mos-pillar-notes-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.mos-pillar-notes-title {
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.mos-pillar-notes-body {
+  font-size: 0.9rem;
+  line-height: 1.6;
+}
+.mos-pillar-notes-body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0;
+}
+.mos-pillar-notes-body th,
+.mos-pillar-notes-body td {
+  padding: 4px 8px;
+  border: 1px solid var(--background-modifier-border);
+  text-align: left;
+}
+.mos-pillar-notes-body th {
+  font-weight: 600;
+  background: var(--background-modifier-hover);
+}
+
+/* ── Inline field options input in settings ── */
+.mos-field-options-inline {
+  flex: 1;
+  font-size: 0.8rem;
 }
 /* mos-edit-save/cancel-btn → now .mos-btn.mos-btn-primary / .mos-btn */

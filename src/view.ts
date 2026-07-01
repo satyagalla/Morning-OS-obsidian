@@ -1,17 +1,17 @@
-import { ItemView, WorkspaceLeaf, TFile, Modal, App, requestUrl, sanitizeHTMLToDom } from "obsidian";
+import { ItemView, WorkspaceLeaf, TFile, Modal, App, sanitizeHTMLToDom, MarkdownRenderer, Component, requestUrl } from "obsidian";
 import changelogText from "../CHANGELOG.md";
 import { parseChangelog } from "./agent/parse-changelog";
 
-const WEBHOOK_BUGS     = "https://discord.com/api/webhooks/1514853476990062683/hNbPlOaE13qKD33xxzDUMmUMhtyUZDqKIIr703U9ri8ug4_ujRqhcp2ohDR18DEU-0x6";
-const WEBHOOK_FEATURES = "https://discord.com/api/webhooks/1514853636856090737/zyUYjvGXZdBdrRkv7lBLe4Vaie0YLPENaZgy72xIYNiIWgLyb71ZT7qi7-axEz-Utd0d";
-import { DailyBrief, Task, TaskRegistry } from "./types";
+const FEEDBACK_PROXY_URL: string = process.env.FEEDBACK_PROXY_URL ?? "";
+const FEEDBACK_SECRET: string    = process.env.FEEDBACK_SECRET ?? "";
+import { DailyBrief, Task, TaskRegistry, FieldDef, TabConfig, PillarConfig } from "./types";
 import { MorningOSSettings } from "./settings";
 import type MorningOSPlugin from "./main";
 import { renderOnboarding } from "./onboarding";
 import { scaffoldDailyNote } from "./agent/scaffold-daily-note";
 import { todayStr } from "./utils";
 import { loadRegistry, saveRegistry, setTaskStatus, updateTask, createTask, moveTaskToToday, deleteTask, restoreTask, getActiveReminders, getChildren } from "./task-registry";
-import type { PillarConfig } from "./types";
+import { appendWinToLog, readTodayWinsFromLog } from "./agent/vault-reader";
 import { parseIdentityAnchor } from "./agent/vault-reader";
 
 export const VIEW_TYPE_PILLAR = "morning-os-pillar-view";
@@ -133,10 +133,9 @@ export class MorningView extends ItemView {
 
   private async loadWins() {
     const today = todayStr();
-    const notePath = `${this.settings.dailyNoteDir}/${today}.md`;
-    const file = this.app.vault.getAbstractFileByPath(notePath);
-    if (file instanceof TFile) {
-      this.wins = this.parseWinsFromNote(await this.app.vault.read(file));
+    const fromLog = await readTodayWinsFromLog(today, this.app, this.settings);
+    if (fromLog.length > 0) {
+      this.wins = fromLog;
     } else {
       this.wins = this.brief?.wins?.slice() ?? [];
     }
@@ -587,26 +586,7 @@ export class MorningView extends ItemView {
   }
 
   private async appendWinToNote(winText: string) {
-    const notePath = `${this.settings.dailyNoteDir}/${todayStr()}.md`;
-    const file = this.app.vault.getAbstractFileByPath(notePath);
-    if (!(file instanceof TFile)) return;
-    let content = await this.app.vault.read(file);
-    const winsHeaderRe = new RegExp(`^#{1,3} (?:${this.settings.sectionWins}|I feel good about these after today)\\s*$`, "im");
-    const winsMatch = content.match(winsHeaderRe);
-    if (!winsMatch) {
-      content = content.trimEnd() + `\n\n## ${this.settings.sectionWins}\n- ${winText}\n`;
-    } else {
-      const headerEnd = winsMatch.index! + winsMatch[0].length;
-      const afterHeader = content.slice(headerEnd);
-      const nextSection = afterHeader.search(/\n#{1,3} /);
-      if (nextSection === -1) {
-        content = content.trimEnd() + `\n- ${winText}`;
-      } else {
-        const insertPos = headerEnd + nextSection;
-        content = content.slice(0, insertPos).trimEnd() + `\n- ${winText}` + content.slice(insertPos);
-      }
-    }
-    await this.app.vault.modify(file, content);
+    await appendWinToLog(winText, todayStr(), this.app, this.settings);
   }
 
   private renderWhatsNew(parent: HTMLElement) {
@@ -713,6 +693,7 @@ type FilterState = {
   urgency?: "none" | "low" | "med" | "high";
   remind?: "has" | "due";
   status?: "open" | "done" | "dismissed";
+  custom?: Record<string, string>;
 };
 
 function applyFilters(tasks: Task[], filters: FilterState): Task[] {
@@ -723,6 +704,11 @@ function applyFilters(tasks: Task[], filters: FilterState): Task[] {
     if (filters.remind === "has" && !t.date_remind) return false;
     if (filters.remind === "due" && !(t.date_remind && t.date_remind <= today)) return false;
     if (filters.status && t.status_completion !== filters.status) return false;
+    if (filters.custom) {
+      for (const [key, val] of Object.entries(filters.custom)) {
+        if (val && t.tags[key] !== val) return false;
+      }
+    }
     return true;
   });
 }
@@ -731,7 +717,8 @@ function renderFilterSelects(
   parent: HTMLElement,
   filters: FilterState,
   onChange: (f: FilterState) => void,
-  showUrgency = false
+  showUrgency = false,
+  tabFields?: FieldDef[]
 ) {
   const mkSelect = (
     opts: { value: string; label: string }[],
@@ -771,6 +758,22 @@ function renderFilterSelects(
     filters.remind,
     v => onChange({ ...filters, remind: v as FilterState["remind"] || undefined })
   );
+
+  // Custom field filters (dropdown fields only)
+  if (tabFields?.length) {
+    for (const field of tabFields) {
+      if (field.type === "dropdown" && field.options?.length) {
+        const opts = [{ value: "", label: `${field.label}: All` }, ...field.options.map(o => ({ value: o, label: o }))];
+        const currentCustom = filters.custom?.[field.key];
+        mkSelect(opts, currentCustom, v => {
+          const custom = { ...(filters.custom ?? {}) };
+          if (v) custom[field.key] = v;
+          else delete custom[field.key];
+          onChange({ ...filters, custom: Object.keys(custom).length > 0 ? custom : undefined });
+        });
+      }
+    }
+  }
 }
 
 
@@ -821,7 +824,8 @@ function renderTaskRowShared(
   app: App,
   onRefresh: () => void,
   plugin?: MorningOSPlugin,
-  showUrgency = false
+  showUrgency = false,
+  tabFields?: FieldDef[]
 ) {
   const isDone = task.status_completion === "done";
   const row = parent.createEl("div", { cls: "morning-os-task-row" + (isDone ? " morning-os-task-done" : "") });
@@ -868,55 +872,61 @@ function renderTaskRowShared(
     row.createEl("span", { cls: "morning-os-reminder-badge", text: `⏰ ${task.date_remind}` });
   }
 
-  // Inline today buttons (all views) — icon only, shown on hover
-  const regBtn = row.createEl("button", { cls: "mos-today-btn", attr: { title: "Move to Today (Regular)" } });
-  regBtn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>`;
-  regBtn.addEventListener("click", () => {
-    void moveTaskToToday(app, task._id, "regular").then(async () => {
-      if (plugin) { await plugin.autoRefreshBrief(); plugin.refreshView(); }
-      onRefresh();
-    });
-  });
+  // Meta field chips (pillar tab context only)
+  if (tabFields?.length) {
+    const chipRow = row.createEl("span", { cls: "mos-task-meta-chips" });
+    for (const field of tabFields) {
+      const val = task.tags[field.key];
+      if (val) chipRow.createEl("span", { cls: "mos-meta-chip", text: `${field.label}: ${val}` });
+    }
+  }
 
-  const redBtn2 = row.createEl("button", { cls: "mos-today-btn mos-today-btn-red", attr: { title: "Move to Today (Red alert)" } });
-  redBtn2.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/><polyline points="15 18 21 12 15 6"/></svg>`;
-  redBtn2.addEventListener("click", () => {
-    void moveTaskToToday(app, task._id, "red").then(async () => {
-      if (plugin) { await plugin.autoRefreshBrief(); plugin.refreshView(); }
-      onRefresh();
-    });
-  });
+  // Action buttons — today regular, today red alert, ⋯ menu
+  const actions = row.createEl("div", { cls: "mos-task-action-bar" });
 
-  // ⋯ context menu
-  const moreBtn = row.createEl("button", { cls: "mos-more-btn", text: "⋯" });
+  actions.createEl("button", { cls: "mos-action-btn", attr: { title: "→ Today (Regular)" }, text: "›" })
+    .addEventListener("click", () => {
+      void moveTaskToToday(app, task._id, "regular").then(async () => {
+        if (plugin) { await plugin.autoRefreshBrief(); plugin.refreshView(); }
+        onRefresh();
+      });
+    });
+
+  actions.createEl("button", { cls: "mos-action-btn mos-action-btn-red", attr: { title: "→ Today (Red alert)" }, text: "»" })
+    .addEventListener("click", () => {
+      void moveTaskToToday(app, task._id, "red").then(async () => {
+        if (plugin) { await plugin.autoRefreshBrief(); plugin.refreshView(); }
+        onRefresh();
+      });
+    });
+
+  const moreBtn = actions.createEl("button", { cls: "mos-action-btn", attr: { title: "More actions" }, text: "⋯" });
   moreBtn.addEventListener("click", () => {
-    const menuItems: MenuAction[] = [];
-
-    menuItems.push({
-      label: "✎ Edit metadata",
-      action: () => {
-        new TaskEditModal(app, task, async (updated) => {
-          const reg = await loadRegistry(app);
-          const idx = reg.findIndex(t => t._id === updated._id);
-          if (idx !== -1) reg[idx] = updated;
-          await saveRegistry(app, reg);
-          if (plugin) plugin.refreshView();
-          onRefresh();
-        }, showUrgency, plugin?.settings.pillars ?? []).open();
+    const menuItems: MenuAction[] = [
+      {
+        label: "✎ Edit metadata",
+        action: () => {
+          new TaskEditModal(app, task, async (updated) => {
+            const reg = await loadRegistry(app);
+            const idx = reg.findIndex(t => t._id === updated._id);
+            if (idx !== -1) reg[idx] = updated;
+            await saveRegistry(app, reg);
+            if (plugin) plugin.refreshView();
+            onRefresh();
+          }, showUrgency, plugin?.settings.pillars ?? []).open();
+        },
       },
-    });
-
-    menuItems.push({
-      label: "🗑 Delete",
-      danger: true,
-      action: () => {
-        void deleteTask(app, task._id).then(() => {
-          if (plugin) plugin.refreshView();
-          onRefresh();
-        });
+      {
+        label: "🗑 Delete",
+        danger: true,
+        action: () => {
+          void deleteTask(app, task._id).then(() => {
+            if (plugin) plugin.refreshView();
+            onRefresh();
+          });
+        },
       },
-    });
-
+    ];
     openContextMenu(moreBtn, menuItems);
   });
 
@@ -987,6 +997,9 @@ export class PillarView extends ItemView {
     titleRow.createEl("h1", { cls: "morning-os-section-heading", text: `${pillar.icon} ${pillar.label}` });
     this.renderSortControls(titleRow);
 
+    // Pillar markdown notes section
+    void this.renderPillarNotes(inner, pillar);
+
     if (pillar.tabs.length > 0) {
       const tabBar = inner.createEl("div", { cls: "mos-pillar-tabs" });
       const allTab = tabBar.createEl("button", { cls: "mos-btn mos-btn-tab" + (!this.activeTab ? " is-active" : ""), text: "All" });
@@ -997,56 +1010,226 @@ export class PillarView extends ItemView {
       }
     }
 
-    renderFilterSelects(titleRow, this.filters, (f) => { this.filters = f; this.render(); });
-
     // Active tab config (for field rendering)
     const activeTabConfig = pillar.tabs.find(t => t.key === this.activeTab) ?? null;
 
-    // Records section
-    const records = this.registry.filter(t =>
-      t.is_entity && !t.is_deleted && t.pillars.includes(this.pillarKey) &&
-      (this.activeTab === null || t.tags[this.pillarKey] === this.activeTab)
-    );
-    if (records.length > 0) {
-      inner.createEl("h2", { cls: "morning-os-section-heading", text: "Records" });
-      const recordsCard = inner.createEl("div", { cls: "morning-os-card" });
-      for (const record of records) {
-        this.renderRecordCard(recordsCard, record, activeTabConfig);
+    renderFilterSelects(titleRow, this.filters, (f) => { this.filters = f; this.render(); }, false, activeTabConfig?.fields);
+
+    // View mode: table vs cards
+    if (activeTabConfig?.view_mode === "table") {
+      this.renderTableView(inner, activeTabConfig, pillar);
+    } else {
+      // Records section (card view)
+      const records = this.registry.filter(t =>
+        t.is_entity && !t.is_deleted && t.pillars.includes(this.pillarKey) &&
+        (this.activeTab === null || t.tags[this.pillarKey] === this.activeTab)
+      );
+      if (records.length > 0) {
+        inner.createEl("h2", { cls: "morning-os-section-heading", text: "Records" });
+        const recordsCard = inner.createEl("div", { cls: "morning-os-card" });
+        for (const record of records) {
+          this.renderRecordCard(recordsCard, record, activeTabConfig);
+        }
       }
+
+      // "Add record" button
+      const addRecordBtn = inner.createEl("button", { cls: "mos-btn mos-btn-inline", text: "+ Add record" });
+      addRecordBtn.addEventListener("click", async () => {
+        const name = prompt("Record name:");
+        if (!name?.trim()) return;
+        const tag = this.activeTab ? { [pillar.key]: this.activeTab } : {};
+        const task = createTask(name.trim(), { is_entity: true, pillars: [pillar.key], tags: tag });
+        const reg = await loadRegistry(this.app);
+        reg.push(task);
+        await saveRegistry(this.app, reg);
+        await this.refresh();
+      });
+
+      // Flat tasks section
+      let tasks = this.registry.filter(t =>
+        !t.is_deleted && !t.is_entity && t.parent_id === null &&
+        t.pillars.includes(this.pillarKey) &&
+        (this.activeTab === null || t.tags[this.pillarKey] === this.activeTab)
+      );
+      tasks = applyFilters(tasks, this.filters);
+      tasks = sortTasks(tasks, this.sortField, this.sortDir);
+
+      if (tasks.length === 0 && records.length === 0) {
+        inner.createEl("p", { cls: "morning-os-empty-state", text: "No tasks here yet." });
+      } else if (tasks.length > 0) {
+        const card = inner.createEl("div", { cls: "morning-os-card" });
+        const fields = activeTabConfig?.fields ?? [];
+        for (const t of tasks) renderTaskRowShared(card, t, this.app, () => void this.refresh(), this.plugin, false, fields);
+      }
+
+      renderAddTaskInput(inner, "Add task… (#p/pillar, #t/tab, @remind(YYYY-MM-DD))", async (text) => {
+        const activeTab = this.activeTab;
+        const tag = activeTab ? { [pillar.key]: activeTab } : {};
+        const task = createTask(text, { pillars: [pillar.key], tags: tag });
+        const reg = await loadRegistry(this.app);
+        reg.push(task);
+        await saveRegistry(this.app, reg);
+        await this.refresh();
+      });
     }
+  }
 
-    // "Add record" button
-    const addRecordBtn = inner.createEl("button", { cls: "mos-btn mos-btn-inline", text: "+ Add record" });
-    addRecordBtn.addEventListener("click", async () => {
-      const name = prompt("Record name:");
-      if (!name?.trim()) return;
-      const tag = this.activeTab ? { [pillar.key]: this.activeTab } : {};
-      const task = createTask(name.trim(), { is_entity: true, pillars: [pillar.key], tags: tag });
-      const reg = await loadRegistry(this.app);
-      reg.push(task);
-      await saveRegistry(this.app, reg);
-      await this.refresh();
-    });
-
-    // Flat tasks section
-    let tasks = this.registry.filter(t =>
-      !t.is_deleted && !t.is_entity && t.parent_id === null &&
-      t.pillars.includes(this.pillarKey) &&
-      (this.activeTab === null || t.tags[this.pillarKey] === this.activeTab)
+  private renderTableView(parent: HTMLElement, tabConfig: TabConfig, pillar: PillarConfig) {
+    const fields = tabConfig.fields;
+    const allItems = this.registry.filter(t =>
+      !t.is_deleted && t.pillars.includes(this.pillarKey) &&
+      t.tags[this.pillarKey] === tabConfig.key
     );
-    tasks = applyFilters(tasks, this.filters);
-    tasks = sortTasks(tasks, this.sortField, this.sortDir);
+    const items = sortTasks(applyFilters(allItems, this.filters), this.sortField, this.sortDir);
 
-    if (tasks.length === 0 && records.length === 0) {
-      inner.createEl("p", { cls: "morning-os-empty-state", text: "No tasks here yet." });
-    } else if (tasks.length > 0) {
-      const card = inner.createEl("div", { cls: "morning-os-card" });
-      for (const t of tasks) renderTaskRowShared(card, t, this.app, () => void this.refresh(), this.plugin);
+    const table = parent.createEl("table", { cls: "mos-table" });
+    const thead = table.createEl("thead");
+    const headRow = thead.createEl("tr");
+    headRow.createEl("th", { cls: "mos-table-th mos-table-check", text: "✓" });
+    headRow.createEl("th", { cls: "mos-table-th", text: "Name" });
+    for (const f of fields) headRow.createEl("th", { cls: "mos-table-th", text: f.label });
+    headRow.createEl("th", { cls: "mos-table-th mos-table-actions", text: "" });
+
+    const tbody = table.createEl("tbody");
+    for (const task of items) {
+      const tr = tbody.createEl("tr", { cls: "mos-table-row" + (task.status_completion === "done" ? " mos-table-row-done" : "") });
+
+      // Checkbox cell
+      const checkTd = tr.createEl("td", { cls: "mos-table-td mos-table-check" });
+      const cb = checkTd.createEl("input", { type: "checkbox" });
+      cb.checked = task.status_completion === "done";
+      cb.addEventListener("change", () => {
+        const newStatus = cb.checked ? "done" : "open";
+        void setTaskStatus(this.app, task._id, newStatus).then(async () => {
+          if (this.plugin) { await this.plugin.autoRefreshBrief(); this.plugin.refreshView(); }
+          await this.refresh();
+        });
+      });
+
+      // Name cell (editable on click)
+      const nameTd = tr.createEl("td", { cls: "mos-table-td mos-table-name" });
+      const nameSpan = nameTd.createEl("span", { text: task.text });
+      nameSpan.addEventListener("dblclick", () => {
+        const input = document.createElement("input");
+        input.type = "text";
+        input.value = task.text;
+        input.className = "mos-table-inline-edit";
+        nameSpan.replaceWith(input);
+        input.focus();
+        const save = async () => {
+          const newText = input.value.trim();
+          if (newText && newText !== task.text) {
+            await updateTask(this.app, task._id, { text: newText });
+            await this.refresh();
+          } else {
+            input.replaceWith(nameSpan);
+          }
+        };
+        input.addEventListener("blur", () => { void save(); });
+        input.addEventListener("keydown", (e: KeyboardEvent) => {
+          if (e.key === "Enter") void save();
+          if (e.key === "Escape") input.replaceWith(nameSpan);
+        });
+      });
+
+      // Field cells
+      for (const f of fields) {
+        const td = tr.createEl("td", { cls: "mos-table-td" });
+        const val = task.tags[f.key] ?? "";
+        if (f.type === "dropdown" && f.options?.length) {
+          const sel = td.createEl("select", { cls: "mos-table-select" });
+          sel.createEl("option", { value: "", text: "—" });
+          for (const opt of f.options) {
+            const optEl = sel.createEl("option", { value: opt, text: opt });
+            if (val === opt) optEl.selected = true;
+          }
+          sel.addEventListener("change", () => {
+            const newTags = { ...task.tags };
+            if (sel.value) newTags[f.key] = sel.value;
+            else delete newTags[f.key];
+            void updateTask(this.app, task._id, { tags: newTags }).then(() => this.refresh());
+          });
+        } else if (f.type === "date") {
+          const dateIn = td.createEl("input", { type: "date", cls: "mos-table-date-input" });
+          dateIn.value = val;
+          dateIn.addEventListener("change", () => {
+            const newTags = { ...task.tags };
+            if (dateIn.value) newTags[f.key] = dateIn.value;
+            else delete newTags[f.key];
+            void updateTask(this.app, task._id, { tags: newTags }).then(() => this.refresh());
+          });
+        } else {
+          const cellSpan = td.createEl("span", { text: val || "—", cls: val ? "" : "mos-table-empty" });
+          cellSpan.addEventListener("dblclick", () => {
+            const input = document.createElement("input");
+            input.type = f.type === "url" ? "url" : "text";
+            input.value = val;
+            input.className = "mos-table-inline-edit";
+            cellSpan.replaceWith(input);
+            input.focus();
+            const save = async () => {
+              const newTags = { ...task.tags };
+              if (input.value.trim()) newTags[f.key] = input.value.trim();
+              else delete newTags[f.key];
+              await updateTask(this.app, task._id, { tags: newTags });
+              await this.refresh();
+            };
+            input.addEventListener("blur", () => { void save(); });
+            input.addEventListener("keydown", (e: KeyboardEvent) => {
+              if (e.key === "Enter") void save();
+              if (e.key === "Escape") input.replaceWith(cellSpan);
+            });
+          });
+        }
+      }
+
+      // Actions cell
+      const actTd = tr.createEl("td", { cls: "mos-table-td mos-table-actions" });
+      const actBar = actTd.createEl("div", { cls: "mos-task-action-bar" });
+
+      actBar.createEl("button", { cls: "mos-action-btn", attr: { title: "→ Today (Regular)" }, text: "›" })
+        .addEventListener("click", () => {
+          void moveTaskToToday(this.app, task._id, "regular").then(async () => {
+            if (this.plugin) { await this.plugin.autoRefreshBrief(); this.plugin.refreshView(); }
+          });
+        });
+
+      actBar.createEl("button", { cls: "mos-action-btn mos-action-btn-red", attr: { title: "→ Today (Red alert)" }, text: "»" })
+        .addEventListener("click", () => {
+          void moveTaskToToday(this.app, task._id, "red").then(async () => {
+            if (this.plugin) { await this.plugin.autoRefreshBrief(); this.plugin.refreshView(); }
+          });
+        });
+
+      const tableMoreBtn = actBar.createEl("button", { cls: "mos-action-btn", attr: { title: "More actions" }, text: "⋯" });
+      tableMoreBtn.addEventListener("click", () => {
+        openContextMenu(tableMoreBtn, [
+          {
+            label: "✎ Edit metadata",
+            action: () => {
+              new TaskEditModal(this.app, task, async (updated) => {
+                const reg = await loadRegistry(this.app);
+                const idx = reg.findIndex(t => t._id === updated._id);
+                if (idx !== -1) reg[idx] = updated;
+                await saveRegistry(this.app, reg);
+                if (this.plugin) this.plugin.refreshView();
+                void this.refresh();
+              }, false, this.plugin?.settings.pillars ?? []).open();
+            },
+          },
+          {
+            label: "🗑 Delete",
+            danger: true,
+            action: () => { void deleteTask(this.app, task._id).then(() => { if (this.plugin) this.plugin.refreshView(); }); },
+          },
+        ]);
+      });
     }
 
-    renderAddTaskInput(inner, "Add task… (#p/pillar, #t/tab, @remind(YYYY-MM-DD))", async (text) => {
-      const activeTab = this.activeTab;
-      const tag = activeTab ? { [pillar.key]: activeTab } : {};
+    // Add row
+    const addRow = parent.createEl("div", { cls: "mos-table-add-row" });
+    renderAddTaskInput(addRow, "+ Add row…", async (text) => {
+      const tag = { [pillar.key]: tabConfig.key };
       const task = createTask(text, { pillars: [pillar.key], tags: tag });
       const reg = await loadRegistry(this.app);
       reg.push(task);
@@ -1151,6 +1334,43 @@ export class PillarView extends ItemView {
       await saveRegistry(this.app, reg);
       await this.refresh();
     });
+  }
+
+  private async renderPillarNotes(parent: HTMLElement, pillar: PillarConfig) {
+    const userFolder = this.settings.dailyNoteDir.split("/")[0] || "Essential";
+    const notesPath = `${userFolder}/Pillars/${pillar.label}.md`;
+
+    const exists = await this.app.vault.adapter.exists(notesPath);
+    if (!exists) {
+      // Create parent dirs and empty file on first access
+      const dir = `${userFolder}/Pillars`;
+      if (!(await this.app.vault.adapter.exists(dir))) {
+        await this.app.vault.adapter.mkdir(dir);
+      }
+      await this.app.vault.adapter.write(notesPath, "");
+    }
+
+    const content = await this.app.vault.adapter.read(notesPath);
+
+    // Only render section if file has content
+    if (!content.trim()) return;
+
+    const section = parent.createEl("div", { cls: "mos-pillar-notes" });
+    const header = section.createEl("div", { cls: "mos-pillar-notes-header" });
+    header.createEl("span", { cls: "mos-pillar-notes-title", text: "Notes" });
+    const editBtn = header.createEl("button", { cls: "mos-btn mos-btn-icon", attr: { title: "Edit notes" }, text: "✎" });
+    editBtn.addEventListener("click", async () => {
+      const file = this.app.vault.getAbstractFileByPath(notesPath);
+      if (file instanceof TFile) {
+        const leaf = this.app.workspace.getLeaf("split");
+        await leaf.openFile(file);
+      }
+    });
+
+    const body = section.createEl("div", { cls: "mos-pillar-notes-body" });
+    const component = new Component();
+    component.load();
+    await MarkdownRenderer.render(this.app, content, body, notesPath, component);
   }
 
   private renderSortControls(parent: HTMLElement) {
@@ -1367,6 +1587,47 @@ class TaskEditModal extends ObsidianModal {
       }
     }
 
+    // Custom fields — render based on pillar/tab context
+    const taskPillar = this.task.pillars[0];
+    const pillarConfig = taskPillar ? this.pillarConfigs.find(p => p.key === taskPillar) : undefined;
+    const taskTabKey = taskPillar ? this.task.tags[taskPillar] : undefined;
+    const tabConfig = taskTabKey ? pillarConfig?.tabs.find(t => t.key === taskTabKey) : undefined;
+    if (tabConfig?.fields.length) {
+      const fieldsWrap = this.field(contentEl, "Fields");
+      for (const fieldDef of tabConfig.fields) {
+        const fRow = fieldsWrap.createEl("div", { cls: "mos-edit-field-row" });
+        fRow.createEl("label", { cls: "mos-edit-label", text: fieldDef.label });
+        const currentVal = this.task.tags[fieldDef.key] ?? "";
+        if (fieldDef.type === "dropdown" && fieldDef.options?.length) {
+          const sel = fRow.createEl("select", { cls: "mos-edit-input" });
+          sel.createEl("option", { value: "", text: `— ${fieldDef.label} —` });
+          for (const opt of fieldDef.options) {
+            const optEl = sel.createEl("option", { value: opt, text: opt });
+            if (currentVal === opt) optEl.selected = true;
+          }
+          sel.addEventListener("change", () => {
+            if (sel.value) this.task.tags[fieldDef.key] = sel.value;
+            else delete this.task.tags[fieldDef.key];
+          });
+        } else if (fieldDef.type === "date") {
+          const dateIn = fRow.createEl("input", { type: "date", cls: "mos-edit-input" });
+          dateIn.value = currentVal;
+          dateIn.addEventListener("change", () => {
+            if (dateIn.value) this.task.tags[fieldDef.key] = dateIn.value;
+            else delete this.task.tags[fieldDef.key];
+          });
+        } else {
+          const textIn = fRow.createEl("input", { type: fieldDef.type === "url" ? "url" : "text", cls: "mos-edit-input" });
+          textIn.value = currentVal;
+          textIn.placeholder = fieldDef.type === "url" ? "https://..." : "";
+          textIn.addEventListener("input", () => {
+            if (textIn.value.trim()) this.task.tags[fieldDef.key] = textIn.value.trim();
+            else delete this.task.tags[fieldDef.key];
+          });
+        }
+      }
+    }
+
     // Remind date
     const remindWrap = this.field(contentEl, "Remind date");
     const remindInput = remindWrap.createEl("input", { type: "date", cls: "mos-edit-input" });
@@ -1540,44 +1801,41 @@ class FeedbackModal extends Modal {
 
     submitBtn.addEventListener("click", () => {
       void (async () => {
-        if (!this.type) {
-          status.setText("Please select bug or feature request.");
-          return;
-        }
-        if (!this.description) {
-          status.setText("Please add a short description.");
-          return;
-        }
+        if (!this.type) { status.setText("Please select bug or feature request."); return; }
+        if (!this.description) { status.setText("Please add a short description."); return; }
+        if (!FEEDBACK_PROXY_URL) { status.setText("Feedback not configured."); return; }
 
-        submitBtn.disabled = true;
+        submitBtn.setAttr("disabled", "true");
         submitBtn.setText("Sending…");
         status.setText("");
 
-        const webhook = this.type === "bug" ? WEBHOOK_BUGS : WEBHOOK_FEATURES;
-        const label = this.type === "bug" ? "🐛 Bug report" : "✨ Feature request";
-
         try {
-          await requestUrl({
-            url: webhook,
+          const res = await requestUrl({
+            url: FEEDBACK_PROXY_URL,
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              embeds: [{
-                title: label,
-                description: this.description,
-                color: this.type === "bug" ? 0xe5534b : 0xc9a84c,
-                footer: { text: "Morning OS feedback" },
-              }],
-            }),
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${FEEDBACK_SECRET}`,
+            },
+            body: JSON.stringify({ type: this.type, description: this.description }),
+            throw: false,
           });
+
+          if (res.status === 429) {
+            status.setText("Slow down — try again in a few minutes.");
+            submitBtn.removeAttribute("disabled");
+            submitBtn.setText("Submit →");
+            return;
+          }
+          if (res.status < 200 || res.status >= 300) throw new Error(`${res.status}`);
 
           contentEl.empty();
           contentEl.addClass("mos-feedback-modal");
           contentEl.createEl("div", { cls: "mos-feedback-success", text: "✓ Thanks! Feedback received." });
-          const closeBtn = contentEl.createEl("button", { cls: "mos-feedback-submit-btn mos-feedback-close-btn", text: "Close" });
+          const closeBtn = contentEl.createEl("button", { cls: "mos-btn mos-btn-primary", text: "Close" });
           closeBtn.addEventListener("click", () => this.close());
         } catch {
-          submitBtn.disabled = false;
+          submitBtn.removeAttribute("disabled");
           submitBtn.setText("Submit →");
           status.setText("Failed to send. Check your connection.");
         }
