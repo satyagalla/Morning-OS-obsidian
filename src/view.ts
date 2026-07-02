@@ -10,7 +10,7 @@ import type MorningOSPlugin from "./main";
 import { renderOnboarding } from "./onboarding";
 import { scaffoldDailyNote } from "./agent/scaffold-daily-note";
 import { todayStr } from "./utils";
-import { loadRegistry, saveRegistry, setTaskStatus, updateTask, createTask, moveTaskToToday, deleteTask, restoreTask, getActiveReminders, getChildren } from "./task-registry";
+import { loadRegistry, saveRegistry, setTaskStatus, updateTask, createTask, moveTaskToToday, deleteTask, restoreTask, getActiveReminders } from "./task-registry";
 import { appendWinToLog, readTodayWinsFromLog } from "./agent/vault-reader";
 import { parseIdentityAnchor } from "./agent/vault-reader";
 
@@ -993,15 +993,21 @@ export class PillarView extends ItemView {
     const wrapper = container.createEl("div", { cls: "morning-os-scroll" });
     const inner = wrapper.createEl("div", { cls: "morning-os-wrapper" });
 
-    const titleRow = inner.createEl("div", { cls: "mos-view-title-row" });
-    titleRow.createEl("h1", { cls: "morning-os-section-heading", text: `${pillar.icon} ${pillar.label}` });
-    this.renderSortControls(titleRow);
+    // Title
+    inner.createEl("h1", { cls: "mos-pillar-title", text: `${pillar.icon} ${pillar.label}` });
 
-    // Pillar markdown notes section
-    void this.renderPillarNotes(inner, pillar);
+    // Pillar markdown notes section — placeholder created synchronously so order is correct
+    const notesSlot = inner.createEl("div", { cls: "mos-pillar-notes-slot" });
+    void this.renderPillarNotes(notesSlot, pillar);
+
+    // Active tab config (for field rendering)
+    const activeTabConfig = pillar.tabs.find(t => t.key === this.activeTab) ?? null;
+
+    // Tabs + sort/filter row together
+    const controlRow = inner.createEl("div", { cls: "mos-pillar-control-row" });
 
     if (pillar.tabs.length > 0) {
-      const tabBar = inner.createEl("div", { cls: "mos-pillar-tabs" });
+      const tabBar = controlRow.createEl("div", { cls: "mos-pillar-tabs" });
       const allTab = tabBar.createEl("button", { cls: "mos-btn mos-btn-tab" + (!this.activeTab ? " is-active" : ""), text: "All" });
       allTab.addEventListener("click", () => { this.activeTab = null; this.render(); });
       for (const tab of pillar.tabs) {
@@ -1010,53 +1016,25 @@ export class PillarView extends ItemView {
       }
     }
 
-    // Active tab config (for field rendering)
-    const activeTabConfig = pillar.tabs.find(t => t.key === this.activeTab) ?? null;
-
-    renderFilterSelects(titleRow, this.filters, (f) => { this.filters = f; this.render(); }, false, activeTabConfig?.fields);
+    const sortFilterRow = controlRow.createEl("div", { cls: "mos-sort-filter-row" });
+    this.renderSortControls(sortFilterRow);
+    renderFilterSelects(sortFilterRow, this.filters, (f) => { this.filters = f; this.render(); }, false, activeTabConfig?.fields);
 
     // View mode: table vs cards
     if (activeTabConfig?.view_mode === "table") {
       this.renderTableView(inner, activeTabConfig, pillar);
     } else {
-      // Records section (card view)
-      const records = this.registry.filter(t =>
-        t.is_entity && !t.is_deleted && t.pillars.includes(this.pillarKey) &&
-        (this.activeTab === null || t.tags[this.pillarKey] === this.activeTab)
-      );
-      if (records.length > 0) {
-        inner.createEl("h2", { cls: "morning-os-section-heading", text: "Records" });
-        const recordsCard = inner.createEl("div", { cls: "morning-os-card" });
-        for (const record of records) {
-          this.renderRecordCard(recordsCard, record, activeTabConfig);
-        }
-      }
-
-      // "Add record" button
-      const addRecordBtn = inner.createEl("button", { cls: "mos-btn mos-btn-inline", text: "+ Add record" });
-      addRecordBtn.addEventListener("click", async () => {
-        const name = prompt("Record name:");
-        if (!name?.trim()) return;
-        const tag = this.activeTab ? { [pillar.key]: this.activeTab } : {};
-        const task = createTask(name.trim(), { is_entity: true, pillars: [pillar.key], tags: tag });
-        const reg = await loadRegistry(this.app);
-        reg.push(task);
-        await saveRegistry(this.app, reg);
-        await this.refresh();
-      });
-
-      // Flat tasks section
       let tasks = this.registry.filter(t =>
-        !t.is_deleted && !t.is_entity && t.parent_id === null &&
+        !t.is_deleted &&
         t.pillars.includes(this.pillarKey) &&
         (this.activeTab === null || t.tags[this.pillarKey] === this.activeTab)
       );
       tasks = applyFilters(tasks, this.filters);
       tasks = sortTasks(tasks, this.sortField, this.sortDir);
 
-      if (tasks.length === 0 && records.length === 0) {
+      if (tasks.length === 0) {
         inner.createEl("p", { cls: "morning-os-empty-state", text: "No tasks here yet." });
-      } else if (tasks.length > 0) {
+      } else {
         const card = inner.createEl("div", { cls: "morning-os-card" });
         const fields = activeTabConfig?.fields ?? [];
         for (const t of tasks) renderTaskRowShared(card, t, this.app, () => void this.refresh(), this.plugin, false, fields);
@@ -1238,104 +1216,6 @@ export class PillarView extends ItemView {
     });
   }
 
-  private renderRecordCard(parent: HTMLElement, record: Task, tabConfig: { key: string; label: string; fields: { key: string; label: string }[] } | null) {
-    const card = parent.createEl("div", { cls: "mos-record-card" });
-    const header = card.createEl("div", { cls: "mos-record-header" });
-
-    let expanded = false;
-    const toggle = header.createEl("span", { cls: "mos-record-toggle", text: "▶" });
-    header.createEl("span", { cls: "mos-record-name", text: record.text });
-
-    // Meta chips
-    if (tabConfig?.fields.length) {
-      const meta = header.createEl("div", { cls: "mos-record-meta" });
-      for (const field of tabConfig.fields) {
-        const val = record.tags[field.key];
-        if (val) meta.createEl("span", { cls: "mos-meta-chip", text: `${field.label}: ${val}` });
-      }
-    }
-
-    // ⋯ menu
-    const moreBtn = header.createEl("button", { cls: "mos-more-btn", text: "⋯" });
-    moreBtn.addEventListener("click", () => {
-      const menuItems: MenuAction[] = [
-        {
-          label: "✎ Edit record",
-          action: () => new TaskEditModal(this.app, record, async (updated) => {
-            const reg = await loadRegistry(this.app);
-            const idx = reg.findIndex(t => t._id === updated._id);
-            if (idx !== -1) reg[idx] = updated;
-            await saveRegistry(this.app, reg);
-            this.plugin.refreshView();
-          }, false, this.plugin.settings.pillars).open(),
-        },
-        {
-          label: "🗑 Delete record",
-          danger: true,
-          action: async () => {
-            const reg = await loadRegistry(this.app);
-            for (const t of reg) {
-              if (t._id === record._id || t.parent_id === record._id) {
-                t.is_deleted = true;
-              }
-            }
-            await saveRegistry(this.app, reg);
-            this.plugin.refreshView();
-          },
-        },
-      ];
-      openContextMenu(moreBtn, menuItems);
-    });
-
-    // Expandable body
-    const body = card.createEl("div", { cls: "mos-record-body" });
-    body.style.display = "none";
-
-    toggle.addEventListener("click", () => {
-      expanded = !expanded;
-      toggle.textContent = expanded ? "▼" : "▶";
-      body.style.display = expanded ? "block" : "none";
-    });
-
-    // Description
-    if (record.description) {
-      const desc = body.createEl("div", { cls: "mos-record-description", text: record.description });
-      desc.addEventListener("click", () => {
-        const ta = document.createElement("textarea");
-        ta.className = "mos-record-description-edit morning-os-wins-input";
-        ta.value = record.description;
-        desc.replaceWith(ta);
-        ta.focus();
-        const save = async () => {
-          const reg = await loadRegistry(this.app);
-          const idx = reg.findIndex(t => t._id === record._id);
-          if (idx !== -1) { reg[idx].description = ta.value; reg[idx].date_modified = todayStr(); }
-          await saveRegistry(this.app, reg);
-          await this.refresh();
-        };
-        ta.addEventListener("blur", () => void save());
-      });
-    }
-
-    // Children
-    const children = getChildren(this.registry, record._id);
-    const childrenEl = body.createEl("div", { cls: "mos-record-children" });
-    if (children.length > 0) {
-      body.createEl("div", { cls: "morning-os-section-heading", text: "Tasks" });
-      for (const child of children) {
-        renderTaskRowShared(childrenEl, child, this.app, () => void this.refresh(), this.plugin);
-      }
-    }
-
-    renderAddTaskInput(body, "Add task to this record…", async (text) => {
-      const task = createTask(text, { pillars: record.pillars, tags: { ...record.tags }, parent_id: record._id });
-      const reg = await loadRegistry(this.app);
-      reg.push(task);
-      await saveRegistry(this.app, reg);
-      await this.refresh();
-    });
-  }
-
   private async renderPillarNotes(parent: HTMLElement, pillar: PillarConfig) {
     const userFolder = this.settings.dailyNoteDir.split("/")[0] || "Essential";
     const notesPath = `${userFolder}/Pillars/${pillar.label}.md`;
@@ -1350,16 +1230,25 @@ export class PillarView extends ItemView {
       await this.app.vault.adapter.write(notesPath, "");
     }
 
-    const content = await this.app.vault.adapter.read(notesPath);
+    let content = await this.app.vault.adapter.read(notesPath);
+
+    // Strip leading h1 that matches the pillar label (added by migration, view already shows it)
+    content = content.replace(new RegExp(`^#\\s+${pillar.label}\\s*\\n?`, "i"), "").trimStart();
 
     // Only render section if file has content
     if (!content.trim()) return;
 
+    const storageKey = `mos-notes-collapsed-${pillar.key}`;
+    let collapsed = localStorage.getItem(storageKey) === "true";
+
     const section = parent.createEl("div", { cls: "mos-pillar-notes" });
     const header = section.createEl("div", { cls: "mos-pillar-notes-header" });
+    const toggle = header.createEl("span", { cls: "mos-pillar-notes-toggle", text: collapsed ? "▶" : "▼" });
     header.createEl("span", { cls: "mos-pillar-notes-title", text: "Notes" });
+
     const editBtn = header.createEl("button", { cls: "mos-btn mos-btn-icon", attr: { title: "Edit notes" }, text: "✎" });
-    editBtn.addEventListener("click", async () => {
+    editBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
       const file = this.app.vault.getAbstractFileByPath(notesPath);
       if (file instanceof TFile) {
         const leaf = this.app.workspace.getLeaf("split");
@@ -1368,6 +1257,15 @@ export class PillarView extends ItemView {
     });
 
     const body = section.createEl("div", { cls: "mos-pillar-notes-body" });
+    if (collapsed) body.style.display = "none";
+
+    header.addEventListener("click", () => {
+      collapsed = !collapsed;
+      localStorage.setItem(storageKey, String(collapsed));
+      toggle.textContent = collapsed ? "▶" : "▼";
+      body.style.display = collapsed ? "none" : "";
+    });
+
     const component = new Component();
     component.load();
     await MarkdownRenderer.render(this.app, content, body, notesPath, component);
@@ -1547,15 +1445,6 @@ class TaskEditModal extends ObsidianModal {
           btn.addClass("is-active");
         });
       }
-    }
-
-    // Description (entity/record only)
-    if (this.task.is_entity) {
-      const descWrap = this.field(contentEl, "Description");
-      const descArea = descWrap.createEl("textarea", { cls: "mos-edit-input" });
-      (descArea as HTMLTextAreaElement).rows = 3;
-      descArea.value = this.task.description ?? "";
-      descArea.addEventListener("input", () => { this.task.description = (descArea as HTMLTextAreaElement).value; });
     }
 
     // Pillars
