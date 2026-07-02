@@ -1213,6 +1213,37 @@ h3[data-dirty]::after {
   margin: 0;
 }
 
+/* ── Pillar view title ── */
+.mos-pillar-title {
+  font-size: 1.8em;
+  font-weight: 600;
+  color: var(--text-normal);
+  margin: 0 0 12px 0;
+  line-height: 1.2;
+}
+
+/* ── Pillar control row: tabs + sort/filter ── */
+.mos-pillar-control-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.mos-pillar-control-row .mos-pillar-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  flex: 1;
+}
+.mos-sort-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
 /* ── Settings tab bar ── */
 .mos-settings-tab-bar {
   display: flex;
@@ -1699,8 +1730,16 @@ h3[data-dirty]::after {
 .mos-pillar-notes-header {
   display: flex;
   align-items: center;
+  cursor: pointer;
+  user-select: none;
   justify-content: space-between;
   margin-bottom: 8px;
+}
+.mos-pillar-notes-toggle {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-right: 6px;
+  flex-shrink: 0;
 }
 .mos-pillar-notes-title {
   font-size: 0.78rem;
