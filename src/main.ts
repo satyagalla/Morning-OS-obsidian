@@ -237,7 +237,7 @@ export default class MorningOSPlugin extends Plugin {
     for (const pillar of this.settings.pillars) {
       const path = `${pillarsDir}/${pillar.label}.md`;
       if (!(await this.app.vault.adapter.exists(path))) {
-        await this.app.vault.adapter.write(path, `# ${pillar.label}\n`);
+        await this.app.vault.adapter.write(path, "");
         pillarsCreated++;
       }
     }
