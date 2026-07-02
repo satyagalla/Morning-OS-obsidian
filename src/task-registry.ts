@@ -33,8 +33,6 @@ function migrateTask(t: Record<string, unknown>): Task {
     status_urgency:    (t.status_urgency ?? t.urgency ?? "none") as Task["status_urgency"],
     is_today:          (t.is_today ?? t.in_today ?? false) as boolean,
     is_deleted:        (t.is_deleted ?? t.deleted ?? false) as boolean,
-    is_entity:         (t.is_entity ?? false) as boolean,
-    description:       (t.description ?? "") as string,
     parent_id:         (t.parent_id ?? null) as string | null,
     date_created:      (t.date_created ?? t.created ?? todayStr()) as string,
     date_modified:     (t.date_modified ?? t.modified ?? todayStr()) as string,
@@ -83,7 +81,7 @@ function parseTagsFromText(text: string): { cleanText: string; pillars: string[]
 
 export function createTask(
   rawText: string,
-  opts: Partial<Pick<Task, "status_priority" | "status_urgency" | "pillars" | "tags" | "is_today" | "date_remind" | "is_entity" | "parent_id" | "description">> = {}
+  opts: Partial<Pick<Task, "status_priority" | "status_urgency" | "pillars" | "tags" | "is_today" | "date_remind" | "parent_id">> = {}
 ): Task {
   const today = todayStr();
   const parsed = parseTagsFromText(rawText);
@@ -97,8 +95,6 @@ export function createTask(
     status_urgency: opts.status_urgency ?? "none",
     is_today: opts.is_today ?? false,
     is_deleted: false,
-    is_entity: opts.is_entity ?? false,
-    description: opts.description ?? "",
     parent_id: opts.parent_id ?? null,
     date_created: today,
     date_modified: today,
@@ -111,12 +107,6 @@ export function getChildren(registry: TaskRegistry, parentId: string): Task[] {
   return registry.filter(t => t.parent_id === parentId && !t.is_deleted);
 }
 
-export function getRecords(registry: TaskRegistry, pillarKey: string, tabKey?: string): Task[] {
-  return registry.filter(t =>
-    t.is_entity && !t.is_deleted && t.pillars.includes(pillarKey) &&
-    (tabKey === undefined || t.tags[pillarKey] === tabKey)
-  );
-}
 
 export async function updateTask(app: App, id: string, patch: Partial<Task>): Promise<void> {
   const registry = await loadRegistry(app);

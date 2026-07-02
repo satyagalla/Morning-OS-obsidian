@@ -42,8 +42,6 @@ export interface Task {
   date_modified: string;
   date_completed: string | null;
   date_remind: string | null;
-  is_entity: boolean;
-  description: string;
   parent_id: string | null;
 }
 
