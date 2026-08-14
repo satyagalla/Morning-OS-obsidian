@@ -5,7 +5,7 @@ import path from "path";
 import { config } from "dotenv";
 
 // Load proxy env vars if present (never committed)
-config({ path: path.resolve("proxy/.env") });
+config({ path: path.resolve("proxy/.env"), quiet: true });
 
 const prod = process.argv[2] === "production";
 const watch = process.argv[2] === "watch";
