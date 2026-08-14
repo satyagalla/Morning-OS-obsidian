@@ -353,21 +353,29 @@ export class MorningView extends ItemView {
       const empty = parent.createEl("div", { cls: "morning-os-card morning-os-card-empty" });
       empty.createEl("p", { cls: "morning-os-empty-state", text: "You're all caught up for today." });
       empty.createEl("p", { cls: "morning-os-empty-state", text: "Pick tasks from the Inbox or Pillar views to get started." });
-      return;
+    } else {
+      if (redOpen.length > 0 || redDone.length > 0) {
+        parent.createEl("h2", { cls: "morning-os-section-heading morning-os-red-heading", text: "Red alert" });
+        const card = parent.createEl("div", { cls: "morning-os-card morning-os-card-red" });
+        this.renderRegistryTaskList(card, redOpen);
+        this.renderRegistryDoneList(card, redDone);
+      }
+      if (regOpen.length > 0 || regDone.length > 0) {
+        parent.createEl("h2", { cls: "morning-os-section-heading", text: "Regular" });
+        const card = parent.createEl("div", { cls: "morning-os-card" });
+        this.renderRegistryTaskList(card, regOpen);
+        this.renderRegistryDoneList(card, regDone);
+      }
     }
 
-    if (redOpen.length > 0 || redDone.length > 0) {
-      parent.createEl("h2", { cls: "morning-os-section-heading morning-os-red-heading", text: "Red alert" });
-      const card = parent.createEl("div", { cls: "morning-os-card morning-os-card-red" });
-      this.renderRegistryTaskList(card, redOpen);
-      this.renderRegistryDoneList(card, redDone);
-    }
-    if (regOpen.length > 0 || regDone.length > 0) {
-      parent.createEl("h2", { cls: "morning-os-section-heading", text: "Regular" });
-      const card = parent.createEl("div", { cls: "morning-os-card" });
-      this.renderRegistryTaskList(card, regOpen);
-      this.renderRegistryDoneList(card, regDone);
-    }
+    renderAddTaskInput(parent, this.app, "Add task for today… (#p/pillar, @remind(YYYY-MM-DD))", async (text) => {
+      const task = createTask(text, { is_today: true, status_priority: "regular" });
+      const reg = await loadRegistry(this.app);
+      reg.push(task);
+      await saveRegistry(this.app, reg);
+      await this.plugin.autoRefreshBrief();
+      this.plugin.refreshView();
+    });
   }
 
   private renderRegistryTaskList(parent: HTMLElement, tasks: Task[]) {
