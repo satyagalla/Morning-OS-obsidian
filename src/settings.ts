@@ -85,6 +85,9 @@ export interface MorningOSSettings {
 
   // Subtasks
   requireSubtasksComplete: boolean;
+
+  // Notes
+  showNotesIndicator: boolean;
 }
 
 export const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
@@ -180,6 +183,8 @@ export const DEFAULT_SETTINGS: MorningOSSettings = {
   ],
 
   requireSubtasksComplete: false,
+
+  showNotesIndicator: true,
 };
 
 const PROVIDERS = {
@@ -722,6 +727,16 @@ export class MorningOSSettingTab extends PluginSettingTab {
         t
           .setValue(this.plugin.settings.requireSubtasksComplete)
           .onChange(async (value) => { await this.save({ requireSubtasksComplete: value }, "Subtasks"); })
+      );
+
+    this.sectionHeading(containerEl, "Notes");
+    new Setting(containerEl)
+      .setName("Show notes indicator")
+      .setDesc("When on, tasks with notes show a small indicator on their row.")
+      .addToggle((t) =>
+        t
+          .setValue(this.plugin.settings.showNotesIndicator)
+          .onChange(async (value) => { await this.save({ showNotesIndicator: value }, "Notes"); })
       );
   }
 

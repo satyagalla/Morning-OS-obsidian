@@ -31,6 +31,7 @@ export interface LLMSectionMapping {
 export interface Task {
   _id: string;
   text: string;
+  notes: string;
   pillars: string[];
   tags: Record<string, string>;
   status_completion: CompletionStatus;

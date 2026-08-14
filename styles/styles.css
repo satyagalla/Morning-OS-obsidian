@@ -516,6 +516,13 @@
   white-space: nowrap;
 }
 
+.mos-notes-badge {
+  font-size: 0.8em;
+  padding: 2px 0 2px 6px;
+  opacity: 0.75;
+  white-space: nowrap;
+}
+
 /* ── Suggestion ── */
 .morning-os-suggestion-card {
   border-left: 2px solid var(--mos-accent);
@@ -1621,6 +1628,11 @@ h3[data-dirty]::after {
 .mos-edit-input:focus {
   outline: none;
   border-color: var(--mos-system);
+}
+.mos-edit-textarea {
+  min-height: 80px;
+  resize: vertical;
+  font-family: inherit;
 }
 .mos-edit-row {
   display: grid;

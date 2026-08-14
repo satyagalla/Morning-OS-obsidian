@@ -418,6 +418,9 @@ export class MorningView extends ItemView {
       if (task.date_remind) {
         row.createEl("span", { cls: "morning-os-reminder-badge", text: `⏰ ${task.date_remind}` });
       }
+      if (task.notes?.trim() && this.plugin.settings.showNotesIndicator) {
+        row.createEl("span", { cls: "mos-notes-badge", attr: { title: "Has notes" }, text: "📝" });
+      }
 
       const moreBtn = row.createEl("button", { cls: "mos-more-btn", text: "⋯" });
       moreBtn.addEventListener("click", () => {
@@ -532,6 +535,9 @@ export class MorningView extends ItemView {
       checkbox.checked = true;
       const textSpan = renderMdContent(this.app, this, row, "span", "morning-os-task-text", task.text);
       attachInlineTextEdit(this.app, textSpan, task, () => this.plugin.refreshView());
+      if (task.notes?.trim() && this.plugin.settings.showNotesIndicator) {
+        row.createEl("span", { cls: "mos-notes-badge", attr: { title: "Has notes" }, text: "📝" });
+      }
       checkbox.addEventListener("change", () => {
         if (checkbox.checked && this.plugin.settings.requireSubtasksComplete && hasOpenChildren(this.registry, task._id)) {
           checkbox.checked = false;
@@ -1066,6 +1072,10 @@ function renderTaskRowShared(
     row.createEl("span", { cls: "morning-os-reminder-badge", text: `⏰ ${task.date_remind}` });
   }
 
+  if (task.notes?.trim() && (plugin?.settings.showNotesIndicator ?? true)) {
+    row.createEl("span", { cls: "mos-notes-badge", attr: { title: "Has notes" }, text: "📝" });
+  }
+
   // Meta field chips (pillar tab context only)
   if (tabFields?.length) {
     const chipRow = row.createEl("span", { cls: "mos-task-meta-chips" });
@@ -1334,6 +1344,9 @@ export class PillarView extends ItemView {
       // Name cell (editable on click)
       const nameTd = tr.createEl("td", { cls: "mos-table-td mos-table-name" });
       const nameSpan = renderMdContent(this.app, this, nameTd, "span", "", task.text);
+      if (task.notes?.trim() && this.plugin.settings.showNotesIndicator) {
+        nameTd.createEl("span", { cls: "mos-notes-badge", attr: { title: "Has notes" }, text: "📝" });
+      }
       nameSpan.addEventListener("dblclick", () => {
         const input = document.createElement("input");
         input.type = "text";
@@ -1773,6 +1786,12 @@ class TaskEditModal extends ObsidianModal {
     const remindInput = remindWrap.createEl("input", { type: "date", cls: "mos-edit-input" });
     remindInput.value = this.task.date_remind ?? "";
     remindInput.addEventListener("change", () => { this.task.date_remind = remindInput.value || null; });
+
+    // Notes
+    const notesWrap = this.field(contentEl, "Notes");
+    const notesInput = notesWrap.createEl("textarea", { cls: "mos-edit-input mos-edit-textarea" });
+    notesInput.value = this.task.notes ?? "";
+    notesInput.addEventListener("input", () => { this.task.notes = notesInput.value; });
 
     const footer = contentEl.createEl("div", { cls: "mos-edit-footer" });
     const saveBtn = footer.createEl("button", { cls: "mos-btn mos-btn-primary", text: "Save" });

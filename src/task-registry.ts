@@ -26,6 +26,7 @@ function migrateTask(t: Record<string, unknown>): Task {
   return {
     _id:               (t._id ?? t.id ?? generateId()) as string,
     text:              (t.text ?? "") as string,
+    notes:             (t.notes ?? "") as string,
     pillars:           (t.pillars ?? []) as string[],
     tags:              (t.tags ?? {}) as Record<string, string>,
     status_completion: migrateCompletion(t),
@@ -88,6 +89,7 @@ export function createTask(
   return {
     _id: generateId(),
     text: parsed.cleanText,
+    notes: "",
     pillars: opts.pillars !== undefined ? opts.pillars : parsed.pillars,
     tags: opts.tags !== undefined ? opts.tags : parsed.tags,
     status_completion: "open",
