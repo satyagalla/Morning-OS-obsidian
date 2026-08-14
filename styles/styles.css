@@ -450,6 +450,42 @@
   accent-color: var(--mos-accent);
 }
 
+.mos-subtask-list {
+  margin-left: 10px;
+  padding-left: 10px;
+  border-left: 2px solid var(--background-modifier-border);
+}
+
+.mos-subtask-list.is-collapsed {
+  display: none;
+}
+
+.mos-task-row-child {
+  padding: 3px 0;
+}
+
+.mos-task-row-child .morning-os-task-text {
+  font-size: 0.93em;
+}
+
+.mos-subtask-toggle {
+  background: none;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  margin: 0;
+  width: 14px;
+  flex-shrink: 0;
+  font-size: 0.75em;
+  line-height: 1;
+  color: var(--mos-text-faint);
+  cursor: pointer;
+}
+
+.mos-subtask-toggle:hover {
+  color: var(--text-normal);
+}
+
 .morning-os-task-text {
   flex: 1;
   font-size: 0.92em;

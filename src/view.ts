@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf, TFile, Modal, App, sanitizeHTMLToDom, MarkdownRenderer, Component, requestUrl } from "obsidian";
+import { ItemView, WorkspaceLeaf, TFile, Modal, App, sanitizeHTMLToDom, MarkdownRenderer, Component, requestUrl, Notice } from "obsidian";
 import changelogText from "../CHANGELOG.md";
 import { parseChangelog } from "./agent/parse-changelog";
 
@@ -10,7 +10,7 @@ import type MorningOSPlugin from "./main";
 import { renderOnboarding } from "./onboarding";
 import { scaffoldDailyNote } from "./agent/scaffold-daily-note";
 import { todayStr } from "./utils";
-import { loadRegistry, saveRegistry, setTaskStatus, updateTask, createTask, moveTaskToToday, deleteTask, restoreTask, getActiveReminders } from "./task-registry";
+import { loadRegistry, saveRegistry, setTaskStatus, updateTask, createTask, moveTaskToToday, deleteTask, restoreTask, getActiveReminders, getChildren, hasOpenChildren } from "./task-registry";
 import { appendWinToLog, readTodayWinsFromLog } from "./agent/vault-reader";
 import { parseIdentityAnchor } from "./agent/vault-reader";
 import { attachTaskTextSuggest } from "./task-text-suggest";
@@ -344,15 +344,22 @@ export class MorningView extends ItemView {
 
   private renderTasks(parent: HTMLElement) {
     const today = todayStr();
-    const redOpen    = this.registry.filter(t => t.is_today && !t.is_deleted && t.status_priority === "red" && t.status_completion !== "done");
-    const regOpen    = this.registry.filter(t => t.is_today && !t.is_deleted && t.status_priority === "regular" && t.status_completion !== "done");
-    const redDone    = this.registry.filter(t => t.is_today && !t.is_deleted && t.status_priority === "red" && t.status_completion === "done" && t.date_completed === today);
-    const regDone    = this.registry.filter(t => t.is_today && !t.is_deleted && t.status_priority === "regular" && t.status_completion === "done" && t.date_completed === today);
+    // A subtask nests under its parent's row only when the parent is also in Today —
+    // otherwise it would never render at all, since it's excluded from top-level lists.
+    const nestsUnderParent = (t: Task): boolean => {
+      if (t.parent_id === null) return false;
+      const p = this.registry.find(x => x._id === t.parent_id);
+      return !!p && !p.is_deleted && p.is_today;
+    };
+    const redOpen    = this.registry.filter(t => t.is_today && !t.is_deleted && !nestsUnderParent(t) && t.status_priority === "red" && t.status_completion !== "done");
+    const regOpen    = this.registry.filter(t => t.is_today && !t.is_deleted && !nestsUnderParent(t) && t.status_priority === "regular" && t.status_completion !== "done");
+    const redDone    = this.registry.filter(t => t.is_today && !t.is_deleted && !nestsUnderParent(t) && t.status_priority === "red" && t.status_completion === "done" && t.date_completed === today);
+    const regDone    = this.registry.filter(t => t.is_today && !t.is_deleted && !nestsUnderParent(t) && t.status_priority === "regular" && t.status_completion === "done" && t.date_completed === today);
 
     if (!redOpen.length && !regOpen.length && !redDone.length && !regDone.length) {
       const empty = parent.createEl("div", { cls: "morning-os-card morning-os-card-empty" });
       empty.createEl("p", { cls: "morning-os-empty-state", text: "You're all caught up for today." });
-      empty.createEl("p", { cls: "morning-os-empty-state", text: "Pick tasks from the Inbox or Pillar views to get started." });
+      empty.createEl("p", { cls: "morning-os-empty-state", text: "Add a task here or pick from the Inbox to get started." });
     } else {
       if (redOpen.length > 0 || redDone.length > 0) {
         parent.createEl("h2", { cls: "morning-os-section-heading morning-os-red-heading", text: "Red alert" });
@@ -380,38 +387,34 @@ export class MorningView extends ItemView {
 
   private renderRegistryTaskList(parent: HTMLElement, tasks: Task[]) {
     for (const task of tasks) {
+      const children = getChildren(this.registry, task._id);
       const row = parent.createEl("div", { cls: "morning-os-task-row" });
+
+      let childListEl: HTMLElement | null = null;
+      const ensureChildList = (): HTMLElement => {
+        if (!childListEl) {
+          childListEl = parent.createEl("div", { cls: "mos-subtask-list" });
+          if (collapsedTasks.has(task._id)) childListEl.addClass("is-collapsed");
+        }
+        return childListEl;
+      };
+
+      if (children.length > 0) {
+        const toggleBtn = row.createEl("button", {
+          cls: "mos-subtask-toggle",
+          text: collapsedTasks.has(task._id) ? "▸" : "▾",
+        });
+        toggleBtn.addEventListener("click", () => {
+          const collapsed = collapsedTasks.has(task._id);
+          if (collapsed) collapsedTasks.delete(task._id); else collapsedTasks.add(task._id);
+          toggleBtn.setText(collapsed ? "▾" : "▸");
+          ensureChildList().toggleClass("is-collapsed", !collapsed);
+        });
+      }
+
       const checkbox = row.createEl("input", { type: "checkbox" });
       const textSpan = renderMdContent(this.app, this, row, "span", "morning-os-task-text", task.text);
-      textSpan.addEventListener("dblclick", () => {
-        const input = document.createElement("input");
-        input.type = "text";
-        input.value = task.text;
-        input.className = "morning-os-wins-input mos-inline-edit";
-        textSpan.replaceWith(input);
-        attachTaskTextSuggest(this.app, input);
-        input.focus();
-        let saving = false;
-        const save = async () => {
-          if (saving) return;
-          saving = true;
-          const newText = input.value.trim();
-          if (newText && newText !== task.text) {
-            const reg = await loadRegistry(this.app);
-            const idx = reg.findIndex(t => t._id === task._id);
-            if (idx !== -1) { reg[idx].text = newText; reg[idx].date_modified = todayStr(); }
-            await saveRegistry(this.app, reg);
-            this.plugin.refreshView();
-          } else {
-            input.replaceWith(textSpan);
-          }
-        };
-        input.addEventListener("blur", () => { void save(); });
-        input.addEventListener("keydown", (e: KeyboardEvent) => {
-          if (e.key === "Enter") void save();
-          if (e.key === "Escape") input.replaceWith(textSpan);
-        });
-      });
+      attachInlineTextEdit(this.app, textSpan, task, () => this.plugin.refreshView());
       if (task.date_remind) {
         row.createEl("span", { cls: "morning-os-reminder-badge", text: `⏰ ${task.date_remind}` });
       }
@@ -420,7 +423,24 @@ export class MorningView extends ItemView {
       moreBtn.addEventListener("click", () => {
         const flipPriority = task.status_priority === "red" ? "regular" : "red";
         const flipLabel = task.status_priority === "red" ? "→ Move to Regular" : "🔴 Move to Red alert";
-        const menuItems: MenuAction[] = [
+        const menuItems: MenuAction[] = [];
+        if (task.parent_id === null) {
+          menuItems.push({
+            label: "＋ Add subtask",
+            action: () => {
+              const list = ensureChildList();
+              renderAddTaskInput(list, this.app, "Add subtask…", async (text) => {
+                const child = createTask(text, { parent_id: task._id, pillars: [...task.pillars], tags: { ...task.tags } });
+                const reg = await loadRegistry(this.app);
+                reg.push(child);
+                await saveRegistry(this.app, reg);
+                this.plugin.refreshView();
+              });
+              list.querySelector<HTMLInputElement>(".morning-os-wins-input-row:last-child input")?.focus();
+            },
+          });
+        }
+        menuItems.push(
           {
             label: flipLabel,
             action: () => {
@@ -457,58 +477,78 @@ export class MorningView extends ItemView {
             danger: true,
             action: () => void deleteTask(this.app, task._id).then(() => this.plugin.refreshView()),
           },
-        ];
+        );
         openContextMenu(moreBtn, menuItems);
       });
 
       checkbox.addEventListener("change", () => {
+        if (checkbox.checked && this.plugin.settings.requireSubtasksComplete && hasOpenChildren(this.registry, task._id)) {
+          checkbox.checked = false;
+          new Notice("Morning OS: Complete all subtasks first");
+          return;
+        }
         row.toggleClass("morning-os-task-done", checkbox.checked);
         void setTaskStatus(this.app, task._id, checkbox.checked ? "done" : "open")
           .then(() => this.plugin.refreshView());
       });
+
+      if (children.length > 0) {
+        const list = ensureChildList();
+        for (const child of children) {
+          renderTaskRowShared(list, child, this.app, this, () => this.plugin.refreshView(), this.plugin, false, undefined, this.registry, true);
+        }
+      }
     }
   }
 
   private renderRegistryDoneList(parent: HTMLElement, tasks: Task[]) {
     for (const task of tasks) {
+      const children = getChildren(this.registry, task._id);
       const row = parent.createEl("div", { cls: "morning-os-task-row morning-os-task-done" });
+
+      let childListEl: HTMLElement | null = null;
+      const ensureChildList = (): HTMLElement => {
+        if (!childListEl) {
+          childListEl = parent.createEl("div", { cls: "mos-subtask-list" });
+          if (collapsedTasks.has(task._id)) childListEl.addClass("is-collapsed");
+        }
+        return childListEl;
+      };
+
+      if (children.length > 0) {
+        const toggleBtn = row.createEl("button", {
+          cls: "mos-subtask-toggle",
+          text: collapsedTasks.has(task._id) ? "▸" : "▾",
+        });
+        toggleBtn.addEventListener("click", () => {
+          const collapsed = collapsedTasks.has(task._id);
+          if (collapsed) collapsedTasks.delete(task._id); else collapsedTasks.add(task._id);
+          toggleBtn.setText(collapsed ? "▾" : "▸");
+          ensureChildList().toggleClass("is-collapsed", !collapsed);
+        });
+      }
+
       const checkbox = row.createEl("input", { type: "checkbox" });
       checkbox.checked = true;
       const textSpan = renderMdContent(this.app, this, row, "span", "morning-os-task-text", task.text);
-      textSpan.addEventListener("dblclick", () => {
-        const input = document.createElement("input");
-        input.type = "text";
-        input.value = task.text;
-        input.className = "morning-os-wins-input mos-inline-edit";
-        textSpan.replaceWith(input);
-        attachTaskTextSuggest(this.app, input);
-        input.focus();
-        let saving = false;
-        const save = async () => {
-          if (saving) return;
-          saving = true;
-          const newText = input.value.trim();
-          if (newText && newText !== task.text) {
-            const reg = await loadRegistry(this.app);
-            const idx = reg.findIndex(t => t._id === task._id);
-            if (idx !== -1) { reg[idx].text = newText; reg[idx].date_modified = todayStr(); }
-            await saveRegistry(this.app, reg);
-            this.plugin.refreshView();
-          } else {
-            input.replaceWith(textSpan);
-          }
-        };
-        input.addEventListener("blur", () => { void save(); });
-        input.addEventListener("keydown", (e: KeyboardEvent) => {
-          if (e.key === "Enter") void save();
-          if (e.key === "Escape") input.replaceWith(textSpan);
-        });
-      });
+      attachInlineTextEdit(this.app, textSpan, task, () => this.plugin.refreshView());
       checkbox.addEventListener("change", () => {
+        if (checkbox.checked && this.plugin.settings.requireSubtasksComplete && hasOpenChildren(this.registry, task._id)) {
+          checkbox.checked = false;
+          new Notice("Morning OS: Complete all subtasks first");
+          return;
+        }
         row.toggleClass("morning-os-task-done", checkbox.checked);
         void setTaskStatus(this.app, task._id, checkbox.checked ? "done" : "open")
           .then(() => this.plugin.refreshView());
       });
+
+      if (children.length > 0) {
+        const list = ensureChildList();
+        for (const child of children) {
+          renderTaskRowShared(list, child, this.app, this, () => this.plugin.refreshView(), this.plugin, false, undefined, this.registry, true);
+        }
+      }
     }
   }
 
@@ -945,28 +985,7 @@ function openContextMenu(anchor: HTMLElement, items: MenuAction[]) {
   document.addEventListener("mousedown", close);
 }
 
-function renderTaskRowShared(
-  parent: HTMLElement,
-  task: Task,
-  app: App,
-  component: Component,
-  onRefresh: () => void,
-  plugin?: MorningOSPlugin,
-  showUrgency = false,
-  tabFields?: FieldDef[]
-) {
-  const isDone = task.status_completion === "done";
-  const row = parent.createEl("div", { cls: "morning-os-task-row" + (isDone ? " morning-os-task-done" : "") });
-  const checkbox = row.createEl("input", { type: "checkbox" });
-  checkbox.checked = isDone;
-
-  // Urgency dot
-  const dot = row.createEl("span", { cls: "mos-urgency-dot", attr: { title: `Urgency: ${task.status_urgency}` } });
-  dot.style.background = URGENCY_DOT[task.status_urgency] ?? URGENCY_DOT.none;
-  dot.textContent = URGENCY_LABEL[task.status_urgency] ?? "";
-
-  // Inline text — double-click to edit
-  const textSpan = renderMdContent(app, component, row, "span", "morning-os-task-text", task.text);
+function attachInlineTextEdit(app: App, textSpan: HTMLElement, task: Task, onSaved: () => void) {
   textSpan.addEventListener("dblclick", () => {
     const input = document.createElement("input");
     input.type = "text";
@@ -985,7 +1004,7 @@ function renderTaskRowShared(
         const idx = reg.findIndex(t => t._id === task._id);
         if (idx !== -1) { reg[idx].text = newText; reg[idx].date_modified = todayStr(); }
         await saveRegistry(app, reg);
-        onRefresh();
+        onSaved();
       } else {
         input.replaceWith(textSpan);
       }
@@ -996,6 +1015,52 @@ function renderTaskRowShared(
       if (e.key === "Escape") input.replaceWith(textSpan);
     });
   });
+}
+
+// Tracks which parent tasks have their subtask list collapsed. Module-level so the
+// collapsed/expanded state survives the full re-render every refresh triggers.
+const collapsedTasks = new Set<string>();
+
+function renderTaskRowShared(
+  parent: HTMLElement,
+  task: Task,
+  app: App,
+  component: Component,
+  onRefresh: () => void,
+  plugin?: MorningOSPlugin,
+  showUrgency = false,
+  tabFields?: FieldDef[],
+  registry: TaskRegistry = [],
+  isChild = false
+) {
+  const isDone = task.status_completion === "done";
+  const hasChildren = !isChild && getChildren(registry, task._id).length > 0;
+  const row = parent.createEl("div", { cls: "morning-os-task-row" + (isDone ? " morning-os-task-done" : "") + (isChild ? " mos-task-row-child" : "") });
+
+  if (hasChildren) {
+    const toggleBtn = row.createEl("button", {
+      cls: "mos-subtask-toggle",
+      text: collapsedTasks.has(task._id) ? "▸" : "▾",
+    });
+    toggleBtn.addEventListener("click", () => {
+      const collapsed = collapsedTasks.has(task._id);
+      if (collapsed) collapsedTasks.delete(task._id); else collapsedTasks.add(task._id);
+      toggleBtn.setText(collapsed ? "▾" : "▸");
+      ensureChildList().toggleClass("is-collapsed", !collapsed);
+    });
+  }
+
+  const checkbox = row.createEl("input", { type: "checkbox" });
+  checkbox.checked = isDone;
+
+  // Urgency dot
+  const dot = row.createEl("span", { cls: "mos-urgency-dot", attr: { title: `Urgency: ${task.status_urgency}` } });
+  dot.style.background = URGENCY_DOT[task.status_urgency] ?? URGENCY_DOT.none;
+  dot.textContent = URGENCY_LABEL[task.status_urgency] ?? "";
+
+  // Inline text — double-click to edit
+  const textSpan = renderMdContent(app, component, row, "span", "morning-os-task-text", task.text);
+  attachInlineTextEdit(app, textSpan, task, onRefresh);
 
   if (task.date_remind) {
     row.createEl("span", { cls: "morning-os-reminder-badge", text: `⏰ ${task.date_remind}` });
@@ -1033,9 +1098,36 @@ function renderTaskRowShared(
       });
     });
 
+  let childListEl: HTMLElement | null = null;
+  const ensureChildList = (): HTMLElement => {
+    if (!childListEl) {
+      childListEl = parent.createEl("div", { cls: "mos-subtask-list" });
+      if (collapsedTasks.has(task._id)) childListEl.addClass("is-collapsed");
+    }
+    return childListEl;
+  };
+
   const moreBtn = actions.createEl("button", { cls: "mos-action-btn", attr: { title: "More actions" }, text: "⋯" });
   moreBtn.addEventListener("click", () => {
-    const menuItems: MenuAction[] = [
+    const menuItems: MenuAction[] = [];
+    if (!isChild) {
+      menuItems.push({
+        label: "＋ Add subtask",
+        action: () => {
+          const list = ensureChildList();
+          renderAddTaskInput(list, app, "Add subtask…", async (text) => {
+            const child = createTask(text, { parent_id: task._id, pillars: [...task.pillars], tags: { ...task.tags } });
+            const reg = await loadRegistry(app);
+            reg.push(child);
+            await saveRegistry(app, reg);
+            if (plugin) plugin.refreshView();
+            onRefresh();
+          });
+          list.querySelector<HTMLInputElement>(".morning-os-wins-input-row:last-child input")?.focus();
+        },
+      });
+    }
+    menuItems.push(
       {
         label: "✎ Edit metadata",
         action: () => {
@@ -1059,16 +1151,31 @@ function renderTaskRowShared(
           });
         },
       },
-    ];
+    );
     openContextMenu(moreBtn, menuItems);
   });
 
   checkbox.addEventListener("change", () => {
+    if (checkbox.checked && plugin?.settings.requireSubtasksComplete && hasOpenChildren(registry, task._id)) {
+      checkbox.checked = false;
+      new Notice("Morning OS: Complete all subtasks first");
+      return;
+    }
     row.toggleClass("morning-os-task-done", checkbox.checked);
     void setTaskStatus(app, task._id, checkbox.checked ? "done" : "open").then(() => {
       if (plugin) plugin.refreshView();
     });
   });
+
+  if (!isChild) {
+    const children = getChildren(registry, task._id);
+    if (children.length > 0) {
+      const list = ensureChildList();
+      for (const child of children) {
+        renderTaskRowShared(list, child, app, component, onRefresh, plugin, showUrgency, tabFields, registry, true);
+      }
+    }
+  }
 
   return row;
 }
@@ -1160,6 +1267,7 @@ export class PillarView extends ItemView {
     } else {
       let tasks = this.registry.filter(t =>
         !t.is_deleted &&
+        t.parent_id === null &&
         t.pillars.includes(this.pillarKey) &&
         (this.activeTab === null || t.tags[this.pillarKey] === this.activeTab)
       );
@@ -1171,7 +1279,7 @@ export class PillarView extends ItemView {
       } else {
         const card = inner.createEl("div", { cls: "morning-os-card" });
         const fields = activeTabConfig?.fields ?? [];
-        for (const t of tasks) renderTaskRowShared(card, t, this.app, this, () => void this.refresh(), this.plugin, false, fields);
+        for (const t of tasks) renderTaskRowShared(card, t, this.app, this, () => void this.refresh(), this.plugin, false, fields, this.registry);
       }
 
       renderAddTaskInput(inner, this.app, "Add task… (#p/pillar, #t/tab, @remind(YYYY-MM-DD))", async (text) => {
@@ -1189,7 +1297,7 @@ export class PillarView extends ItemView {
   private renderTableView(parent: HTMLElement, tabConfig: TabConfig, pillar: PillarConfig) {
     const fields = tabConfig.fields;
     const allItems = this.registry.filter(t =>
-      !t.is_deleted && t.pillars.includes(this.pillarKey) &&
+      !t.is_deleted && t.parent_id === null && t.pillars.includes(this.pillarKey) &&
       t.tags[this.pillarKey] === tabConfig.key
     );
     const items = sortTasks(applyFilters(allItems, this.filters), this.sortField, this.sortDir);
@@ -1211,6 +1319,11 @@ export class PillarView extends ItemView {
       const cb = checkTd.createEl("input", { type: "checkbox" });
       cb.checked = task.status_completion === "done";
       cb.addEventListener("change", () => {
+        if (cb.checked && this.plugin?.settings.requireSubtasksComplete && hasOpenChildren(this.registry, task._id)) {
+          cb.checked = false;
+          new Notice("Morning OS: Complete all subtasks first");
+          return;
+        }
         const newStatus = cb.checked ? "done" : "open";
         void setTaskStatus(this.app, task._id, newStatus).then(async () => {
           if (this.plugin) { await this.plugin.autoRefreshBrief(); this.plugin.refreshView(); }
@@ -1470,7 +1583,7 @@ export class DumpView extends ItemView {
 
     renderFilterSelects(titleRow, this.filters, (f) => { this.filters = f; this.render(); }, true);
 
-    let tasks = this.registry.filter(t => !t.is_deleted);
+    let tasks = this.registry.filter(t => !t.is_deleted && t.parent_id === null);
     tasks = applyFilters(tasks, this.filters);
     tasks = sortTasks(tasks, this.sortField, this.sortDir);
 
@@ -1478,7 +1591,7 @@ export class DumpView extends ItemView {
       inner.createEl("p", { cls: "morning-os-empty-state", text: "All clear. Capture fast, organize later." });
     } else {
       const card = inner.createEl("div", { cls: "morning-os-card" });
-      for (const t of tasks) renderTaskRowShared(card, t, this.app, this, () => void this.refresh(), this.plugin, true);
+      for (const t of tasks) renderTaskRowShared(card, t, this.app, this, () => void this.refresh(), this.plugin, true, undefined, this.registry);
     }
   }
 

@@ -107,6 +107,10 @@ export function getChildren(registry: TaskRegistry, parentId: string): Task[] {
   return registry.filter(t => t.parent_id === parentId && !t.is_deleted);
 }
 
+export function hasOpenChildren(registry: TaskRegistry, parentId: string): boolean {
+  return getChildren(registry, parentId).some(t => t.status_completion !== "done");
+}
+
 
 export async function updateTask(app: App, id: string, patch: Partial<Task>): Promise<void> {
   const registry = await loadRegistry(app);
@@ -129,7 +133,16 @@ export async function moveTaskToToday(app: App, id: string, priority: "red" | "r
 }
 
 export async function deleteTask(app: App, id: string): Promise<void> {
-  await updateTask(app, id, { is_deleted: true, is_today: false });
+  const registry = await loadRegistry(app);
+  const today = todayStr();
+  for (const t of registry) {
+    if (t._id === id || t.parent_id === id) {
+      t.is_deleted = true;
+      t.is_today = false;
+      t.date_modified = today;
+    }
+  }
+  await saveRegistry(app, registry);
 }
 
 export async function restoreTask(app: App, id: string): Promise<void> {

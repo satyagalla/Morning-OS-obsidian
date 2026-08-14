@@ -82,6 +82,9 @@ export interface MorningOSSettings {
 
   lastSeenVersion: string;
   pillars: PillarConfig[];
+
+  // Subtasks
+  requireSubtasksComplete: boolean;
 }
 
 export const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
@@ -175,6 +178,8 @@ export const DEFAULT_SETTINGS: MorningOSSettings = {
     { key: "family",       label: "Family",         icon: "👨‍👩‍👧", feedToLLM: false, tabs: [] },
     { key: "relationship", label: "Relationships",  icon: "💞",  feedToLLM: false, tabs: [] },
   ],
+
+  requireSubtasksComplete: false,
 };
 
 const PROVIDERS = {
@@ -708,6 +713,16 @@ export class MorningOSSettingTab extends PluginSettingTab {
     toggle("Technical tasks", "AI filters technical tasks. Off = top N items in order.", "modeTechnicalTasks");
     toggle("Tasks", "AI processes red alert and regular tasks. Off = read directly from daily note.", "modeTasks");
     toggle("Wins", "AI processes wins. Off = read directly from daily note.", "modeWins");
+
+    this.sectionHeading(containerEl, "Subtasks");
+    new Setting(containerEl)
+      .setName("Require subtasks complete before parent")
+      .setDesc("When on, a task with open subtasks can't be checked off until every subtask is done. When off, a task's own checkbox is independent of its subtasks.")
+      .addToggle((t) =>
+        t
+          .setValue(this.plugin.settings.requireSubtasksComplete)
+          .onChange(async (value) => { await this.save({ requireSubtasksComplete: value }, "Subtasks"); })
+      );
   }
 
   private selectedPillarKey: string | null = null;
