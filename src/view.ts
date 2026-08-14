@@ -13,6 +13,7 @@ import { todayStr } from "./utils";
 import { loadRegistry, saveRegistry, setTaskStatus, updateTask, createTask, moveTaskToToday, deleteTask, restoreTask, getActiveReminders } from "./task-registry";
 import { appendWinToLog, readTodayWinsFromLog } from "./agent/vault-reader";
 import { parseIdentityAnchor } from "./agent/vault-reader";
+import { attachTaskTextSuggest } from "./task-text-suggest";
 
 export const VIEW_TYPE_PILLAR = "morning-os-pillar-view";
 export const VIEW_TYPE_DUMP = "morning-os-inbox-view";
@@ -25,6 +26,28 @@ function buildNavItems(pillars: PillarConfig[]) {
     ...pillars.map(p => ({ id: p.key, label: `${p.icon} ${p.label}`, type: `${VIEW_TYPE_PILLAR}-${p.key}` })),
     { id: "trash", label: "🗑 Trash", type: VIEW_TYPE_TRASH },
   ];
+}
+
+// Renders vault/LLM-authored text as markdown so Obsidian features (wikilinks, bold, tags, …)
+// work inside task titles and metadata — plain createEl({text}) only ever sets textContent.
+function renderMdContent(
+  app: App,
+  component: Component,
+  parent: HTMLElement,
+  tag: keyof HTMLElementTagNameMap,
+  cls: string,
+  text: string
+): HTMLElement {
+  const el = parent.createEl(tag, cls ? { cls } : undefined);
+  void MarkdownRenderer.render(app, text, el, "", component).then(() => {
+    // Unwrap the single <p> block so inline layouts (flex rows, list items) aren't affected
+    const inner = el.querySelector(":scope > p");
+    if (inner && el.childNodes.length === 1) {
+      while (inner.firstChild) el.insertBefore(inner.firstChild, inner);
+      inner.remove();
+    }
+  });
+  return el;
 }
 
 
@@ -274,7 +297,7 @@ export class MorningView extends ItemView {
     strip.createEl("div", { cls: "morning-os-identity-label", text: "I am someone who" });
     const rules = strip.createEl("div", { cls: "morning-os-identity-rules" });
     for (const rule of lines) {
-      rules.createEl("span", { cls: "morning-os-identity-rule", text: rule });
+      renderMdContent(this.app, this, rules, "span", "morning-os-identity-rule", rule);
     }
   }
 
@@ -297,9 +320,9 @@ export class MorningView extends ItemView {
 
     const preview = toggle.createEl("div", { cls: "morning-os-goals-preview" });
     for (const item of stVisible)
-      preview.createEl("span", { cls: "morning-os-goals-preview-pill morning-os-goals-pill-short", text: item });
+      renderMdContent(this.app, this, preview, "span", "morning-os-goals-preview-pill morning-os-goals-pill-short", item);
     for (const item of ltVisible)
-      preview.createEl("span", { cls: "morning-os-goals-preview-pill morning-os-goals-pill-long", text: item });
+      renderMdContent(this.app, this, preview, "span", "morning-os-goals-preview-pill morning-os-goals-pill-long", item);
 
     const hasHidden = stHidden.length > 0 || ltHidden.length > 0;
     if (hasHidden)
@@ -311,12 +334,12 @@ export class MorningView extends ItemView {
     const short = grid.createEl("div", { cls: "morning-os-goals-col" });
     short.createEl("h2", { text: "Short-term" });
     const sl = short.createEl("div", { cls: "morning-os-card" }).createEl("ul");
-    for (const item of short_term) sl.createEl("li", { text: item });
+    for (const item of short_term) renderMdContent(this.app, this, sl, "li", "", item);
 
     const long = grid.createEl("div", { cls: "morning-os-goals-col" });
     long.createEl("h2", { text: "Long-term" });
     const ll = long.createEl("div", { cls: "morning-os-card" }).createEl("ul");
-    for (const item of long_term) ll.createEl("li", { text: item });
+    for (const item of long_term) renderMdContent(this.app, this, ll, "li", "", item);
   }
 
   private renderTasks(parent: HTMLElement) {
@@ -351,7 +374,7 @@ export class MorningView extends ItemView {
     for (const task of tasks) {
       const row = parent.createEl("div", { cls: "morning-os-task-row" });
       const checkbox = row.createEl("input", { type: "checkbox" });
-      row.createEl("span", { cls: "morning-os-task-text", text: task.text });
+      renderMdContent(this.app, this, row, "span", "morning-os-task-text", task.text);
       if (task.date_remind) {
         row.createEl("span", { cls: "morning-os-reminder-badge", text: `⏰ ${task.date_remind}` });
       }
@@ -414,7 +437,7 @@ export class MorningView extends ItemView {
       const row = parent.createEl("div", { cls: "morning-os-task-row morning-os-task-done" });
       const checkbox = row.createEl("input", { type: "checkbox" });
       checkbox.checked = true;
-      row.createEl("span", { cls: "morning-os-task-text", text: task.text });
+      renderMdContent(this.app, this, row, "span", "morning-os-task-text", task.text);
       checkbox.addEventListener("change", () => {
         row.toggleClass("morning-os-task-done", checkbox.checked);
         void setTaskStatus(this.app, task._id, checkbox.checked ? "done" : "open")
@@ -430,7 +453,7 @@ export class MorningView extends ItemView {
     const card = parent.createEl("div", { cls: "morning-os-card morning-os-card-rules" });
     const list = card.createEl("ul");
     for (const rule of this.brief.tactical_rules) {
-      list.createEl("li", { text: rule });
+      renderMdContent(this.app, this, list, "li", "", rule);
     }
   }
 
@@ -439,7 +462,7 @@ export class MorningView extends ItemView {
     parent.createEl("h2", { cls: "morning-os-section-heading", text: "Suggestions" });
     this.brief.suggestions.forEach((s, i) => {
       const card = parent.createEl("div", { cls: "morning-os-card morning-os-suggestion-card" });
-      card.createEl("p", { cls: "morning-os-suggestion-text", text: s.text });
+      renderMdContent(this.app, this, card, "p", "morning-os-suggestion-text", s.text);
 
       const footer = card.createEl("div", { cls: "morning-os-suggestion-footer" });
       const sourceLabel: Record<string, string> = {
@@ -503,7 +526,7 @@ export class MorningView extends ItemView {
     for (const task of reminders) {
       const row = card.createEl("div", { cls: "morning-os-task-row" });
       const checkbox = row.createEl("input", { type: "checkbox" });
-      row.createEl("span", { cls: "morning-os-task-text", text: task.text });
+      renderMdContent(this.app, this, row, "span", "morning-os-task-text", task.text);
       row.createEl("span", { cls: "morning-os-reminder-badge", text: `⏰ ${task.date_remind}` });
 
       // Dismiss = clear remind date (task stays open)
@@ -537,7 +560,7 @@ export class MorningView extends ItemView {
       panel.createEl("p", { cls: "morning-os-empty-state", text: "No pending technical tasks." });
     } else {
       const list = panel.createEl("ul", { cls: "morning-os-pending-list" });
-      for (const item of tasks) list.createEl("li", { text: item });
+      for (const item of tasks) renderMdContent(this.app, this, list, "li", "", item);
     }
   }
 
@@ -548,7 +571,7 @@ export class MorningView extends ItemView {
     const card = section.createEl("div", { cls: "morning-os-card morning-os-hobby-card" });
     const list = card.createEl("ul", { cls: "morning-os-hobby-list" });
     for (const item of this.brief!.hobby_tasks ?? []) {
-      list.createEl("li", { text: item });
+      renderMdContent(this.app, this, list, "li", "", item);
     }
   }
 
@@ -589,7 +612,7 @@ export class MorningView extends ItemView {
       parent.createEl("p", { cls: "morning-os-empty-state", text: "Fill this before sleep." });
     } else {
       for (const win of this.wins) {
-        parent.createEl("p", { cls: "morning-os-wins-item", text: win });
+        renderMdContent(this.app, this, parent, "p", "morning-os-wins-item", win);
       }
     }
   }
@@ -831,6 +854,7 @@ function renderTaskRowShared(
   parent: HTMLElement,
   task: Task,
   app: App,
+  component: Component,
   onRefresh: () => void,
   plugin?: MorningOSPlugin,
   showUrgency = false,
@@ -847,13 +871,14 @@ function renderTaskRowShared(
   dot.textContent = URGENCY_LABEL[task.status_urgency] ?? "";
 
   // Inline text — double-click to edit
-  const textSpan = row.createEl("span", { cls: "morning-os-task-text", text: task.text });
+  const textSpan = renderMdContent(app, component, row, "span", "morning-os-task-text", task.text);
   textSpan.addEventListener("dblclick", () => {
     const input = document.createElement("input");
     input.type = "text";
     input.value = task.text;
     input.className = "morning-os-wins-input mos-inline-edit";
     textSpan.replaceWith(input);
+    attachTaskTextSuggest(app, input);
     input.focus();
     let saving = false;
     const save = async () => {
@@ -886,7 +911,11 @@ function renderTaskRowShared(
     const chipRow = row.createEl("span", { cls: "mos-task-meta-chips" });
     for (const field of tabFields) {
       const val = task.tags[field.key];
-      if (val) chipRow.createEl("span", { cls: "mos-meta-chip", text: `${field.label}: ${val}` });
+      if (val) {
+        const chip = chipRow.createEl("span", { cls: "mos-meta-chip" });
+        chip.createSpan({ text: `${field.label}: ` });
+        renderMdContent(app, component, chip, "span", "", val);
+      }
     }
   }
 
@@ -949,9 +978,10 @@ function renderTaskRowShared(
   return row;
 }
 
-function renderAddTaskInput(parent: HTMLElement, placeholder: string, onAdd: (text: string) => Promise<void>) {
+function renderAddTaskInput(parent: HTMLElement, app: App, placeholder: string, onAdd: (text: string) => Promise<void>) {
   const row = parent.createEl("div", { cls: "morning-os-wins-input-row" });
   const input = row.createEl("input", { type: "text", cls: "morning-os-wins-input", placeholder });
+  attachTaskTextSuggest(app, input);
   const btn = row.createEl("button", { cls: "mos-btn mos-btn-primary", text: "Add" });
   const add = async () => {
     const text = input.value.trim();
@@ -1046,10 +1076,10 @@ export class PillarView extends ItemView {
       } else {
         const card = inner.createEl("div", { cls: "morning-os-card" });
         const fields = activeTabConfig?.fields ?? [];
-        for (const t of tasks) renderTaskRowShared(card, t, this.app, () => void this.refresh(), this.plugin, false, fields);
+        for (const t of tasks) renderTaskRowShared(card, t, this.app, this, () => void this.refresh(), this.plugin, false, fields);
       }
 
-      renderAddTaskInput(inner, "Add task… (#p/pillar, #t/tab, @remind(YYYY-MM-DD))", async (text) => {
+      renderAddTaskInput(inner, this.app, "Add task… (#p/pillar, #t/tab, @remind(YYYY-MM-DD))", async (text) => {
         const activeTab = this.activeTab;
         const tag = activeTab ? { [pillar.key]: activeTab } : {};
         const task = createTask(text, { pillars: [pillar.key], tags: tag });
@@ -1095,13 +1125,14 @@ export class PillarView extends ItemView {
 
       // Name cell (editable on click)
       const nameTd = tr.createEl("td", { cls: "mos-table-td mos-table-name" });
-      const nameSpan = nameTd.createEl("span", { text: task.text });
+      const nameSpan = renderMdContent(this.app, this, nameTd, "span", "", task.text);
       nameSpan.addEventListener("dblclick", () => {
         const input = document.createElement("input");
         input.type = "text";
         input.value = task.text;
         input.className = "mos-table-inline-edit";
         nameSpan.replaceWith(input);
+        attachTaskTextSuggest(this.app, input);
         input.focus();
         const save = async () => {
           const newText = input.value.trim();
@@ -1146,7 +1177,9 @@ export class PillarView extends ItemView {
             void updateTask(this.app, task._id, { tags: newTags }).then(() => this.refresh());
           });
         } else {
-          const cellSpan = td.createEl("span", { text: val || "—", cls: val ? "" : "mos-table-empty" });
+          const cellSpan = val
+            ? renderMdContent(this.app, this, td, "span", "", val)
+            : td.createEl("span", { text: "—", cls: "mos-table-empty" });
           cellSpan.addEventListener("dblclick", () => {
             const input = document.createElement("input");
             input.type = f.type === "url" ? "url" : "text";
@@ -1215,7 +1248,7 @@ export class PillarView extends ItemView {
 
     // Add row
     const addRow = parent.createEl("div", { cls: "mos-table-add-row" });
-    renderAddTaskInput(addRow, "+ Add row…", async (text) => {
+    renderAddTaskInput(addRow, this.app, "+ Add row…", async (text) => {
       const tag = { [pillar.key]: tabConfig.key };
       const task = createTask(text, { pillars: [pillar.key], tags: tag });
       const reg = await loadRegistry(this.app);
@@ -1332,7 +1365,7 @@ export class DumpView extends ItemView {
     titleRow.createEl("h1", { cls: "morning-os-section-heading", text: "Inbox" });
     this.renderSortControls(titleRow);
 
-    renderAddTaskInput(inner, "Capture a task… (#p/pillar, #t/tab, @remind(YYYY-MM-DD))", async (text) => {
+    renderAddTaskInput(inner, this.app, "Capture a task… (#p/pillar, #t/tab, @remind(YYYY-MM-DD))", async (text) => {
       const task = createTask(text);
       const reg = await loadRegistry(this.app);
       reg.push(task);
@@ -1350,7 +1383,7 @@ export class DumpView extends ItemView {
       inner.createEl("p", { cls: "morning-os-empty-state", text: "All clear. Capture fast, organize later." });
     } else {
       const card = inner.createEl("div", { cls: "morning-os-card" });
-      for (const t of tasks) renderTaskRowShared(card, t, this.app, () => void this.refresh(), this.plugin, true);
+      for (const t of tasks) renderTaskRowShared(card, t, this.app, this, () => void this.refresh(), this.plugin, true);
     }
   }
 
@@ -1423,6 +1456,7 @@ class TaskEditModal extends ObsidianModal {
     const textInput = textWrap.createEl("input", { type: "text", cls: "mos-edit-input" });
     textInput.value = this.task.text;
     textInput.addEventListener("input", () => { this.task.text = textInput.value.trim(); });
+    attachTaskTextSuggest(this.app, textInput);
 
     // Status
     const statusWrap = this.field(contentEl, "Status");
@@ -1585,7 +1619,7 @@ export class TrashView extends ItemView {
     const card = parent.createEl("div", { cls: "morning-os-card" });
     for (const task of tasks) {
       const row = card.createEl("div", { cls: "morning-os-task-row morning-os-task-done" });
-      row.createEl("span", { cls: "morning-os-task-text", text: task.text });
+      renderMdContent(this.app, this, row, "span", "morning-os-task-text", task.text);
       row.createEl("span", { cls: "morning-os-reminder-badge", text: task.date_modified });
 
       const restoreBtn = row.createEl("button", { cls: "mos-task-action-btn", text: "Restore" });
@@ -1636,6 +1670,7 @@ export class CaptureModal extends ObsidianModal {
     });
     input.placeholder = "Task text… (#p/career, #t/applications, @remind(YYYY-MM-DD))";
     input.style.width = "100%";
+    attachTaskTextSuggest(this.app, input);
 
     const footer = contentEl.createEl("div", { cls: "mos-feedback-modal-footer" });
     const hint = footer.createEl("span", { cls: "mos-feedback-status", text: "Enter to save" });
