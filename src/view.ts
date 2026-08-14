@@ -382,7 +382,36 @@ export class MorningView extends ItemView {
     for (const task of tasks) {
       const row = parent.createEl("div", { cls: "morning-os-task-row" });
       const checkbox = row.createEl("input", { type: "checkbox" });
-      renderMdContent(this.app, this, row, "span", "morning-os-task-text", task.text);
+      const textSpan = renderMdContent(this.app, this, row, "span", "morning-os-task-text", task.text);
+      textSpan.addEventListener("dblclick", () => {
+        const input = document.createElement("input");
+        input.type = "text";
+        input.value = task.text;
+        input.className = "morning-os-wins-input mos-inline-edit";
+        textSpan.replaceWith(input);
+        attachTaskTextSuggest(this.app, input);
+        input.focus();
+        let saving = false;
+        const save = async () => {
+          if (saving) return;
+          saving = true;
+          const newText = input.value.trim();
+          if (newText && newText !== task.text) {
+            const reg = await loadRegistry(this.app);
+            const idx = reg.findIndex(t => t._id === task._id);
+            if (idx !== -1) { reg[idx].text = newText; reg[idx].date_modified = todayStr(); }
+            await saveRegistry(this.app, reg);
+            this.plugin.refreshView();
+          } else {
+            input.replaceWith(textSpan);
+          }
+        };
+        input.addEventListener("blur", () => { void save(); });
+        input.addEventListener("keydown", (e: KeyboardEvent) => {
+          if (e.key === "Enter") void save();
+          if (e.key === "Escape") input.replaceWith(textSpan);
+        });
+      });
       if (task.date_remind) {
         row.createEl("span", { cls: "morning-os-reminder-badge", text: `⏰ ${task.date_remind}` });
       }
@@ -445,7 +474,36 @@ export class MorningView extends ItemView {
       const row = parent.createEl("div", { cls: "morning-os-task-row morning-os-task-done" });
       const checkbox = row.createEl("input", { type: "checkbox" });
       checkbox.checked = true;
-      renderMdContent(this.app, this, row, "span", "morning-os-task-text", task.text);
+      const textSpan = renderMdContent(this.app, this, row, "span", "morning-os-task-text", task.text);
+      textSpan.addEventListener("dblclick", () => {
+        const input = document.createElement("input");
+        input.type = "text";
+        input.value = task.text;
+        input.className = "morning-os-wins-input mos-inline-edit";
+        textSpan.replaceWith(input);
+        attachTaskTextSuggest(this.app, input);
+        input.focus();
+        let saving = false;
+        const save = async () => {
+          if (saving) return;
+          saving = true;
+          const newText = input.value.trim();
+          if (newText && newText !== task.text) {
+            const reg = await loadRegistry(this.app);
+            const idx = reg.findIndex(t => t._id === task._id);
+            if (idx !== -1) { reg[idx].text = newText; reg[idx].date_modified = todayStr(); }
+            await saveRegistry(this.app, reg);
+            this.plugin.refreshView();
+          } else {
+            input.replaceWith(textSpan);
+          }
+        };
+        input.addEventListener("blur", () => { void save(); });
+        input.addEventListener("keydown", (e: KeyboardEvent) => {
+          if (e.key === "Enter") void save();
+          if (e.key === "Escape") input.replaceWith(textSpan);
+        });
+      });
       checkbox.addEventListener("change", () => {
         row.toggleClass("morning-os-task-done", checkbox.checked);
         void setTaskStatus(this.app, task._id, checkbox.checked ? "done" : "open")
@@ -534,7 +592,36 @@ export class MorningView extends ItemView {
     for (const task of reminders) {
       const row = card.createEl("div", { cls: "morning-os-task-row" });
       const checkbox = row.createEl("input", { type: "checkbox" });
-      renderMdContent(this.app, this, row, "span", "morning-os-task-text", task.text);
+      const textSpan = renderMdContent(this.app, this, row, "span", "morning-os-task-text", task.text);
+      textSpan.addEventListener("dblclick", () => {
+        const input = document.createElement("input");
+        input.type = "text";
+        input.value = task.text;
+        input.className = "morning-os-wins-input mos-inline-edit";
+        textSpan.replaceWith(input);
+        attachTaskTextSuggest(this.app, input);
+        input.focus();
+        let saving = false;
+        const save = async () => {
+          if (saving) return;
+          saving = true;
+          const newText = input.value.trim();
+          if (newText && newText !== task.text) {
+            const reg = await loadRegistry(this.app);
+            const idx = reg.findIndex(t => t._id === task._id);
+            if (idx !== -1) { reg[idx].text = newText; reg[idx].date_modified = todayStr(); }
+            await saveRegistry(this.app, reg);
+            this.plugin.refreshView();
+          } else {
+            input.replaceWith(textSpan);
+          }
+        };
+        input.addEventListener("blur", () => { void save(); });
+        input.addEventListener("keydown", (e: KeyboardEvent) => {
+          if (e.key === "Enter") void save();
+          if (e.key === "Escape") input.replaceWith(textSpan);
+        });
+      });
       row.createEl("span", { cls: "morning-os-reminder-badge", text: `⏰ ${task.date_remind}` });
 
       // Dismiss = clear remind date (task stays open)
