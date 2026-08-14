@@ -1,6 +1,6 @@
 {
   "name": "morning-os",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Personal Knowledge OS - Morning briefing dashboard for Obsidian",
   "main": "main.js",
   "scripts": {

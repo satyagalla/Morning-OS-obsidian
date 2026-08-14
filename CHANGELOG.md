@@ -41,7 +41,7 @@ Next up: smarter agents, better personalization, and features I haven't told any
 ---
 ---
 
-## v0.3.0
+## v0.3.1
 
 ### Personal
 
@@ -63,6 +63,8 @@ And I want to hear from you - what you use, what you ignore, what's confusing, w
 - **Wins are a real log now**, not text buried in a daily note that eventually gets archived and forgotten — yesterday's wins show up on the dashboard the next morning
 - Feedback button now goes to a real inbox instead of just sitting there — the old channel got flooded by a bot and none of what you sent was actually getting through; that's fixed now
 - A round of smaller fixes: wins log formatting cleaned up, migration no longer chokes on large vaults, and the API key banner only shows up when you're actually using AI mode
+- Fixed a batch of code-quality issues flagged by Obsidian's community plugin review: type-safety gaps around date formatting, duplicate CSS properties, and a stale build artifact that didn't match the last release's source
+- Known limitation: settings aren't searchable via Obsidian's new global settings search (added in 1.13) — the settings panel itself works exactly as before on every version, this only affects the new cross-plugin search box
 
 ### Note for people upgrading from 0.2.x
 
