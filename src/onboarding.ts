@@ -68,7 +68,7 @@ async function scaffoldVault(plugin: MorningOSPlugin, rootPath: string): Promise
 
   // Create required directories
   const dirs = [
-    `${rootPath}/Pillars`,
+    `${rootPath}/Areas`,
     `_generated/briefs`,
     `_generated/feedback`,
     `_generated/feedback/reactions`,
@@ -78,21 +78,21 @@ async function scaffoldVault(plugin: MorningOSPlugin, rootPath: string): Promise
     log.push(`Creating ${dir}/ ✓`);
   }
 
-  // Create pillar markdown files (empty body, just the title heading)
-  const pillarFiles: ScaffoldFile[] = plugin.settings.pillars.map(p => ({
-    path: `${rootPath}/Pillars/${p.label}.md`,
+  // Create area markdown files (empty body, just the title heading)
+  const areaFiles: ScaffoldFile[] = plugin.settings.areas.map(p => ({
+    path: `${rootPath}/Areas/${p.label}.md`,
     content: "",
   }));
 
   // Pre-populate Health and Career with sample content
-  const healthFile = pillarFiles.find(f => f.path.includes("Health"));
-  const careerFile = pillarFiles.find(f => f.path.includes("Career"));
+  const healthFile = areaFiles.find(f => f.path.includes("Health"));
+  const careerFile = areaFiles.find(f => f.path.includes("Career"));
   if (healthFile) healthFile.content = SAMPLE_HEALTH_CONTENT;
   if (careerFile) careerFile.content = SAMPLE_CAREER_CONTENT;
 
   // Create identity anchor
   const allFiles: ScaffoldFile[] = [
-    ...pillarFiles,
+    ...areaFiles,
     {
       path: `${rootPath}/Identity-Anchor.md`,
       content: `- I build things that matter\n- I protect my mornings\n- I trust the process\n- I am more than my to-do list\n- I am figuring it out, and that is enough\n`,
@@ -120,11 +120,11 @@ async function scaffoldVault(plugin: MorningOSPlugin, rootPath: string): Promise
   plugin.settings.sourceIdentity  = `${rootPath}/Identity-Anchor.md`;
   plugin.settings.sourceWins      = `${rootPath}/Wins.md`;
   // Legacy paths kept for migration fallback
-  plugin.settings.sourceTacticalRules  = `${rootPath}/Pillars/Health.md`;
-  plugin.settings.sourceEmotionalRules = `${rootPath}/Pillars/Health.md`;
-  plugin.settings.sourceGoals          = `${rootPath}/Pillars/Career.md`;
-  plugin.settings.sourceTechnicalTasks = `${rootPath}/Pillars/Career.md`;
-  plugin.settings.sourceHobbyTasks     = `${rootPath}/Pillars/Interests.md`;
+  plugin.settings.sourceTacticalRules  = `${rootPath}/Areas/Health.md`;
+  plugin.settings.sourceEmotionalRules = `${rootPath}/Areas/Health.md`;
+  plugin.settings.sourceGoals          = `${rootPath}/Areas/Career.md`;
+  plugin.settings.sourceTechnicalTasks = `${rootPath}/Areas/Career.md`;
+  plugin.settings.sourceHobbyTasks     = `${rootPath}/Areas/Interests.md`;
   plugin.settings.onboarded = true;
   await plugin.saveData(plugin.settings);
 
@@ -134,7 +134,7 @@ async function scaffoldVault(plugin: MorningOSPlugin, rootPath: string): Promise
   const briefPath = `${plugin.settings.briefsDir}/${dateStr}.json`;
   const briefJson = JSON.parse(await app.vault.adapter.read(briefPath)) as import("./types").DailyBrief;
   briefJson.suggestions = [
-    { text: "Welcome to Morning OS. Add your rules and goals to your Health and Career pillars — the briefing agent will use them to personalise your daily brief.", source: "tasks" },
+    { text: "Welcome to Morning OS. Add your rules and goals to your Health and Career areas — the briefing agent will use them to personalise your daily brief.", source: "tasks" },
     { text: "Start with your top 3 tasks for today: open the Inbox, add them, and move them to Today.", source: "tasks" },
   ];
   await app.vault.adapter.write(briefPath, JSON.stringify(briefJson, null, 2));

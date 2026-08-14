@@ -1,6 +1,6 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
 import type MorningOSPlugin from "./main";
-import type { PillarConfig, TabConfig, FieldDef, LLMSectionMapping } from "./types";
+import type { AreaConfig, TabConfig, FieldDef, LLMSectionMapping } from "./types";
 
 export interface MorningOSSettings {
   // Plugin display paths
@@ -71,7 +71,7 @@ export interface MorningOSSettings {
   // Wins log
   sourceWins: string;
 
-  // LLM section mappings (pillar markdown sections → LLM context slots)
+  // LLM section mappings (area markdown sections → LLM context slots)
   llmSectionMappings: LLMSectionMapping[];
 
   // Migration
@@ -81,7 +81,7 @@ export interface MorningOSSettings {
   onboarded: boolean;
 
   lastSeenVersion: string;
-  pillars: PillarConfig[];
+  areas: AreaConfig[];
 
   // Subtasks
   requireSubtasksComplete: boolean;
@@ -167,7 +167,7 @@ export const DEFAULT_SETTINGS: MorningOSSettings = {
 
   lastSeenVersion: "",
 
-  pillars: [
+  areas: [
     { key: "health",       label: "Health",         icon: "❤️",  feedToLLM: true,  tabs: [
       { key: "physical",  label: "Physical",    fields: [], view_mode: "cards" },
       { key: "mental",    label: "Mental/ADHD", fields: [], view_mode: "cards" },
@@ -255,7 +255,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
       { key: "ai",       label: "AI" },
       { key: "vault",    label: "Vault" },
       { key: "display",  label: "Display" },
-      { key: "pillars",  label: "Pillars" },
+      { key: "areas",  label: "Areas" },
       { key: "about",    label: "About" },
     ];
     const bar = containerEl.createEl("div", { cls: "mos-settings-tab-bar" });
@@ -286,7 +286,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
       case "ai":       this.renderAISection(content); break;
       case "vault":    this.renderPathsSection(content); this.renderHeadingsSection(content); break;
       case "display":  this.renderCountsSection(content); this.renderModesSection(content); break;
-      case "pillars":  this.renderPillarsSection(content); break;
+      case "areas":  this.renderAreasSection(content); break;
       case "about":    this.renderAboutSection(content); break;
     }
   }
@@ -460,13 +460,13 @@ export class MorningOSSettingTab extends PluginSettingTab {
 
     const migrationDone = this.plugin.settings.migrationComplete;
     const migrationSetting = new Setting(containerEl)
-      .setName("Migrate vault to pillars")
+      .setName("Migrate vault to areas")
       .setDesc(migrationDone
-        ? "Migration complete. Your vault is using the new pillar system."
-        : "Move your existing rules, goals, and tasks to the new pillar system. Old files are archived to _archive/pre-migration/.");
+        ? "Migration complete. Your vault is using the new area system."
+        : "Move your existing rules, goals, and tasks to the new area system. Old files are archived to _archive/pre-migration/.");
 
     if (migrationDone) {
-      migrationSetting.setDesc("Migration complete. Your vault is using the new pillar system. Only re-run if you've added new content to old source files.");
+      migrationSetting.setDesc("Migration complete. Your vault is using the new area system. Only re-run if you've added new content to old source files.");
       migrationSetting.addButton(btn => {
         btn.setButtonText("Migrated ✓").setDisabled(true);
         btn.buttonEl.addClass("mos-btn-success");
@@ -740,66 +740,66 @@ export class MorningOSSettingTab extends PluginSettingTab {
       );
   }
 
-  private selectedPillarKey: string | null = null;
+  private selectedAreaKey: string | null = null;
   private selectedTabKey: string | null = null;
 
-  private async savePillars() {
-    await this.save({ pillars: [...this.plugin.settings.pillars] });
-    await this.plugin.reregisterPillarViews();
+  private async saveAreas() {
+    await this.save({ areas: [...this.plugin.settings.areas] });
+    await this.plugin.reregisterAreaViews();
   }
 
-  private renderPillarsSection(containerEl: HTMLElement) {
-    const pillars = this.plugin.settings.pillars;
+  private renderAreasSection(containerEl: HTMLElement) {
+    const areas = this.plugin.settings.areas;
     const saveDataOnly = async () => {
       await this.plugin.saveData(this.plugin.settings);
       this.plugin.refreshView();
     };
     const saveAndSync = async () => {
       await this.plugin.saveData(this.plugin.settings);
-      await this.plugin.reregisterPillarViews();
+      await this.plugin.reregisterAreaViews();
     };
 
-    if (this.selectedPillarKey && !pillars.find(p => p.key === this.selectedPillarKey)) {
-      this.selectedPillarKey = null; this.selectedTabKey = null;
+    if (this.selectedAreaKey && !areas.find(p => p.key === this.selectedAreaKey)) {
+      this.selectedAreaKey = null; this.selectedTabKey = null;
     }
 
-    const wrap = containerEl.createEl("div", { cls: "mos-pillars-layout" });
-    const left = wrap.createEl("div", { cls: "mos-pillars-left" });
-    const right = wrap.createEl("div", { cls: "mos-pillars-right" });
+    const wrap = containerEl.createEl("div", { cls: "mos-areas-layout" });
+    const left = wrap.createEl("div", { cls: "mos-areas-left" });
+    const right = wrap.createEl("div", { cls: "mos-areas-right" });
 
-    // ── LEFT: pillar list ──────────────────────────────────────────────────
+    // ── LEFT: area list ──────────────────────────────────────────────────
 
-    const renderNavRow = (p: typeof pillars[0], pi: number) => {
-      const row = left.createEl("div", { cls: "mos-pillars-nav-row" });
+    const renderNavRow = (p: typeof areas[0], pi: number) => {
+      const row = left.createEl("div", { cls: "mos-areas-nav-row" });
       const item = row.createEl("div", {
-        cls: "mos-pillars-nav-item" + (this.selectedPillarKey === p.key ? " is-active" : ""),
+        cls: "mos-areas-nav-item" + (this.selectedAreaKey === p.key ? " is-active" : ""),
         text: `${p.icon} ${p.label}`,
         attr: { "data-key": p.key },
       });
       item.addEventListener("click", () => {
-        left.querySelectorAll(".mos-pillars-nav-item").forEach(el => el.removeClass("is-active"));
+        left.querySelectorAll(".mos-areas-nav-item").forEach(el => el.removeClass("is-active"));
         item.addClass("is-active");
-        this.selectedPillarKey = p.key;
+        this.selectedAreaKey = p.key;
         this.selectedTabKey = null;
         right.empty();
         renderRight();
       });
 
-      const reorder = row.createEl("div", { cls: "mos-pillars-reorder" });
+      const reorder = row.createEl("div", { cls: "mos-areas-reorder" });
       if (pi > 0) {
         reorder.createEl("button", { cls: "mos-btn mos-btn-icon", text: "↑" })
           .addEventListener("click", async (e) => {
             e.stopPropagation();
-            [pillars[pi - 1], pillars[pi]] = [pillars[pi], pillars[pi - 1]];
+            [areas[pi - 1], areas[pi]] = [areas[pi], areas[pi - 1]];
             await saveDataOnly();
             left.empty(); renderLeft();
           });
       }
-      if (pi < pillars.length - 1) {
+      if (pi < areas.length - 1) {
         reorder.createEl("button", { cls: "mos-btn mos-btn-icon", text: "↓" })
           .addEventListener("click", async (e) => {
             e.stopPropagation();
-            [pillars[pi], pillars[pi + 1]] = [pillars[pi + 1], pillars[pi]];
+            [areas[pi], areas[pi + 1]] = [areas[pi + 1], areas[pi]];
             await saveDataOnly();
             left.empty(); renderLeft();
           });
@@ -807,19 +807,19 @@ export class MorningOSSettingTab extends PluginSettingTab {
     };
 
     const renderLeft = () => {
-      pillars.forEach((p, pi) => renderNavRow(p, pi));
+      areas.forEach((p, pi) => renderNavRow(p, pi));
 
-      left.createEl("div", { cls: "mos-pillars-nav-divider" });
-      const addRow = left.createEl("div", { cls: "mos-pillars-add-row" });
-      const labelIn = addRow.createEl("input", { type: "text", cls: "morning-os-wins-input", placeholder: "New pillar…" });
+      left.createEl("div", { cls: "mos-areas-nav-divider" });
+      const addRow = left.createEl("div", { cls: "mos-areas-add-row" });
+      const labelIn = addRow.createEl("input", { type: "text", cls: "morning-os-wins-input", placeholder: "New area…" });
       const addBtn = addRow.createEl("button", { cls: "mos-btn mos-btn-primary", text: "Add" });
       const doAdd = async () => {
         const l = labelIn.value.trim();
         if (!l) return;
         const k = l.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
-        if (pillars.find(p => p.key === k)) return;
-        pillars.push({ key: k, label: l, icon: "📌", tabs: [], feedToLLM: true });
-        this.selectedPillarKey = k;
+        if (areas.find(p => p.key === k)) return;
+        areas.push({ key: k, label: l, icon: "📌", tabs: [], feedToLLM: true });
+        this.selectedAreaKey = k;
         this.selectedTabKey = null;
         labelIn.value = "";
         await saveDataOnly();
@@ -831,9 +831,9 @@ export class MorningOSSettingTab extends PluginSettingTab {
       labelIn.addEventListener("keydown", (e: KeyboardEvent) => { if (e.key === "Enter") void doAdd(); });
     };
 
-    // ── RIGHT: pillar detail ───────────────────────────────────────────────
+    // ── RIGHT: area detail ───────────────────────────────────────────────
 
-    const renderTabDetail = (tabDetailEl: HTMLElement, selectedTab: typeof pillars[0]["tabs"][0]) => {
+    const renderTabDetail = (tabDetailEl: HTMLElement, selectedTab: typeof areas[0]["tabs"][0]) => {
       tabDetailEl.empty();
 
       // Tab name edit
@@ -842,7 +842,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
         t.onChange(async v => {
           selectedTab.label = v;
           // Update pill label in-place
-          const pill = right.querySelector(`.mos-pillars-tab-btn[data-tabkey="${selectedTab.key}"] span`);
+          const pill = right.querySelector(`.mos-areas-tab-btn[data-tabkey="${selectedTab.key}"] span`);
           if (pill) pill.textContent = v;
           await saveAndSync();
         });
@@ -858,14 +858,14 @@ export class MorningOSSettingTab extends PluginSettingTab {
         });
       });
 
-      tabDetailEl.createEl("div", { cls: "mos-pillars-sub-heading", text: "Fields" });
+      tabDetailEl.createEl("div", { cls: "mos-areas-sub-heading", text: "Fields" });
 
       const renderFieldRows = () => {
         const existing = tabDetailEl.querySelectorAll(".mos-field-row");
         existing.forEach(el => el.remove());
         selectedTab.fields.forEach((field, fi) => {
-          const fRow = tabDetailEl.createEl("div", { cls: "mos-pillar-builder-row mos-field-row" });
-          fRow.createEl("span", { cls: "mos-pillar-builder-label", text: field.label });
+          const fRow = tabDetailEl.createEl("div", { cls: "mos-area-builder-row mos-field-row" });
+          fRow.createEl("span", { cls: "mos-area-builder-label", text: field.label });
           fRow.createEl("span", { cls: "mos-meta-chip", text: field.type });
           if (field.type === "dropdown") {
             const optStr = (field.options ?? []).join(", ");
@@ -887,14 +887,14 @@ export class MorningOSSettingTab extends PluginSettingTab {
       renderFieldRows();
 
       if (selectedTab.fields.length === 0) {
-        tabDetailEl.createEl("p", { cls: "mos-pillars-empty", text: "No fields yet." });
+        tabDetailEl.createEl("p", { cls: "mos-areas-empty", text: "No fields yet." });
       }
 
-      const addFRow = tabDetailEl.createEl("div", { cls: "mos-pillar-builder-row" });
+      const addFRow = tabDetailEl.createEl("div", { cls: "mos-area-builder-row" });
       const fLabelIn = addFRow.createEl("input", { type: "text", cls: "morning-os-wins-input", placeholder: "Field label" });
       const fTypeSelect = addFRow.createEl("select", { cls: "mos-btn mos-btn-select" });
       for (const ft of ["text", "url", "dropdown", "date"]) fTypeSelect.createEl("option", { value: ft, text: ft });
-      const fOptionsWrap = tabDetailEl.createEl("div", { cls: "mos-pillar-builder-row mos-field-options-row" });
+      const fOptionsWrap = tabDetailEl.createEl("div", { cls: "mos-area-builder-row mos-field-options-row" });
       fOptionsWrap.style.display = "none";
       fOptionsWrap.createEl("label", { cls: "mos-edit-label", text: "Options (comma-separated)" });
       const fOptionsIn = fOptionsWrap.createEl("input", { type: "text", cls: "morning-os-wins-input", placeholder: "Option 1, Option 2, Option 3" });
@@ -924,23 +924,23 @@ export class MorningOSSettingTab extends PluginSettingTab {
     };
 
     const renderRight = () => {
-      if (!this.selectedPillarKey) {
-        right.createEl("p", { cls: "mos-pillars-empty", text: "← Select a pillar to edit" });
+      if (!this.selectedAreaKey) {
+        right.createEl("p", { cls: "mos-areas-empty", text: "← Select a area to edit" });
         return;
       }
-      const pillar = pillars.find(p => p.key === this.selectedPillarKey);
-      if (!pillar) return;
+      const area = areas.find(p => p.key === this.selectedAreaKey);
+      if (!area) return;
 
       // Header
-      const ph = right.createEl("div", { cls: "mos-pillars-detail-header" });
-      const previewEl = ph.createEl("span", { cls: "mos-pillars-detail-preview", text: `${pillar.icon} ${pillar.label}` });
-      const navItem = left.querySelector(`.mos-pillars-nav-item[data-key="${pillar.key}"]`) as HTMLElement | null;
+      const ph = right.createEl("div", { cls: "mos-areas-detail-header" });
+      const previewEl = ph.createEl("span", { cls: "mos-areas-detail-preview", text: `${area.icon} ${area.label}` });
+      const navItem = left.querySelector(`.mos-areas-nav-item[data-key="${area.key}"]`) as HTMLElement | null;
 
-      ph.createEl("button", { cls: "mos-btn mos-btn-inline mos-btn-danger", text: "Delete pillar" })
+      ph.createEl("button", { cls: "mos-btn mos-btn-inline mos-btn-danger", text: "Delete area" })
         .addEventListener("click", async () => {
-          const idx = pillars.findIndex(p => p.key === pillar.key);
-          if (idx !== -1) pillars.splice(idx, 1);
-          this.selectedPillarKey = null;
+          const idx = areas.findIndex(p => p.key === area.key);
+          if (idx !== -1) areas.splice(idx, 1);
+          this.selectedAreaKey = null;
           await saveDataOnly();
           left.empty(); renderLeft();
           right.empty(); renderRight();
@@ -948,18 +948,18 @@ export class MorningOSSettingTab extends PluginSettingTab {
 
       // Label
       new Setting(right).setName("Label").addText(t => {
-        t.setValue(pillar.label);
+        t.setValue(area.label);
         t.onChange(async v => {
-          pillar.label = v;
-          previewEl.textContent = `${pillar.icon} ${pillar.label}`;
-          if (navItem) navItem.textContent = `${pillar.icon} ${pillar.label}`;
+          area.label = v;
+          previewEl.textContent = `${area.icon} ${area.label}`;
+          if (navItem) navItem.textContent = `${area.icon} ${area.label}`;
           await saveAndSync();
         });
       });
 
       // Icon picker
       const iconSetting = new Setting(right).setName("Icon");
-      const iconBtn = iconSetting.controlEl.createEl("button", { cls: "mos-icon-picker-btn", text: pillar.icon });
+      const iconBtn = iconSetting.controlEl.createEl("button", { cls: "mos-icon-picker-btn", text: area.icon });
       iconBtn.addEventListener("click", () => {
         const existing = right.querySelector(".mos-emoji-picker-wrap");
         if (existing) { existing.remove(); return; }
@@ -970,10 +970,10 @@ export class MorningOSSettingTab extends PluginSettingTab {
           picker.addEventListener("emoji-click", async (e: Event) => {
             const unicode = (e as CustomEvent).detail?.unicode as string | undefined;
             if (!unicode) return;
-            pillar.icon = unicode;
+            area.icon = unicode;
             iconBtn.textContent = unicode;
-            previewEl.textContent = `${unicode} ${pillar.label}`;
-            if (navItem) navItem.textContent = `${unicode} ${pillar.label}`;
+            previewEl.textContent = `${unicode} ${area.label}`;
+            if (navItem) navItem.textContent = `${unicode} ${area.label}`;
             wrap.remove();
             await saveAndSync();
           });
@@ -982,30 +982,30 @@ export class MorningOSSettingTab extends PluginSettingTab {
       });
 
       // Feed to LLM toggle
-      new Setting(right).setName("Feed to LLM").setDesc("Allow this pillar's markdown sections to feed into the briefing agent context.").addToggle(t => {
-        t.setValue(pillar.feedToLLM ?? true);
-        t.onChange(async v => { pillar.feedToLLM = v; await saveAndSync(); });
+      new Setting(right).setName("Feed to LLM").setDesc("Allow this area's markdown sections to feed into the briefing agent context.").addToggle(t => {
+        t.setValue(area.feedToLLM ?? true);
+        t.onChange(async v => { area.feedToLLM = v; await saveAndSync(); });
       });
 
       // Tabs section
-      right.createEl("div", { cls: "setting-item-heading mos-pillars-sub-heading", text: "Tabs" });
+      right.createEl("div", { cls: "setting-item-heading mos-areas-sub-heading", text: "Tabs" });
 
-      const tabNav = right.createEl("div", { cls: "mos-pillars-tab-nav" });
+      const tabNav = right.createEl("div", { cls: "mos-areas-tab-nav" });
       const tabDetailContainer = right.createEl("div");
 
       const renderTabNav = () => {
         tabNav.empty();
-        pillar.tabs.forEach(tab => {
+        area.tabs.forEach(tab => {
           const tabBtn = tabNav.createEl("div", {
-            cls: "mos-pillars-tab-btn" + (this.selectedTabKey === tab.key ? " is-active" : ""),
+            cls: "mos-areas-tab-btn" + (this.selectedTabKey === tab.key ? " is-active" : ""),
             attr: { "data-tabkey": tab.key },
           });
           tabBtn.createEl("span", { text: tab.label });
           tabBtn.createEl("button", { cls: "mos-btn mos-btn-icon", text: "✕" })
             .addEventListener("click", async (e) => {
               e.stopPropagation();
-              const ti = pillar.tabs.findIndex(t => t.key === tab.key);
-              if (ti !== -1) pillar.tabs.splice(ti, 1);
+              const ti = area.tabs.findIndex(t => t.key === tab.key);
+              if (ti !== -1) area.tabs.splice(ti, 1);
               if (this.selectedTabKey === tab.key) {
                 this.selectedTabKey = null;
                 tabDetailContainer.empty();
@@ -1015,10 +1015,10 @@ export class MorningOSSettingTab extends PluginSettingTab {
             });
           tabBtn.addEventListener("click", () => {
             this.selectedTabKey = this.selectedTabKey === tab.key ? null : tab.key;
-            tabNav.querySelectorAll(".mos-pillars-tab-btn").forEach(el => el.removeClass("is-active"));
+            tabNav.querySelectorAll(".mos-areas-tab-btn").forEach(el => el.removeClass("is-active"));
             if (this.selectedTabKey) tabBtn.addClass("is-active");
             tabDetailContainer.empty();
-            const t = pillar.tabs.find(tb => tb.key === this.selectedTabKey);
+            const t = area.tabs.find(tb => tb.key === this.selectedTabKey);
             if (t) renderTabDetail(tabDetailContainer, t);
           });
         });
@@ -1026,23 +1026,23 @@ export class MorningOSSettingTab extends PluginSettingTab {
       renderTabNav();
 
       // Render tab detail if one is already selected
-      const currentTab = pillar.tabs.find(t => t.key === this.selectedTabKey);
+      const currentTab = area.tabs.find(t => t.key === this.selectedTabKey);
       if (currentTab) renderTabDetail(tabDetailContainer, currentTab);
 
       // Add tab
-      const addTabRow = right.createEl("div", { cls: "mos-pillar-builder-row" });
+      const addTabRow = right.createEl("div", { cls: "mos-area-builder-row" });
       const tabLabelIn = addTabRow.createEl("input", { type: "text", cls: "morning-os-wins-input", placeholder: "New tab…" });
       const doAddTab = async () => {
         const l = tabLabelIn.value.trim();
         if (!l) return;
         const k = l.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
-        if (pillar.tabs.find(t => t.key === k)) return;
-        pillar.tabs.push({ key: k, label: l, fields: [], view_mode: "cards" });
+        if (area.tabs.find(t => t.key === k)) return;
+        area.tabs.push({ key: k, label: l, fields: [], view_mode: "cards" });
         this.selectedTabKey = k;
         tabLabelIn.value = "";
         await saveDataOnly();
         renderTabNav();
-        const newTab = pillar.tabs.find(t => t.key === k)!;
+        const newTab = area.tabs.find(t => t.key === k)!;
         tabDetailContainer.empty();
         renderTabDetail(tabDetailContainer, newTab);
       };

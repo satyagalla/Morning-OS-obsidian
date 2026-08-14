@@ -14,12 +14,12 @@ export interface TabConfig {
   view_mode: "cards" | "table";
 }
 
-export interface PillarConfig {
+export interface AreaConfig {
   key: string;
   label: string;
   icon: string;
   tabs: TabConfig[];
-  feedToLLM: boolean;  // whether pillar markdown sections feed into LLM context
+  feedToLLM: boolean;  // whether area markdown sections feed into LLM context
 }
 
 export interface LLMSectionMapping {
@@ -32,7 +32,7 @@ export interface Task {
   _id: string;
   text: string;
   notes: string;
-  pillars: string[];
+  areas: string[];
   tags: Record<string, string>;
   status_completion: CompletionStatus;
   status_priority: "red" | "regular";

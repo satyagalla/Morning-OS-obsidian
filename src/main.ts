@@ -1,5 +1,5 @@
 import { Plugin, WorkspaceLeaf, Notice } from "obsidian";
-import { MorningView, VIEW_TYPE_MORNING, PillarView, DumpView, TrashView, VIEW_TYPE_PILLAR, VIEW_TYPE_DUMP, VIEW_TYPE_TRASH, CaptureModal } from "./view";
+import { MorningView, VIEW_TYPE_MORNING, AreaView, DumpView, TrashView, VIEW_TYPE_AREA, VIEW_TYPE_DUMP, VIEW_TYPE_TRASH, CaptureModal } from "./view";
 import { MorningOSSettings, DEFAULT_SETTINGS, MorningOSSettingTab } from "./settings";
 import { runAgent, refreshBrief, AgentResult } from "./agent/run";
 import { scaffoldDailyNote } from "./agent/scaffold-daily-note";
@@ -15,10 +15,10 @@ export default class MorningOSPlugin extends Plugin {
   async onload() {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData()) as MorningOSSettings;
 
-    // Migrate feedToLLM onto existing pillar configs that predate the field
-    for (const pillar of this.settings.pillars) {
-      if (pillar.feedToLLM === undefined) {
-        pillar.feedToLLM = !["family", "relationship"].includes(pillar.key);
+    // Migrate feedToLLM onto existing area configs that predate the field
+    for (const area of this.settings.areas) {
+      if (area.feedToLLM === undefined) {
+        area.feedToLLM = !["family", "relationship"].includes(area.key);
       }
     }
 
@@ -40,9 +40,9 @@ export default class MorningOSPlugin extends Plugin {
     this.registerView(VIEW_TYPE_MORNING, (leaf) => new MorningView(leaf, this.settings, this));
     this.registerView(VIEW_TYPE_DUMP, (leaf) => new DumpView(leaf, this.settings, this));
     this.registerView(VIEW_TYPE_TRASH, (leaf) => new TrashView(leaf, this.settings, this));
-    for (const pillar of this.settings.pillars) {
-      const key = pillar.key;
-      this.registerView(`${VIEW_TYPE_PILLAR}-${key}`, (leaf) => new PillarView(leaf, this.settings, this, key));
+    for (const area of this.settings.areas) {
+      const key = area.key;
+      this.registerView(`${VIEW_TYPE_AREA}-${key}`, (leaf) => new AreaView(leaf, this.settings, this, key));
     }
 
     this.addRibbonIcon("sun", "Morning OS", () => {
@@ -134,21 +134,21 @@ export default class MorningOSPlugin extends Plugin {
     for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_TRASH)) {
       void (leaf.view as TrashView).refresh();
     }
-    for (const pillar of this.settings.pillars) {
-      for (const leaf of this.app.workspace.getLeavesOfType(`${VIEW_TYPE_PILLAR}-${pillar.key}`)) {
-        void (leaf.view as PillarView).refresh();
+    for (const area of this.settings.areas) {
+      for (const leaf of this.app.workspace.getLeavesOfType(`${VIEW_TYPE_AREA}-${area.key}`)) {
+        void (leaf.view as AreaView).refresh();
       }
     }
   }
 
-  async reregisterPillarViews() {
-    for (const pillar of this.settings.pillars) {
-      this.app.workspace.getLeavesOfType(`${VIEW_TYPE_PILLAR}-${pillar.key}`)
+  async reregisterAreaViews() {
+    for (const area of this.settings.areas) {
+      this.app.workspace.getLeavesOfType(`${VIEW_TYPE_AREA}-${area.key}`)
         .forEach(l => l.detach());
     }
-    for (const pillar of this.settings.pillars) {
-      const key = pillar.key;
-      this.registerView(`${VIEW_TYPE_PILLAR}-${key}`, (leaf) => new PillarView(leaf, this.settings, this, key));
+    for (const area of this.settings.areas) {
+      const key = area.key;
+      this.registerView(`${VIEW_TYPE_AREA}-${key}`, (leaf) => new AreaView(leaf, this.settings, this, key));
     }
     this.refreshView();
   }
@@ -169,8 +169,8 @@ export default class MorningOSPlugin extends Plugin {
     await workspace.revealLeaf(leaf);
   }
 
-  async activatePillar(key: string) {
-    const type = `${VIEW_TYPE_PILLAR}-${key}`;
+  async activateArea(key: string) {
+    const type = `${VIEW_TYPE_AREA}-${key}`;
     const { workspace } = this.app;
     const leaves = workspace.getLeavesOfType(type);
     const leaf = leaves.length > 0 ? leaves[0] : workspace.getLeaf("tab");
@@ -192,16 +192,16 @@ export default class MorningOSPlugin extends Plugin {
     const userFolder = this.settings.dailyNoteDir.split("/")[0] || "Essential";
     const results: string[] = [];
 
-    // Ensure Pillars directory exists
-    const pillarsDir = `${userFolder}/Pillars`;
-    if (!(await this.app.vault.adapter.exists(pillarsDir))) {
-      await this.app.vault.adapter.mkdir(pillarsDir);
+    // Ensure Areas directory exists
+    const areasDir = `${userFolder}/Areas`;
+    if (!(await this.app.vault.adapter.exists(areasDir))) {
+      await this.app.vault.adapter.mkdir(areasDir);
     }
 
-    // Helper: append missing bullets to a section in a pillar markdown (idempotent per bullet)
-    const appendSectionToPillar = async (pillarLabel: string, sectionHeading: string, bullets: string[]) => {
+    // Helper: append missing bullets to a section in a area markdown (idempotent per bullet)
+    const appendSectionToArea = async (areaLabel: string, sectionHeading: string, bullets: string[]) => {
       if (bullets.length === 0) return;
-      const path = `${pillarsDir}/${pillarLabel}.md`;
+      const path = `${areasDir}/${areaLabel}.md`;
       let content = (await this.app.vault.adapter.exists(path))
         ? await this.app.vault.adapter.read(path)
         : "";
@@ -232,29 +232,29 @@ export default class MorningOSPlugin extends Plugin {
       await this.app.vault.adapter.write(path, content);
     };
 
-    // 0. Create pillar markdown files for all pillars (idempotent — skip if already exists)
-    let pillarsCreated = 0;
-    for (const pillar of this.settings.pillars) {
-      const path = `${pillarsDir}/${pillar.label}.md`;
+    // 0. Create area markdown files for all areas (idempotent — skip if already exists)
+    let areasCreated = 0;
+    for (const area of this.settings.areas) {
+      const path = `${areasDir}/${area.label}.md`;
       if (!(await this.app.vault.adapter.exists(path))) {
         await this.app.vault.adapter.write(path, "");
-        pillarsCreated++;
+        areasCreated++;
       }
     }
-    if (pillarsCreated > 0) results.push(`✓ Created ${pillarsCreated} pillar markdown files`);
+    if (areasCreated > 0) results.push(`✓ Created ${areasCreated} area markdown files`);
 
     // 1. Migrate Tactical Rules → Health.md ## Tactical Rules
     const tactical = await parseBulletFile(this.settings.sourceTacticalRules, this.app);
     if (tactical.length) {
-      await appendSectionToPillar("Health", "Tactical Rules", tactical);
-      results.push(`✓ ${tactical.length} tactical rules → Health pillar`);
+      await appendSectionToArea("Health", "Tactical Rules", tactical);
+      results.push(`✓ ${tactical.length} tactical rules → Health area`);
     }
 
     // 2. Migrate Emotional Rules → Health.md ## Emotional Rules
     const emotional = await parseBulletFile(this.settings.sourceEmotionalRules, this.app);
     if (emotional.length) {
-      await appendSectionToPillar("Health", "Emotional Rules", emotional);
-      results.push(`✓ ${emotional.length} emotional rules → Health pillar`);
+      await appendSectionToArea("Health", "Emotional Rules", emotional);
+      results.push(`✓ ${emotional.length} emotional rules → Health area`);
     }
 
     // 3. Migrate Goals → Career.md ## Short Term / ## Long Term
@@ -264,14 +264,14 @@ export default class MorningOSPlugin extends Plugin {
     if (goalContent) {
       const shortGoals = await parseSectionFromFile(this.settings.sourceGoals, this.settings.goalsShortTerm, this.app);
       const longGoals  = await parseSectionFromFile(this.settings.sourceGoals, this.settings.goalsLongTerm, this.app);
-      if (shortGoals.length) { await appendSectionToPillar("Career", "Short Term", shortGoals); }
-      if (longGoals.length)  { await appendSectionToPillar("Career", "Long Term", longGoals); }
+      if (shortGoals.length) { await appendSectionToArea("Career", "Short Term", shortGoals); }
+      if (longGoals.length)  { await appendSectionToArea("Career", "Long Term", longGoals); }
       if (shortGoals.length || longGoals.length) {
-        results.push(`✓ Goals (${shortGoals.length} short, ${longGoals.length} long) → Career pillar`);
+        results.push(`✓ Goals (${shortGoals.length} short, ${longGoals.length} long) → Career area`);
       }
     }
 
-    // 4. Migrate Technical Tasks → registry with career pillar
+    // 4. Migrate Technical Tasks → registry with career area
     const registry = await loadRegistry(this.app);
     const existingTexts = new Set(registry.map(t => t.text.toLowerCase().trim()));
     let tasksAdded = 0;
@@ -284,15 +284,15 @@ export default class MorningOSPlugin extends Plugin {
     };
 
     const technical = await parseBulletFile(this.settings.sourceTechnicalTasks, this.app);
-    for (const t of technical) add(t, { pillars: ["career"] });
+    for (const t of technical) add(t, { areas: ["career"] });
     if (technical.length) results.push(`✓ ${technical.length} technical tasks → Career registry`);
 
-    // 5. Migrate Hobby Tasks → registry with interests pillar
+    // 5. Migrate Hobby Tasks → registry with interests area
     const hobby = await parseBulletFile(this.settings.sourceHobbyTasks, this.app);
-    for (const t of hobby) add(t, { pillars: ["interests"] });
+    for (const t of hobby) add(t, { areas: ["interests"] });
     if (hobby.length) results.push(`✓ ${hobby.length} hobby tasks → Interests registry`);
 
-    // 6. Migrate today's daily note tasks → registry (undone only, no pillar)
+    // 6. Migrate today's daily note tasks → registry (undone only, no area)
     const dailyData = await parseDailyNote(today, this.app, this.settings);
     if (dailyData) {
       for (const t of dailyData.red_alert.filter(t => !t.done))

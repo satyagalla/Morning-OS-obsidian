@@ -27,7 +27,7 @@ function migrateTask(t: Record<string, unknown>): Task {
     _id:               (t._id ?? t.id ?? generateId()) as string,
     text:              (t.text ?? "") as string,
     notes:             (t.notes ?? "") as string,
-    pillars:           (t.pillars ?? []) as string[],
+    areas:           (t.areas ?? []) as string[],
     tags:              (t.tags ?? {}) as Record<string, string>,
     status_completion: migrateCompletion(t),
     status_priority:   (t.status_priority ?? t.priority ?? "regular") as "red" | "regular",
@@ -53,19 +53,19 @@ export async function saveRegistry(app: App, registry: TaskRegistry): Promise<vo
   await app.vault.adapter.write(REGISTRY_PATH, JSON.stringify(registry, null, 2));
 }
 
-function parseTagsFromText(text: string): { cleanText: string; pillars: string[]; tags: Record<string, string>; date_remind: string | null } {
-  const pillars: string[] = [];
+function parseTagsFromText(text: string): { cleanText: string; areas: string[]; tags: Record<string, string>; date_remind: string | null } {
+  const areas: string[] = [];
   const tags: Record<string, string> = {};
   let date_remind: string | null = null;
 
-  const pillarMatches = text.matchAll(/#p\/([\w-]+)/g);
-  for (const m of pillarMatches) pillars.push(m[1]);
+  const areaMatches = text.matchAll(/#p\/([\w-]+)/g);
+  for (const m of areaMatches) areas.push(m[1]);
 
   const subtabMatches = text.matchAll(/#t\/([\w-]+)/g);
   const subtabList: string[] = [];
   for (const m of subtabMatches) subtabList.push(m[1]);
-  if (subtabList.length > 0 && pillars.length > 0) {
-    tags[pillars[pillars.length - 1]] = subtabList[0];
+  if (subtabList.length > 0 && areas.length > 0) {
+    tags[areas[areas.length - 1]] = subtabList[0];
   }
 
   const remindMatch = text.match(/@remind\((\d{4}-\d{2}-\d{2})\)/);
@@ -77,12 +77,12 @@ function parseTagsFromText(text: string): { cleanText: string; pillars: string[]
     .replace(/@remind\([^)]*\)/g, "")
     .trim();
 
-  return { cleanText, pillars, tags, date_remind };
+  return { cleanText, areas, tags, date_remind };
 }
 
 export function createTask(
   rawText: string,
-  opts: Partial<Pick<Task, "status_priority" | "status_urgency" | "pillars" | "tags" | "is_today" | "date_remind" | "parent_id">> = {}
+  opts: Partial<Pick<Task, "status_priority" | "status_urgency" | "areas" | "tags" | "is_today" | "date_remind" | "parent_id">> = {}
 ): Task {
   const today = todayStr();
   const parsed = parseTagsFromText(rawText);
@@ -90,7 +90,7 @@ export function createTask(
     _id: generateId(),
     text: parsed.cleanText,
     notes: "",
-    pillars: opts.pillars !== undefined ? opts.pillars : parsed.pillars,
+    areas: opts.areas !== undefined ? opts.areas : parsed.areas,
     tags: opts.tags !== undefined ? opts.tags : parsed.tags,
     status_completion: "open",
     status_priority: opts.status_priority ?? "regular",

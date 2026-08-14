@@ -4,7 +4,7 @@ import { parseChangelog } from "./agent/parse-changelog";
 
 const FEEDBACK_PROXY_URL: string = process.env.FEEDBACK_PROXY_URL ?? "";
 const FEEDBACK_SECRET: string    = process.env.FEEDBACK_SECRET ?? "";
-import { DailyBrief, Task, TaskRegistry, FieldDef, TabConfig, PillarConfig } from "./types";
+import { DailyBrief, Task, TaskRegistry, FieldDef, TabConfig, AreaConfig } from "./types";
 import { MorningOSSettings } from "./settings";
 import type MorningOSPlugin from "./main";
 import { renderOnboarding } from "./onboarding";
@@ -15,15 +15,15 @@ import { appendWinToLog, readTodayWinsFromLog } from "./agent/vault-reader";
 import { parseIdentityAnchor } from "./agent/vault-reader";
 import { attachTaskTextSuggest } from "./task-text-suggest";
 
-export const VIEW_TYPE_PILLAR = "morning-os-pillar-view";
+export const VIEW_TYPE_AREA = "morning-os-area-view";
 export const VIEW_TYPE_DUMP = "morning-os-inbox-view";
 export const VIEW_TYPE_TRASH = "morning-os-trash-view";
 
-function buildNavItems(pillars: PillarConfig[]) {
+function buildNavItems(areas: AreaConfig[]) {
   return [
     { id: "home",  label: "🌅 Home",  type: VIEW_TYPE_MORNING },
     { id: "dump",  label: "📥 Inbox", type: VIEW_TYPE_DUMP },
-    ...pillars.map(p => ({ id: p.key, label: `${p.icon} ${p.label}`, type: `${VIEW_TYPE_PILLAR}-${p.key}` })),
+    ...areas.map(p => ({ id: p.key, label: `${p.icon} ${p.label}`, type: `${VIEW_TYPE_AREA}-${p.key}` })),
     { id: "trash", label: "🗑 Trash", type: VIEW_TYPE_TRASH },
   ];
 }
@@ -375,7 +375,7 @@ export class MorningView extends ItemView {
       }
     }
 
-    renderAddTaskInput(parent, this.app, "Add task for today… (#p/pillar, @remind(YYYY-MM-DD))", async (text) => {
+    renderAddTaskInput(parent, this.app, "Add task for today… (#p/area, @remind(YYYY-MM-DD))", async (text) => {
       const task = createTask(text, { is_today: true, status_priority: "regular" });
       const reg = await loadRegistry(this.app);
       reg.push(task);
@@ -433,7 +433,7 @@ export class MorningView extends ItemView {
             action: () => {
               const list = ensureChildList();
               renderAddTaskInput(list, this.app, "Add subtask…", async (text) => {
-                const child = createTask(text, { parent_id: task._id, pillars: [...task.pillars], tags: { ...task.tags } });
+                const child = createTask(text, { parent_id: task._id, areas: [...task.areas], tags: { ...task.tags } });
                 const reg = await loadRegistry(this.app);
                 reg.push(child);
                 await saveRegistry(this.app, reg);
@@ -472,7 +472,7 @@ export class MorningView extends ItemView {
                 if (idx !== -1) reg[idx] = updated;
                 await saveRegistry(this.app, reg);
                 this.plugin.refreshView();
-              }, false, this.plugin.settings.pillars).open();
+              }, false, this.plugin.settings.areas).open();
             },
           },
           {
@@ -847,14 +847,14 @@ function mountFloatingPanel(container: HTMLElement, plugin: MorningOSPlugin): { 
   runBtn.addEventListener("click", () => { void plugin.triggerAgent(); });
 
   actions.createEl("div", { cls: "morning-os-fab-label", text: "Views" });
-  for (const item of buildNavItems(plugin.settings.pillars)) {
+  for (const item of buildNavItems(plugin.settings.areas)) {
     const btn = actions.createEl("button", { cls: "morning-os-fab morning-os-fab-view", text: item.label });
     btn.addEventListener("click", () => {
       hide();
       if (item.id === "home")  void plugin.activateView();
       else if (item.id === "dump")  void plugin.activateDump();
       else if (item.id === "trash") void plugin.activateTrash();
-      else void plugin.activatePillar(item.id);
+      else void plugin.activateArea(item.id);
     });
   }
 
@@ -1076,7 +1076,7 @@ function renderTaskRowShared(
     row.createEl("span", { cls: "mos-notes-badge", attr: { title: "Has notes" }, text: "📝" });
   }
 
-  // Meta field chips (pillar tab context only)
+  // Meta field chips (area tab context only)
   if (tabFields?.length) {
     const chipRow = row.createEl("span", { cls: "mos-task-meta-chips" });
     for (const field of tabFields) {
@@ -1126,7 +1126,7 @@ function renderTaskRowShared(
         action: () => {
           const list = ensureChildList();
           renderAddTaskInput(list, app, "Add subtask…", async (text) => {
-            const child = createTask(text, { parent_id: task._id, pillars: [...task.pillars], tags: { ...task.tags } });
+            const child = createTask(text, { parent_id: task._id, areas: [...task.areas], tags: { ...task.tags } });
             const reg = await loadRegistry(app);
             reg.push(child);
             await saveRegistry(app, reg);
@@ -1148,7 +1148,7 @@ function renderTaskRowShared(
             await saveRegistry(app, reg);
             if (plugin) plugin.refreshView();
             onRefresh();
-          }, showUrgency, plugin?.settings.pillars ?? []).open();
+          }, showUrgency, plugin?.settings.areas ?? []).open();
         },
       },
       {
@@ -1205,26 +1205,26 @@ function renderAddTaskInput(parent: HTMLElement, app: App, placeholder: string, 
   input.addEventListener("keydown", (e: KeyboardEvent) => { if (e.key === "Enter") void add(); });
 }
 
-export class PillarView extends ItemView {
+export class AreaView extends ItemView {
   private settings: MorningOSSettings;
   private plugin: MorningOSPlugin;
   private registry: TaskRegistry = [];
   private activeTab: string | null = null;
-  private pillarKey: string;
+  private areaKey: string;
   private sortField: SortField = "date_created";
   private sortDir: SortDir = "asc";
   private floatingCleanup: (() => void) | null = null;
   private filters: FilterState = {};
 
-  constructor(leaf: WorkspaceLeaf, settings: MorningOSSettings, plugin: MorningOSPlugin, pillarKey: string) {
+  constructor(leaf: WorkspaceLeaf, settings: MorningOSSettings, plugin: MorningOSPlugin, areaKey: string) {
     super(leaf);
     this.settings = settings;
     this.plugin = plugin;
-    this.pillarKey = pillarKey;
+    this.areaKey = areaKey;
   }
 
-  getViewType(): string { return `${VIEW_TYPE_PILLAR}-${this.pillarKey}`; }
-  getDisplayText(): string { return this.plugin.settings.pillars.find(p => p.key === this.pillarKey)?.label ?? this.pillarKey; }
+  getViewType(): string { return `${VIEW_TYPE_AREA}-${this.areaKey}`; }
+  getDisplayText(): string { return this.plugin.settings.areas.find(p => p.key === this.areaKey)?.label ?? this.areaKey; }
   getIcon(): string { return "layers"; }
 
   async onOpen() { this.registry = await loadRegistry(this.app); this.render(); }
@@ -1238,30 +1238,30 @@ export class PillarView extends ItemView {
     this.floatingCleanup?.();
     this.floatingCleanup = mountFloatingPanel(container, this.plugin).cleanup;
 
-    const pillar = this.plugin.settings.pillars.find(p => p.key === this.pillarKey);
-    if (!pillar) return;
+    const area = this.plugin.settings.areas.find(p => p.key === this.areaKey);
+    if (!area) return;
 
     const wrapper = container.createEl("div", { cls: "morning-os-scroll" });
     const inner = wrapper.createEl("div", { cls: "morning-os-wrapper" });
 
     // Title
-    inner.createEl("h1", { cls: "mos-pillar-title", text: `${pillar.icon} ${pillar.label}` });
+    inner.createEl("h1", { cls: "mos-area-title", text: `${area.icon} ${area.label}` });
 
-    // Pillar markdown notes section — placeholder created synchronously so order is correct
-    const notesSlot = inner.createEl("div", { cls: "mos-pillar-notes-slot" });
-    void this.renderPillarNotes(notesSlot, pillar);
+    // Area markdown notes section — placeholder created synchronously so order is correct
+    const notesSlot = inner.createEl("div", { cls: "mos-area-notes-slot" });
+    void this.renderAreaNotes(notesSlot, area);
 
     // Active tab config (for field rendering)
-    const activeTabConfig = pillar.tabs.find(t => t.key === this.activeTab) ?? null;
+    const activeTabConfig = area.tabs.find(t => t.key === this.activeTab) ?? null;
 
     // Tabs + sort/filter row together
-    const controlRow = inner.createEl("div", { cls: "mos-pillar-control-row" });
+    const controlRow = inner.createEl("div", { cls: "mos-area-control-row" });
 
-    if (pillar.tabs.length > 0) {
-      const tabBar = controlRow.createEl("div", { cls: "mos-pillar-tabs" });
+    if (area.tabs.length > 0) {
+      const tabBar = controlRow.createEl("div", { cls: "mos-area-tabs" });
       const allTab = tabBar.createEl("button", { cls: "mos-btn mos-btn-tab" + (!this.activeTab ? " is-active" : ""), text: "All" });
       allTab.addEventListener("click", () => { this.activeTab = null; this.render(); });
-      for (const tab of pillar.tabs) {
+      for (const tab of area.tabs) {
         const btn = tabBar.createEl("button", { cls: "mos-btn mos-btn-tab" + (this.activeTab === tab?.key ? " is-active" : ""), text: tab.label });
         btn.addEventListener("click", () => { this.activeTab = tab.key; this.render(); });
       }
@@ -1273,13 +1273,13 @@ export class PillarView extends ItemView {
 
     // View mode: table vs cards
     if (activeTabConfig?.view_mode === "table") {
-      this.renderTableView(inner, activeTabConfig, pillar);
+      this.renderTableView(inner, activeTabConfig, area);
     } else {
       let tasks = this.registry.filter(t =>
         !t.is_deleted &&
         t.parent_id === null &&
-        t.pillars.includes(this.pillarKey) &&
-        (this.activeTab === null || t.tags[this.pillarKey] === this.activeTab)
+        t.areas.includes(this.areaKey) &&
+        (this.activeTab === null || t.tags[this.areaKey] === this.activeTab)
       );
       tasks = applyFilters(tasks, this.filters);
       tasks = sortTasks(tasks, this.sortField, this.sortDir);
@@ -1292,10 +1292,10 @@ export class PillarView extends ItemView {
         for (const t of tasks) renderTaskRowShared(card, t, this.app, this, () => void this.refresh(), this.plugin, false, fields, this.registry);
       }
 
-      renderAddTaskInput(inner, this.app, "Add task… (#p/pillar, #t/tab, @remind(YYYY-MM-DD))", async (text) => {
+      renderAddTaskInput(inner, this.app, "Add task… (#p/area, #t/tab, @remind(YYYY-MM-DD))", async (text) => {
         const activeTab = this.activeTab;
-        const tag = activeTab ? { [pillar.key]: activeTab } : {};
-        const task = createTask(text, { pillars: [pillar.key], tags: tag });
+        const tag = activeTab ? { [area.key]: activeTab } : {};
+        const task = createTask(text, { areas: [area.key], tags: tag });
         const reg = await loadRegistry(this.app);
         reg.push(task);
         await saveRegistry(this.app, reg);
@@ -1304,11 +1304,11 @@ export class PillarView extends ItemView {
     }
   }
 
-  private renderTableView(parent: HTMLElement, tabConfig: TabConfig, pillar: PillarConfig) {
+  private renderTableView(parent: HTMLElement, tabConfig: TabConfig, area: AreaConfig) {
     const fields = tabConfig.fields;
     const allItems = this.registry.filter(t =>
-      !t.is_deleted && t.parent_id === null && t.pillars.includes(this.pillarKey) &&
-      t.tags[this.pillarKey] === tabConfig.key
+      !t.is_deleted && t.parent_id === null && t.areas.includes(this.areaKey) &&
+      t.tags[this.areaKey] === tabConfig.key
     );
     const items = sortTasks(applyFilters(allItems, this.filters), this.sortField, this.sortDir);
 
@@ -1455,7 +1455,7 @@ export class PillarView extends ItemView {
                 await saveRegistry(this.app, reg);
                 if (this.plugin) this.plugin.refreshView();
                 void this.refresh();
-              }, false, this.plugin?.settings.pillars ?? []).open();
+              }, false, this.plugin?.settings.areas ?? []).open();
             },
           },
           {
@@ -1470,8 +1470,8 @@ export class PillarView extends ItemView {
     // Add row
     const addRow = parent.createEl("div", { cls: "mos-table-add-row" });
     renderAddTaskInput(addRow, this.app, "+ Add row…", async (text) => {
-      const tag = { [pillar.key]: tabConfig.key };
-      const task = createTask(text, { pillars: [pillar.key], tags: tag });
+      const tag = { [area.key]: tabConfig.key };
+      const task = createTask(text, { areas: [area.key], tags: tag });
       const reg = await loadRegistry(this.app);
       reg.push(task);
       await saveRegistry(this.app, reg);
@@ -1479,14 +1479,14 @@ export class PillarView extends ItemView {
     });
   }
 
-  private async renderPillarNotes(parent: HTMLElement, pillar: PillarConfig) {
+  private async renderAreaNotes(parent: HTMLElement, area: AreaConfig) {
     const userFolder = this.settings.dailyNoteDir.split("/")[0] || "Essential";
-    const notesPath = `${userFolder}/Pillars/${pillar.label}.md`;
+    const notesPath = `${userFolder}/Areas/${area.label}.md`;
 
     const exists = await this.app.vault.adapter.exists(notesPath);
     if (!exists) {
       // Create parent dirs and empty file on first access
-      const dir = `${userFolder}/Pillars`;
+      const dir = `${userFolder}/Areas`;
       if (!(await this.app.vault.adapter.exists(dir))) {
         await this.app.vault.adapter.mkdir(dir);
       }
@@ -1495,19 +1495,19 @@ export class PillarView extends ItemView {
 
     let content = await this.app.vault.adapter.read(notesPath);
 
-    // Strip leading h1 that matches the pillar label (added by migration, view already shows it)
-    content = content.replace(new RegExp(`^#\\s+${pillar.label}\\s*\\n?`, "i"), "").trimStart();
+    // Strip leading h1 that matches the area label (added by migration, view already shows it)
+    content = content.replace(new RegExp(`^#\\s+${area.label}\\s*\\n?`, "i"), "").trimStart();
 
     // Only render section if file has content
     if (!content.trim()) return;
 
-    const storageKey = `mos-notes-collapsed-${pillar.key}`;
+    const storageKey = `mos-notes-collapsed-${area.key}`;
     let collapsed = localStorage.getItem(storageKey) === "true";
 
-    const section = parent.createEl("div", { cls: "mos-pillar-notes" });
-    const header = section.createEl("div", { cls: "mos-pillar-notes-header" });
-    const toggle = header.createEl("span", { cls: "mos-pillar-notes-toggle", text: collapsed ? "▶" : "▼" });
-    header.createEl("span", { cls: "mos-pillar-notes-title", text: "Notes" });
+    const section = parent.createEl("div", { cls: "mos-area-notes" });
+    const header = section.createEl("div", { cls: "mos-area-notes-header" });
+    const toggle = header.createEl("span", { cls: "mos-area-notes-toggle", text: collapsed ? "▶" : "▼" });
+    header.createEl("span", { cls: "mos-area-notes-title", text: "Notes" });
 
     const editBtn = header.createEl("button", { cls: "mos-btn mos-btn-icon", attr: { title: "Edit notes" }, text: "✎" });
     editBtn.addEventListener("click", async (e) => {
@@ -1519,7 +1519,7 @@ export class PillarView extends ItemView {
       }
     });
 
-    const body = section.createEl("div", { cls: "mos-pillar-notes-body" });
+    const body = section.createEl("div", { cls: "mos-area-notes-body" });
     if (collapsed) body.style.display = "none";
 
     header.addEventListener("click", () => {
@@ -1586,7 +1586,7 @@ export class DumpView extends ItemView {
     titleRow.createEl("h1", { cls: "morning-os-section-heading", text: "Inbox" });
     this.renderSortControls(titleRow);
 
-    renderAddTaskInput(inner, this.app, "Capture a task… (#p/pillar, #t/tab, @remind(YYYY-MM-DD))", async (text) => {
+    renderAddTaskInput(inner, this.app, "Capture a task… (#p/area, #t/tab, @remind(YYYY-MM-DD))", async (text) => {
       const task = createTask(text);
       const reg = await loadRegistry(this.app);
       reg.push(task);
@@ -1651,14 +1651,14 @@ class TaskEditModal extends ObsidianModal {
   private task: Task;
   private onSave: (task: Task) => Promise<void>;
   private showUrgency: boolean;
-  private pillarConfigs: PillarConfig[];
+  private areaConfigs: AreaConfig[];
 
-  constructor(app: App, task: Task, onSave: (task: Task) => Promise<void>, showUrgency = false, pillarConfigs: PillarConfig[] = []) {
+  constructor(app: App, task: Task, onSave: (task: Task) => Promise<void>, showUrgency = false, areaConfigs: AreaConfig[] = []) {
     super(app);
-    this.task = { ...task, pillars: [...task.pillars], tags: { ...task.tags } };
+    this.task = { ...task, areas: [...task.areas], tags: { ...task.tags } };
     this.onSave = onSave;
     this.showUrgency = showUrgency;
-    this.pillarConfigs = pillarConfigs;
+    this.areaConfigs = areaConfigs;
   }
 
   private field(parent: HTMLElement, label: string): HTMLElement {
@@ -1711,40 +1711,40 @@ class TaskEditModal extends ObsidianModal {
       }
     }
 
-    // Pillars
-    if (this.pillarConfigs.length > 0) {
-      const pillarsWrap = this.field(contentEl, "Pillars");
-      const pillarsGrid = pillarsWrap.createEl("div", { cls: "mos-edit-pillars-grid" });
-      for (const pillar of this.pillarConfigs) {
-        const cell = pillarsGrid.createEl("div", { cls: "mos-edit-pillar-cell" });
+    // Areas
+    if (this.areaConfigs.length > 0) {
+      const areasWrap = this.field(contentEl, "Areas");
+      const areasGrid = areasWrap.createEl("div", { cls: "mos-edit-areas-grid" });
+      for (const area of this.areaConfigs) {
+        const cell = areasGrid.createEl("div", { cls: "mos-edit-area-cell" });
         const cb = cell.createEl("input", { type: "checkbox" });
-        cb.checked = this.task.pillars.includes(pillar.key);
-        cell.createEl("span", { cls: "mos-edit-pillar-label", text: pillar.label });
+        cb.checked = this.task.areas.includes(area.key);
+        cell.createEl("span", { cls: "mos-edit-area-label", text: area.label });
 
-        if (pillar.tabs.length > 0) {
+        if (area.tabs.length > 0) {
           const tabSel = cell.createEl("select", { cls: "mos-edit-select" });
           tabSel.createEl("option", { value: "", text: "— tab —" });
-          for (const tab of pillar.tabs) {
+          for (const tab of area.tabs) {
             const opt = tabSel.createEl("option", { value: tab.key, text: tab.label });
-            if (this.task.tags[pillar.key] === tab.key) opt.selected = true;
+            if (this.task.tags[area.key] === tab.key) opt.selected = true;
           }
           tabSel.style.display = cb.checked ? "block" : "none";
           cb.addEventListener("change", () => { tabSel.style.display = cb.checked ? "block" : "none"; });
-          tabSel.addEventListener("change", () => { this.task.tags[pillar.key] = tabSel.value; });
+          tabSel.addEventListener("change", () => { this.task.tags[area.key] = tabSel.value; });
         }
 
         cb.addEventListener("change", () => {
-          if (cb.checked) { if (!this.task.pillars.includes(pillar.key)) this.task.pillars.push(pillar.key); }
-          else { this.task.pillars = this.task.pillars.filter(p => p !== pillar.key); delete this.task.tags[pillar.key]; }
+          if (cb.checked) { if (!this.task.areas.includes(area.key)) this.task.areas.push(area.key); }
+          else { this.task.areas = this.task.areas.filter(p => p !== area.key); delete this.task.tags[area.key]; }
         });
       }
     }
 
-    // Custom fields — render based on pillar/tab context
-    const taskPillar = this.task.pillars[0];
-    const pillarConfig = taskPillar ? this.pillarConfigs.find(p => p.key === taskPillar) : undefined;
-    const taskTabKey = taskPillar ? this.task.tags[taskPillar] : undefined;
-    const tabConfig = taskTabKey ? pillarConfig?.tabs.find(t => t.key === taskTabKey) : undefined;
+    // Custom fields — render based on area/tab context
+    const taskArea = this.task.areas[0];
+    const areaConfig = taskArea ? this.areaConfigs.find(p => p.key === taskArea) : undefined;
+    const taskTabKey = taskArea ? this.task.tags[taskArea] : undefined;
+    const tabConfig = taskTabKey ? areaConfig?.tabs.find(t => t.key === taskTabKey) : undefined;
     if (tabConfig?.fields.length) {
       const fieldsWrap = this.field(contentEl, "Fields");
       for (const fieldDef of tabConfig.fields) {

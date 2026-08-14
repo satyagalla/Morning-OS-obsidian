@@ -773,7 +773,7 @@
   flex-shrink: 0;
 }
 
-/* Tab — used in pillar tabs */
+/* Tab — used in area tabs */
 .mos-btn.mos-btn-tab {
   padding: 5px 14px;
   font-size: 12px;
@@ -1256,8 +1256,8 @@ h3[data-dirty]::after {
   margin: 0;
 }
 
-/* ── Pillar view title ── */
-.mos-pillar-title {
+/* ── Area view title ── */
+.mos-area-title {
   font-size: 1.8em;
   font-weight: 600;
   color: var(--text-normal);
@@ -1265,15 +1265,15 @@ h3[data-dirty]::after {
   line-height: 1.2;
 }
 
-/* ── Pillar control row: tabs + sort/filter ── */
-.mos-pillar-control-row {
+/* ── Area control row: tabs + sort/filter ── */
+.mos-area-control-row {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 12px;
 }
-.mos-pillar-control-row .mos-pillar-tabs {
+.mos-area-control-row .mos-area-tabs {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
@@ -1310,8 +1310,8 @@ h3[data-dirty]::after {
 .mos-settings-tab:hover { background: color-mix(in srgb, var(--mos-system) 15%, transparent); color: var(--mos-system); }
 .mos-settings-tab.is-active { background: var(--mos-system); color: #fff; }
 
-/* ── Pillar builder — two-panel ── */
-.mos-pillars-layout {
+/* ── Area builder — two-panel ── */
+.mos-areas-layout {
   display: flex;
   gap: 0;
   min-height: 400px;
@@ -1319,7 +1319,7 @@ h3[data-dirty]::after {
   border-radius: var(--mos-radius-md);
   overflow: hidden;
 }
-.mos-pillars-left {
+.mos-areas-left {
   width: 220px;
   flex-shrink: 0;
   border-right: 1px solid var(--background-modifier-border);
@@ -1329,17 +1329,17 @@ h3[data-dirty]::after {
   flex-direction: column;
   gap: 2px;
 }
-.mos-pillars-right {
+.mos-areas-right {
   flex: 1;
   padding: 16px;
   overflow-y: auto;
 }
-.mos-pillars-nav-row {
+.mos-areas-nav-row {
   display: flex;
   align-items: center;
   gap: 2px;
 }
-.mos-pillars-nav-item {
+.mos-areas-nav-item {
   flex: 1;
   display: flex;
   align-items: center;
@@ -1353,45 +1353,45 @@ h3[data-dirty]::after {
   text-overflow: ellipsis;
   transition: background 120ms ease, color 120ms ease;
 }
-.mos-pillars-nav-item:hover { background: color-mix(in srgb, var(--mos-system) 12%, transparent); color: var(--mos-system); }
-.mos-pillars-nav-item.is-active { background: var(--mos-system); color: #fff; }
-.mos-pillars-reorder {
+.mos-areas-nav-item:hover { background: color-mix(in srgb, var(--mos-system) 12%, transparent); color: var(--mos-system); }
+.mos-areas-nav-item.is-active { background: var(--mos-system); color: #fff; }
+.mos-areas-reorder {
   display: none;
   gap: 2px;
 }
-.mos-pillars-nav-row:hover .mos-pillars-reorder { display: flex; }
-.mos-pillars-nav-divider {
+.mos-areas-nav-row:hover .mos-areas-reorder { display: flex; }
+.mos-areas-nav-divider {
   height: 1px;
   background: var(--background-modifier-border);
   margin: 6px 0;
 }
-.mos-pillars-add-row {
+.mos-areas-add-row {
   display: flex;
   gap: 4px;
   flex-wrap: wrap;
 }
 .mos-icon-input { width: 48px !important; text-align: center; }
-.mos-pillars-empty {
+.mos-areas-empty {
   color: var(--mos-text-faint);
   font-style: italic;
   font-size: 13px;
   margin-top: 40px;
   text-align: center;
 }
-.mos-pillars-detail-header {
+.mos-areas-detail-header {
   display: flex;
   align-items: center;
   gap: 10px;
   margin-bottom: 16px;
 }
-.mos-pillars-detail-preview {
+.mos-areas-detail-preview {
   font-size: 18px;
   font-weight: 600;
   flex: 1;
 }
 .mos-btn-danger { color: var(--mos-red) !important; }
 .mos-btn-danger:hover { background: color-mix(in srgb, var(--mos-red) 15%, transparent) !important; }
-.mos-pillars-sub-heading {
+.mos-areas-sub-heading {
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.06em;
@@ -1399,13 +1399,13 @@ h3[data-dirty]::after {
   color: var(--mos-text-faint);
   margin: 14px 0 6px;
 }
-.mos-pillars-tab-nav {
+.mos-areas-tab-nav {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   margin-bottom: 10px;
 }
-.mos-pillars-tab-btn {
+.mos-areas-tab-btn {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -1417,9 +1417,9 @@ h3[data-dirty]::after {
   color: var(--mos-text-secondary);
   transition: background 120ms ease, color 120ms ease;
 }
-.mos-pillars-tab-btn:hover { background: color-mix(in srgb, var(--mos-system) 15%, transparent); color: var(--mos-system); }
-.mos-pillars-tab-btn.is-active { background: var(--mos-system); color: #fff; }
-.mos-pillars-tab-detail {
+.mos-areas-tab-btn:hover { background: color-mix(in srgb, var(--mos-system) 15%, transparent); color: var(--mos-system); }
+.mos-areas-tab-btn.is-active { background: var(--mos-system); color: #fff; }
+.mos-areas-tab-detail {
   padding: 12px;
   border: 1px solid var(--background-modifier-border);
   border-radius: var(--mos-radius-sm);
@@ -1449,15 +1449,15 @@ h3[data-dirty]::after {
   max-width: 340px;
 }
 
-.mos-pillar-builder-row {
+.mos-area-builder-row {
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 6px 0;
   flex-wrap: wrap;
 }
-.mos-pillar-builder-icon { font-size: 18px; width: 24px; }
-.mos-pillar-builder-label { flex: 1; font-size: 13px; }
+.mos-area-builder-icon { font-size: 18px; width: 24px; }
+.mos-area-builder-label { flex: 1; font-size: 13px; }
 
 /* ── Record cards ── */
 .mos-record-card {
@@ -1645,18 +1645,18 @@ h3[data-dirty]::after {
   gap: 4px;
 }
 /* mos-edit-seg-btn → now .mos-btn.mos-btn-seg */
-.mos-edit-pillars-grid {
+.mos-edit-areas-grid {
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
-.mos-edit-pillar-cell {
+.mos-edit-area-cell {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
 }
-.mos-edit-pillar-label {
+.mos-edit-area-label {
   font-size: 13px;
   color: var(--text-normal);
   flex: 1;
@@ -1767,15 +1767,15 @@ h3[data-dirty]::after {
   margin-bottom: 8px;
 }
 
-/* ── Pillar Notes Section ── */
-.mos-pillar-notes {
+/* ── Area Notes Section ── */
+.mos-area-notes {
   margin-bottom: 16px;
   border: 1px solid var(--background-modifier-border);
   border-radius: 8px;
   padding: 12px 16px;
   background: var(--background-primary-alt);
 }
-.mos-pillar-notes-header {
+.mos-area-notes-header {
   display: flex;
   align-items: center;
   cursor: pointer;
@@ -1783,35 +1783,35 @@ h3[data-dirty]::after {
   justify-content: space-between;
   margin-bottom: 8px;
 }
-.mos-pillar-notes-toggle {
+.mos-area-notes-toggle {
   font-size: 10px;
   color: var(--text-muted);
   margin-right: 6px;
   flex-shrink: 0;
 }
-.mos-pillar-notes-title {
+.mos-area-notes-title {
   font-size: 0.78rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-muted);
 }
-.mos-pillar-notes-body {
+.mos-area-notes-body {
   font-size: 0.9rem;
   line-height: 1.6;
 }
-.mos-pillar-notes-body table {
+.mos-area-notes-body table {
   width: 100%;
   border-collapse: collapse;
   margin: 8px 0;
 }
-.mos-pillar-notes-body th,
-.mos-pillar-notes-body td {
+.mos-area-notes-body th,
+.mos-area-notes-body td {
   padding: 4px 8px;
   border: 1px solid var(--background-modifier-border);
   text-align: left;
 }
-.mos-pillar-notes-body th {
+.mos-area-notes-body th {
   font-weight: 600;
   background: var(--background-modifier-hover);
 }

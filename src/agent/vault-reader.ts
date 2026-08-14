@@ -189,17 +189,17 @@ export async function parseSectionFromFile(path: string, sectionHeading: string,
   return extractSection(content, sectionHeading).map(item => item.text);
 }
 
-// Gather a named section from ALL enabled pillar markdowns
-export async function parseAllPillarSections(
+// Gather a named section from ALL enabled area markdowns
+export async function parseAllAreaSections(
   app: App,
   settings: MorningOSSettings,
   sectionHeading: string
 ): Promise<string[]> {
   const userFolder = settings.dailyNoteDir.split("/")[0] || "Essential";
   const results: string[] = [];
-  for (const pillar of settings.pillars) {
-    if (!pillar.feedToLLM) continue;
-    const path = `${userFolder}/Pillars/${pillar.label}.md`;
+  for (const area of settings.areas) {
+    if (!area.feedToLLM) continue;
+    const path = `${userFolder}/Areas/${area.label}.md`;
     const bullets = await parseSectionFromFile(path, sectionHeading, app);
     results.push(...bullets);
   }
