@@ -199,7 +199,7 @@ export class MorningView extends ItemView {
 
     this.renderWhatsNew(wrapper);
 
-    if (!this.hasApiKey()) {
+    if (this.wantsAI() && !this.hasApiKey()) {
       this.renderApiKeyBanner(wrapper);
     }
 
@@ -228,10 +228,19 @@ export class MorningView extends ItemView {
     return false;
   }
 
+  private wantsAI(): boolean {
+    const s = this.settings;
+    return (
+      s.modeTacticalRules || s.modeIdentityRules || s.modeGoals ||
+      s.modeHobbyTasks || s.modeSuggestion || s.modeTechnicalTasks ||
+      s.modeWins
+    );
+  }
+
   private renderApiKeyBanner(parent: HTMLElement) {
     const banner = parent.createEl("div", { cls: "mos-onboard-banner" });
     banner.createEl("span", {
-      text: "Add your API key in Settings → Morning OS to generate personalized briefs.",
+      text: "Add your API key in Settings → Morning OS to generate personalized briefs, or turn off AI mode in all settings.",
     });
     const dismiss = banner.createEl("button", { cls: "mos-onboard-banner-dismiss", text: "✕" });
     dismiss.addEventListener("click", () => banner.remove());
