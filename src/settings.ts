@@ -925,7 +925,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
 
     const renderRight = () => {
       if (!this.selectedAreaKey) {
-        right.createEl("p", { cls: "mos-areas-empty", text: "← Select a area to edit" });
+        right.createEl("p", { cls: "mos-areas-empty", text: "← Select an area to edit" });
         return;
       }
       const area = areas.find(p => p.key === this.selectedAreaKey);

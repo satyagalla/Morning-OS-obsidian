@@ -198,7 +198,7 @@ export default class MorningOSPlugin extends Plugin {
       await this.app.vault.adapter.mkdir(areasDir);
     }
 
-    // Helper: append missing bullets to a section in a area markdown (idempotent per bullet)
+    // Helper: append missing bullets to a section in an area markdown (idempotent per bullet)
     const appendSectionToArea = async (areaLabel: string, sectionHeading: string, bullets: string[]) => {
       if (bullets.length === 0) return;
       const path = `${areasDir}/${areaLabel}.md`;
