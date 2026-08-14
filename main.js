@@ -39,7 +39,33 @@ Next up: smarter agents, better personalization, and features I haven't told any
 - Plugin re-runs the agent when today's brief is deleted and you reopen the panel
 - What's New card \u2014 you're reading it right now
 - Feedback button \u2014 tell me what's broken or what you want built next
-- Goals collapse correctly on mobile, action buttons accessible via touch`;function Yt(i,t){let e=i.split(`
+- Goals collapse correctly on mobile, action buttons accessible via touch
+
+---
+---
+
+## v0.3.0
+
+### Personal
+
+[TODO: write this one yourself \u2014 it's the biggest rebuild since v0.2.0 and deserves your own words, not mine.]
+
+### Changes
+
+- **New task system** \u2014 tasks now live in a proper registry instead of being scattered across daily notes, with stable IDs so carry-forward and history actually track the same task over time
+- **Sub-tasks** \u2014 break any task into collapsible sub-tasks, with an optional setting to require them all done before the parent can complete
+- **Notes on tasks** \u2014 attach freeform notes to any task, with a row indicator so you can see at a glance which ones have them
+- **Quick-add and inline editing** \u2014 add and edit tasks directly from the row, no modal required
+- **\`[[link]]\` and \`#tag\` autocomplete** in task text, with live markdown rendering
+- **Pillars renamed to Areas** \u2014 same concept, clearer name, throughout the UI and settings
+- **New views** \u2014 Inbox for quick capture, Trash for anything you've deleted, plus a table view and custom filters/sorting per Area
+- **One-time vault migration** (Settings \u2192 Vault \u2192 Migrate) moves your existing rules, goals, technical/hobby tasks, and full wins history into the new structure \u2014 safe to re-run, only touches what hasn't already moved
+- **Reminders** are now just part of a task instead of a separate file \u2014 nothing to lose track of
+- Feedback button now goes to a real inbox instead of just sitting there
+
+### Note for people upgrading from 0.2.x
+
+Run the migration from Settings \u2192 Vault before you start using Areas/Inbox/Trash \u2014 it moves your old daily-note tasks and rules into the new task registry and archives your daily notes. It's idempotent, so it's safe to run more than once if you're not sure it fully finished.`;function Yt(i,t){let e=i.split(`
 `),s=e.findIndex(c=>c.trim()===`## v${t}`||c.trim()===`## ${t}`);if(s===-1)return null;let a=e.findIndex((c,l)=>l>s&&/^## /.test(c)),n=e.slice(s+1,a===-1?void 0:a),o=[],r=null;for(let c of n){let l=c.trim();if(/^### /.test(l)){r={heading:l.replace(/^### /,""),items:[]},o.push(r);continue}if(!l||l==="---"||!r)continue;let d=l.replace(/^[-*]\s+/,"").replace(/\[([^\]]+)\]\([^)]+\)/g,"$1").replace(/\*\*/g,"");d&&r.items.push(d)}return{version:t,sections:o}}var Ye=require("obsidian");var qt=require("obsidian"),nn=["Wins","I feel good about these after today"];function an(i,t){let s=i.trim().replace(/:$/,"").toLowerCase(),a=t.toLowerCase();return s===a||s===`# ${a}`||s===`## ${a}`||s===`### ${a}`}function on(i){return!!(/^#{1,3}\s+/.test(i)||i&&!i.startsWith("-")&&i.endsWith(":")&&i.length<50)}function Jt(i){if(!i)return null;let t=i.match(/^-\s*\[([xX ])\]\s*(.*)/),e,s=!1;if(t)s=t[1]!==" ",e=t[2].trim();else{let o=i.match(/^-\s+(.*)/);if(!o)return null;e=o[1].trim()}if(!e||e.startsWith("~~")&&e.endsWith("~~"))return null;let a=e.match(/@remind\((\d{4}-\d{2}-\d{2})\)/),n=a?a[1]:null;return a&&(e=e.replace(/@remind\([^)]*\)/,"").trim()),{text:e,done:s,remind_date:n}}function ce(i,t,e){let s=i.split(`
 `),a=[t,...e!=null?e:[]],n=null;for(let r=0;r<s.length;r++){for(let c of a)if(an(s[r],c)){n=r+1;break}if(n!==null)break}if(n===null)return[];let o=[];for(let r=n;r<s.length;r++){let c=s[r].trim();if(c&&(c.startsWith("#")||on(c)))break;let l=Jt(c);l!==null&&o.push(l)}return o}function rn(i){let t=[];for(let e of i.split(`
 `)){let s=Jt(e.trim());s!==null&&t.push(s.text)}return t}async function we(i,t){let e=t.vault.getAbstractFileByPath(i);return e instanceof qt.TFile?await t.vault.read(e):null}async function Le(i,t,e){let s=`${e.dailyNoteDir}/${i}.md`,a=await we(s,t);if(a===null)return null;let n=ce(a,e.sectionRedAlert),o=ce(a,e.sectionRegular),r=ce(a,e.sectionWins,nn),c=ce(a,"Reminders").map(l=>l.remind_date?`${l.text} @remind(${l.remind_date})`:l.text);return{red_alert:n,regular:o,wins:r,reminders:c}}async function Re(i,t){let e=await we(i,t);return e===null?[]:rn(e)}async function Xt(i,t){let e=await we(t.sourceIdentity,i);return e===null?[]:e.split(`
