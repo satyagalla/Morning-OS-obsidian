@@ -78,8 +78,8 @@ const ctx = await esbuild.context({
     ...builtins,
   ],
   define: {
-    "process.env.FEEDBACK_PROXY_URL": JSON.stringify(process.env.FEEDBACK_PROXY_URL ?? ""),
-    "process.env.FEEDBACK_SECRET":    JSON.stringify(process.env.FEEDBACK_SECRET ?? ""),
+    "__FEEDBACK_PROXY_URL__": JSON.stringify(process.env.FEEDBACK_PROXY_URL ?? ""),
+    "__FEEDBACK_SECRET__":    JSON.stringify(process.env.FEEDBACK_SECRET ?? ""),
   },
   loader: { ".md": "text" },
   format: "cjs",

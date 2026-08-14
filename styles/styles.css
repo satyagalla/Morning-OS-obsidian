@@ -184,7 +184,16 @@
 
 .morning-os-floating-actions button.morning-os-fab,
 .morning-os-floating-actions button.morning-os-fab-view {
-  all: unset;
+  appearance: none;
+  -webkit-appearance: none;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  margin: 0;
+  padding: 0;
+  text-align: inherit;
+  text-transform: none;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -727,7 +736,16 @@
 
 /* ── Unified button system ── */
 .mos-btn {
-  all: unset;
+  appearance: none;
+  -webkit-appearance: none;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  margin: 0;
+  padding: 0;
+  text-align: inherit;
+  text-transform: none;
   display: inline-flex;
   box-sizing: border-box;
   align-items: center;
@@ -1302,7 +1320,16 @@ h3[data-dirty]::after {
   flex-wrap: wrap;
 }
 .mos-settings-tab {
-  all: unset;
+  appearance: none;
+  -webkit-appearance: none;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  margin: 0;
+  padding: 0;
+  text-align: inherit;
+  text-transform: none;
   box-sizing: border-box;
   padding: 6px 14px;
   border-radius: var(--mos-radius-sm);
@@ -1432,7 +1459,16 @@ h3[data-dirty]::after {
   background: color-mix(in srgb, var(--text-normal) 2%, transparent);
 }
 .mos-icon-picker-btn {
-  all: unset;
+  appearance: none;
+  -webkit-appearance: none;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  margin: 0;
+  padding: 0;
+  text-align: inherit;
+  text-transform: none;
   font-size: 24px;
   cursor: pointer;
   padding: 2px 8px;
@@ -1525,7 +1561,16 @@ select.mos-btn.mos-btn-select.mos-filter-select {
   opacity: 1;
 }
 .mos-action-btn {
-  all: unset;
+  appearance: none;
+  -webkit-appearance: none;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  margin: 0;
+  padding: 0;
+  text-align: inherit;
+  text-transform: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1571,7 +1616,16 @@ select.mos-btn.mos-btn-select.mos-filter-select {
 }
 
 .mos-ctx-menu button.mos-ctx-item {
-  all: unset;
+  appearance: none;
+  -webkit-appearance: none;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  margin: 0;
+  padding: 0;
+  text-align: inherit;
+  text-transform: none;
   display: block;
   box-sizing: border-box;
   width: 100%;

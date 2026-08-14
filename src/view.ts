@@ -2,8 +2,10 @@ import { ItemView, WorkspaceLeaf, TFile, Modal, App, sanitizeHTMLToDom, Markdown
 import changelogText from "../CHANGELOG.md";
 import { parseChangelog } from "./agent/parse-changelog";
 
-const FEEDBACK_PROXY_URL: string = process.env.FEEDBACK_PROXY_URL ?? "";
-const FEEDBACK_SECRET: string    = process.env.FEEDBACK_SECRET ?? "";
+declare const __FEEDBACK_PROXY_URL__: string;
+declare const __FEEDBACK_SECRET__: string;
+const FEEDBACK_PROXY_URL: string = __FEEDBACK_PROXY_URL__;
+const FEEDBACK_SECRET: string    = __FEEDBACK_SECRET__;
 import { DailyBrief, Task, TaskRegistry, FieldDef, TabConfig, AreaConfig } from "./types";
 import { MorningOSSettings } from "./settings";
 import type MorningOSPlugin from "./main";
