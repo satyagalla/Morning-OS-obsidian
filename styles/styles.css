@@ -758,11 +758,12 @@
   background: color-mix(in srgb, var(--mos-system) 80%, #fff);
   color: #fff;
 }
-.mos-btn-success {
-  background: color-mix(in srgb, #3fb950 20%, transparent) !important;
-  color: #3fb950 !important;
-  border-color: #3fb950 !important;
-  cursor: default !important;
+button.mos-btn-success:disabled {
+  background: color-mix(in srgb, #3fb950 20%, transparent);
+  color: #3fb950;
+  border-color: #3fb950;
+  cursor: default;
+  opacity: 1;
 }
 
 /* Full-width — FAB panel buttons, ctx menu items */
