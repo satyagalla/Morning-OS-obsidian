@@ -186,12 +186,8 @@
 .morning-os-floating-actions button.morning-os-fab-view {
   appearance: none;
   -webkit-appearance: none;
-  background: none;
-  border: none;
-  color: inherit;
   font: inherit;
   margin: 0;
-  padding: 0;
   text-align: inherit;
   text-transform: none;
   display: flex;
@@ -738,12 +734,9 @@
 .mos-btn {
   appearance: none;
   -webkit-appearance: none;
-  background: none;
   border: none;
-  color: inherit;
   font: inherit;
   margin: 0;
-  padding: 0;
   text-align: inherit;
   text-transform: none;
   display: inline-flex;
@@ -1322,12 +1315,9 @@ h3[data-dirty]::after {
 .mos-settings-tab {
   appearance: none;
   -webkit-appearance: none;
-  background: none;
   border: none;
-  color: inherit;
   font: inherit;
   margin: 0;
-  padding: 0;
   text-align: inherit;
   text-transform: none;
   box-sizing: border-box;
@@ -1461,12 +1451,9 @@ h3[data-dirty]::after {
 .mos-icon-picker-btn {
   appearance: none;
   -webkit-appearance: none;
-  background: none;
-  border: none;
   color: inherit;
   font: inherit;
   margin: 0;
-  padding: 0;
   text-align: inherit;
   text-transform: none;
   font-size: 24px;
@@ -1565,7 +1552,6 @@ select.mos-btn.mos-btn-select.mos-filter-select {
   -webkit-appearance: none;
   background: none;
   border: none;
-  color: inherit;
   font: inherit;
   margin: 0;
   padding: 0;
@@ -1620,10 +1606,8 @@ select.mos-btn.mos-btn-select.mos-filter-select {
   -webkit-appearance: none;
   background: none;
   border: none;
-  color: inherit;
   font: inherit;
   margin: 0;
-  padding: 0;
   text-align: inherit;
   text-transform: none;
   display: block;
