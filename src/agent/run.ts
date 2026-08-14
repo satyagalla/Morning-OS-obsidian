@@ -1,6 +1,6 @@
-import { App, Notice } from "obsidian";
+import { App } from "obsidian";
 import type { MorningOSSettings } from "../settings";
-import type { DailyBrief, Task, TaskRegistry } from "../types";
+import type { DailyBrief, TaskRegistry } from "../types";
 import { parseAllAreaSections, parseWinsFromLog } from "./vault-reader";
 import { loadRegistry, clearNextDayTasks } from "../task-registry";
 import { detectCarries } from "./carry-detector";

@@ -10,7 +10,7 @@ function getAllVaultTags(app: App): string[] {
     const cache = app.metadataCache.getFileCache(file);
     if (!cache) continue;
     for (const t of cache.tags ?? []) tags.add(t.tag.replace(/^#/, ""));
-    const fm = cache.frontmatter?.tags;
+    const fm: unknown = cache.frontmatter?.tags;
     if (Array.isArray(fm)) fm.forEach(t => tags.add(String(t).replace(/^#/, "")));
     else if (typeof fm === "string") fm.split(",").forEach(t => tags.add(t.trim().replace(/^#/, "")));
   }

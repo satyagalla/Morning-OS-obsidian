@@ -2,10 +2,23 @@ import esbuild from "esbuild";
 import process from "process";
 import fs from "fs";
 import path from "path";
-import { config } from "dotenv";
 
-// Load proxy env vars if present (never committed)
-config({ path: path.resolve("proxy/.env"), quiet: true });
+// Load proxy env vars if present (never committed). Minimal stand-in for
+// dotenv: only used at build time to inject FEEDBACK_PROXY_URL/SECRET below.
+function loadEnvFile(filePath) {
+  if (!fs.existsSync(filePath)) return;
+  for (const line of fs.readFileSync(filePath, "utf8").split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const eqIdx = trimmed.indexOf("=");
+    if (eqIdx === -1) continue;
+    const key = trimmed.slice(0, eqIdx).trim();
+    let value = trimmed.slice(eqIdx + 1).trim();
+    if (/^(['"]).*\1$/.test(value)) value = value.slice(1, -1);
+    if (!(key in process.env)) process.env[key] = value;
+  }
+}
+loadEnvFile(path.resolve("proxy/.env"));
 
 const prod = process.argv[2] === "production";
 const watch = process.argv[2] === "watch";

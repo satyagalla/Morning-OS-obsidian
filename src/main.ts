@@ -1,11 +1,22 @@
 import { Plugin, WorkspaceLeaf, Notice } from "obsidian";
-import { MorningView, VIEW_TYPE_MORNING, AreaView, DumpView, TrashView, VIEW_TYPE_AREA, VIEW_TYPE_DUMP, VIEW_TYPE_TRASH, CaptureModal } from "./view";
+import { MorningView, VIEW_TYPE_MORNING, AreaView, DumpView, TrashView, VIEW_TYPE_AREA, VIEW_TYPE_DUMP, VIEW_TYPE_TRASH } from "./view";
 import { MorningOSSettings, DEFAULT_SETTINGS, MorningOSSettingTab } from "./settings";
 import { runAgent, refreshBrief, AgentResult } from "./agent/run";
 import { scaffoldDailyNote } from "./agent/scaffold-daily-note";
-import { loadRegistry, saveRegistry, createTask, setTaskStatus } from "./task-registry";
+import { loadRegistry, saveRegistry, createTask } from "./task-registry";
 import { parseBulletFile, parseDailyNote, parseSectionFromFile, appendWinToLog } from "./agent/vault-reader";
 import { todayStr } from "./utils";
+
+// Undocumented internal API surface used to coordinate with the remotely-save
+// community plugin (if installed) so large archive batches don't race its sync.
+interface RemotelySavePlugin {
+  settings?: { concurrency?: number };
+  isSyncing?: boolean;
+  syncRun?: () => void;
+}
+interface InternalPluginsHost {
+  plugins?: { plugins?: Record<string, RemotelySavePlugin> };
+}
 
 export default class MorningOSPlugin extends Plugin {
   settings: MorningOSSettings;
@@ -372,8 +383,7 @@ export default class MorningOSPlugin extends Plugin {
       }
 
       // Read remotely-save concurrency setting — fall back to 5 if not installed
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const remotelySave = (this.app as any).plugins?.plugins?.["remotely-save"];
+      const remotelySave = (this.app as unknown as InternalPluginsHost).plugins?.plugins?.["remotely-save"];
       const concurrency: number = remotelySave?.settings?.concurrency ?? 5;
       const batchSize = Math.max(1, concurrency - 1);
 
@@ -426,7 +436,7 @@ export default class MorningOSPlugin extends Plugin {
         const remaining = await this.app.vault.adapter.list(dailyDir);
         if (remaining.files.length === 0) {
           const dailyFolder = this.app.vault.getAbstractFileByPath(dailyDir);
-          if (dailyFolder) await this.app.vault.delete(dailyFolder, true);
+          if (dailyFolder) await this.app.fileManager.trashFile(dailyFolder);
         }
       }
 
@@ -449,7 +459,7 @@ export default class MorningOSPlugin extends Plugin {
       const listing = await this.app.vault.adapter.list(folderPath);
       if (listing.files.length === 0 && listing.folders.length === 0) {
         const folder = this.app.vault.getAbstractFileByPath(folderPath);
-        if (folder) await this.app.vault.delete(folder, true);
+        if (folder) await this.app.fileManager.trashFile(folder);
         results.push(`✓ Deleted empty folder: ${folderPath}`);
       }
     }

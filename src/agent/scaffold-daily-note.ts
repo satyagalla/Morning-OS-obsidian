@@ -58,12 +58,12 @@ export async function scaffoldDailyNote(
   let jsonReminderLines: string[] = [];
   if (await app.vault.adapter.exists(remindersPath)) {
     try {
-      const allReminders: Array<{ text: string; source_date: string; remind_date: string; dismissed: boolean }> =
-        JSON.parse(await app.vault.adapter.read(remindersPath));
+      const allReminders = JSON.parse(await app.vault.adapter.read(remindersPath)) as
+        Array<{ text: string; source_date: string; remind_date: string; dismissed: boolean }>;
       jsonReminderLines = allReminders
         .filter(r => !r.dismissed && r.remind_date <= dateStr)
         .map(r => `- ${r.text}`);
-    } catch {}
+    } catch { /* malformed or missing reminders.json — skip */ }
   }
 
   // Deduplicate by string equality; prevReminderLines first to preserve note-local order

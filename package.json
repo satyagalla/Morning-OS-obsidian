@@ -13,7 +13,6 @@
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^20.0.0",
-    "dotenv": "^17.4.2",
     "esbuild": "^0.21.0",
     "obsidian": "latest",
     "typescript": "^5.4.0"

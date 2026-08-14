@@ -49,16 +49,15 @@ Next up: smarter agents, better personalization, and features I haven't told any
 
 ### Changes
 
-- **New task system** — tasks now live in a proper registry instead of being scattered across daily notes, with stable IDs so carry-forward and history actually track the same task over time
-- **Sub-tasks** — break any task into collapsible sub-tasks, with an optional setting to require them all done before the parent can complete
-- **Notes on tasks** — attach freeform notes to any task, with a row indicator so you can see at a glance which ones have them
-- **Quick-add and inline editing** — add and edit tasks directly from the row, no modal required
+- **No more daily notes.** In 0.2.2, tasks were checkboxes you typed into that day's note by hand — the plugin just read and displayed them. That's gone. Tasks now live in a real, persistent task list inside the plugin: check them off, add new ones, edit the text, split any task into sub-tasks, and attach notes — all directly in the UI, all saved on its own. Nothing to write into markdown anymore.
+- **The whole app is reorganized around Areas.** The old setup — separate Tactical Rules, Emotional Rules, Goals, Technical Tasks, and Hobby Tasks files — is replaced by Areas: each part of your life gets one place with its own tasks, goals, and notes. Plus a proper Inbox for capturing things on the fly and a Trash so deleting is never permanent by accident.
+- **Full visual redesign** — new floating glass panel, unified buttons, right-click context menus everywhere, urgency dots that flag tasks needing attention, and a table view with filters and sorting per Area.
+- **One-time vault migration** (Settings → Vault → Migrate) moves your existing rules, goals, tasks, and full wins history into the new system for you — safe to re-run if you're not sure it finished.
+- **Quick-add and inline editing** — add and edit tasks straight from the row, no modal
 - **`[[link]]` and `#tag` autocomplete** in task text, with live markdown rendering
-- **Pillars renamed to Areas** — same concept, clearer name, throughout the UI and settings
-- **New views** — Inbox for quick capture, Trash for anything you've deleted, plus a table view and custom filters/sorting per Area
-- **One-time vault migration** (Settings → Vault → Migrate) moves your existing rules, goals, technical/hobby tasks, and full wins history into the new structure — safe to re-run, only touches what hasn't already moved
-- **Reminders** are now just part of a task instead of a separate file — nothing to lose track of
-- Feedback button now goes to a real inbox instead of just sitting there
+- **Wins are a real log now**, not text buried in a daily note that eventually gets archived and forgotten — yesterday's wins show up on the dashboard the next morning
+- Feedback button now goes to a real inbox instead of just sitting there — the old channel got flooded by a bot and none of what you sent was actually getting through; that's fixed now
+- A round of smaller fixes: wins log formatting cleaned up, migration no longer chokes on large vaults, and the API key banner only shows up when you're actually using AI mode
 
 ### Note for people upgrading from 0.2.x
 

@@ -108,7 +108,7 @@ async function signAwsRequest(opts: {
     "AWS4-HMAC-SHA256", amzDate, credentialScope, await sha256Hex(canonicalRequest),
   ].join("\n");
 
-  const kDate = await hmacSha256(new TextEncoder().encode("AWS4" + opts.secretAccessKey).buffer as ArrayBuffer, dateStamp);
+  const kDate = await hmacSha256(new TextEncoder().encode("AWS4" + opts.secretAccessKey).buffer, dateStamp);
   const kRegion = await hmacSha256(kDate, opts.region);
   const kService = await hmacSha256(kRegion, opts.service);
   const kSigning = await hmacSha256(kService, "aws4_request");

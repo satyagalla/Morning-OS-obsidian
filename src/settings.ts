@@ -1,6 +1,8 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
 import type MorningOSPlugin from "./main";
-import type { AreaConfig, TabConfig, FieldDef, LLMSectionMapping } from "./types";
+import type { AreaConfig, FieldDef, LLMSectionMapping } from "./types";
+
+type NumericSettingsKey = { [K in keyof MorningOSSettings]: MorningOSSettings[K] extends number ? K : never }[keyof MorningOSSettings];
 
 export interface MorningOSSettings {
   // Plugin display paths
@@ -258,7 +260,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
       { key: "areas",  label: "Areas" },
       { key: "about",    label: "About" },
     ];
-    const bar = containerEl.createEl("div", { cls: "mos-settings-tab-bar" });
+    const bar = containerEl.createDiv({ cls: "mos-settings-tab-bar" });
     for (const tab of tabs) {
       const btn = bar.createEl("button", {
         cls: "mos-settings-tab" + (this.activeSettingsTab === tab.key ? " is-active" : ""),
@@ -280,7 +282,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
     containerEl.empty();
     this.renderTabBar(containerEl);
 
-    const content = containerEl.createEl("div", { cls: "mos-settings-content" });
+    const content = containerEl.createDiv({ cls: "mos-settings-content" });
     switch (this.activeSettingsTab) {
       case "briefing": this.renderAgentSection(content); break;
       case "ai":       this.renderAISection(content); break;
@@ -311,8 +313,8 @@ export class MorningOSSettingTab extends PluginSettingTab {
       });
 
     // Banner slot — visible only when settingsChangedSinceRun
-    const bannerSlot = containerEl.createEl("div", { cls: "mos-run-banner-slot" });
-    bannerSlot.createEl("span", { text: "⚠ Settings changed — run the agent to apply them." });
+    const bannerSlot = containerEl.createDiv({ cls: "mos-run-banner-slot" });
+    bannerSlot.createSpan({ text: "⚠ Settings changed — run the agent to apply them." });
     if (this.plugin.settings.settingsChangedSinceRun) {
       bannerSlot.setAttribute("data-visible", "true");
     }
@@ -478,7 +480,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
           try {
             await this.plugin.migrateVault();
             this.rerender();
-          } catch (e) {
+          } catch {
             btn.setButtonText("Failed ✗");
             window.setTimeout(() => { btn.setButtonText("Re-run"); btn.setDisabled(false); }, 3000);
           }
@@ -492,7 +494,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
           try {
             await this.plugin.migrateVault();
             this.rerender();
-          } catch (e) {
+          } catch {
             btn.setButtonText("Failed ✗");
             btn.setDisabled(false);
           }
@@ -663,7 +665,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
   private renderCountsSection(containerEl: HTMLElement) {
     this.sectionHeading(containerEl, "How many items to show");
 
-    const count = (name: string, key: keyof MorningOSSettings) => {
+    const count = (name: string, key: NumericSettingsKey) => {
       new Setting(containerEl)
         .setName(name)
         .addText((text) => {
@@ -674,7 +676,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
             .setValue(String(this.plugin.settings[key]))
             .onChange(async (value) => {
               const n = parseInt(value, 10);
-              if (!isNaN(n) && n >= 0) await this.save({ [key]: n } as Partial<MorningOSSettings>, "How many items to show");
+              if (!isNaN(n) && n >= 0) await this.save({ [key]: n }, "How many items to show");
             });
         });
     };
@@ -706,7 +708,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
         .addToggle((t) =>
           t
             .setValue(this.plugin.settings[key] as boolean)
-            .onChange(async (value) => { await this.save({ [key]: value } as Partial<MorningOSSettings>, "AI vs direct mode"); })
+            .onChange(async (value) => { await this.save({ [key]: value }, "AI vs direct mode"); })
         );
     };
 
@@ -763,15 +765,15 @@ export class MorningOSSettingTab extends PluginSettingTab {
       this.selectedAreaKey = null; this.selectedTabKey = null;
     }
 
-    const wrap = containerEl.createEl("div", { cls: "mos-areas-layout" });
-    const left = wrap.createEl("div", { cls: "mos-areas-left" });
-    const right = wrap.createEl("div", { cls: "mos-areas-right" });
+    const wrap = containerEl.createDiv({ cls: "mos-areas-layout" });
+    const left = wrap.createDiv({ cls: "mos-areas-left" });
+    const right = wrap.createDiv({ cls: "mos-areas-right" });
 
     // ── LEFT: area list ──────────────────────────────────────────────────
 
     const renderNavRow = (p: typeof areas[0], pi: number) => {
-      const row = left.createEl("div", { cls: "mos-areas-nav-row" });
-      const item = row.createEl("div", {
+      const row = left.createDiv({ cls: "mos-areas-nav-row" });
+      const item = row.createDiv({
         cls: "mos-areas-nav-item" + (this.selectedAreaKey === p.key ? " is-active" : ""),
         text: `${p.icon} ${p.label}`,
         attr: { "data-key": p.key },
@@ -785,23 +787,27 @@ export class MorningOSSettingTab extends PluginSettingTab {
         renderRight();
       });
 
-      const reorder = row.createEl("div", { cls: "mos-areas-reorder" });
+      const reorder = row.createDiv({ cls: "mos-areas-reorder" });
       if (pi > 0) {
         reorder.createEl("button", { cls: "mos-btn mos-btn-icon", text: "↑" })
-          .addEventListener("click", async (e) => {
-            e.stopPropagation();
-            [areas[pi - 1], areas[pi]] = [areas[pi], areas[pi - 1]];
-            await saveDataOnly();
-            left.empty(); renderLeft();
+          .addEventListener("click", (e) => {
+            void (async () => {
+              e.stopPropagation();
+              [areas[pi - 1], areas[pi]] = [areas[pi], areas[pi - 1]];
+              await saveDataOnly();
+              left.empty(); renderLeft();
+            })();
           });
       }
       if (pi < areas.length - 1) {
         reorder.createEl("button", { cls: "mos-btn mos-btn-icon", text: "↓" })
-          .addEventListener("click", async (e) => {
-            e.stopPropagation();
-            [areas[pi], areas[pi + 1]] = [areas[pi + 1], areas[pi]];
-            await saveDataOnly();
-            left.empty(); renderLeft();
+          .addEventListener("click", (e) => {
+            void (async () => {
+              e.stopPropagation();
+              [areas[pi], areas[pi + 1]] = [areas[pi + 1], areas[pi]];
+              await saveDataOnly();
+              left.empty(); renderLeft();
+            })();
           });
       }
     };
@@ -809,8 +815,8 @@ export class MorningOSSettingTab extends PluginSettingTab {
     const renderLeft = () => {
       areas.forEach((p, pi) => renderNavRow(p, pi));
 
-      left.createEl("div", { cls: "mos-areas-nav-divider" });
-      const addRow = left.createEl("div", { cls: "mos-areas-add-row" });
+      left.createDiv({ cls: "mos-areas-nav-divider" });
+      const addRow = left.createDiv({ cls: "mos-areas-add-row" });
       const labelIn = addRow.createEl("input", { type: "text", cls: "morning-os-wins-input", placeholder: "New area…" });
       const addBtn = addRow.createEl("button", { cls: "mos-btn mos-btn-primary", text: "Add" });
       const doAdd = async () => {
@@ -827,7 +833,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
         left.empty(); renderLeft();
         right.empty(); renderRight();
       };
-      addBtn.addEventListener("click", doAdd);
+      addBtn.addEventListener("click", () => { void doAdd(); });
       labelIn.addEventListener("keydown", (e: KeyboardEvent) => { if (e.key === "Enter") void doAdd(); });
     };
 
@@ -858,29 +864,33 @@ export class MorningOSSettingTab extends PluginSettingTab {
         });
       });
 
-      tabDetailEl.createEl("div", { cls: "mos-areas-sub-heading", text: "Fields" });
+      tabDetailEl.createDiv({ cls: "mos-areas-sub-heading", text: "Fields" });
 
       const renderFieldRows = () => {
         const existing = tabDetailEl.querySelectorAll(".mos-field-row");
         existing.forEach(el => el.remove());
         selectedTab.fields.forEach((field, fi) => {
-          const fRow = tabDetailEl.createEl("div", { cls: "mos-area-builder-row mos-field-row" });
-          fRow.createEl("span", { cls: "mos-area-builder-label", text: field.label });
-          fRow.createEl("span", { cls: "mos-meta-chip", text: field.type });
+          const fRow = tabDetailEl.createDiv({ cls: "mos-area-builder-row mos-field-row" });
+          fRow.createSpan({ cls: "mos-area-builder-label", text: field.label });
+          fRow.createSpan({ cls: "mos-meta-chip", text: field.type });
           if (field.type === "dropdown") {
             const optStr = (field.options ?? []).join(", ");
             const optInput = fRow.createEl("input", { type: "text", cls: "morning-os-wins-input mos-field-options-inline", placeholder: "Options (comma-separated)" });
             optInput.value = optStr;
-            optInput.addEventListener("change", async () => {
-              field.options = optInput.value.split(",").map(s => s.trim()).filter(Boolean);
-              await saveDataOnly();
+            optInput.addEventListener("change", () => {
+              void (async () => {
+                field.options = optInput.value.split(",").map(s => s.trim()).filter(Boolean);
+                await saveDataOnly();
+              })();
             });
           }
           fRow.createEl("button", { cls: "mos-btn mos-btn-icon", text: "✕" })
-            .addEventListener("click", async () => {
-              selectedTab.fields.splice(fi, 1);
-              await saveDataOnly();
-              renderFieldRows();
+            .addEventListener("click", () => {
+              void (async () => {
+                selectedTab.fields.splice(fi, 1);
+                await saveDataOnly();
+                renderFieldRows();
+              })();
             });
         });
       };
@@ -890,16 +900,16 @@ export class MorningOSSettingTab extends PluginSettingTab {
         tabDetailEl.createEl("p", { cls: "mos-areas-empty", text: "No fields yet." });
       }
 
-      const addFRow = tabDetailEl.createEl("div", { cls: "mos-area-builder-row" });
+      const addFRow = tabDetailEl.createDiv({ cls: "mos-area-builder-row" });
       const fLabelIn = addFRow.createEl("input", { type: "text", cls: "morning-os-wins-input", placeholder: "Field label" });
       const fTypeSelect = addFRow.createEl("select", { cls: "mos-btn mos-btn-select" });
       for (const ft of ["text", "url", "dropdown", "date"]) fTypeSelect.createEl("option", { value: ft, text: ft });
-      const fOptionsWrap = tabDetailEl.createEl("div", { cls: "mos-area-builder-row mos-field-options-row" });
-      fOptionsWrap.style.display = "none";
+      const fOptionsWrap = tabDetailEl.createDiv({ cls: "mos-area-builder-row mos-field-options-row" });
+      fOptionsWrap.addClass("mos-field-options-hidden");
       fOptionsWrap.createEl("label", { cls: "mos-edit-label", text: "Options (comma-separated)" });
       const fOptionsIn = fOptionsWrap.createEl("input", { type: "text", cls: "morning-os-wins-input", placeholder: "Option 1, Option 2, Option 3" });
       fTypeSelect.addEventListener("change", () => {
-        fOptionsWrap.style.display = fTypeSelect.value === "dropdown" ? "flex" : "none";
+        fOptionsWrap.toggleClass("mos-field-options-hidden", fTypeSelect.value !== "dropdown");
       });
       const doAddField = async () => {
         const l = fLabelIn.value.trim();
@@ -913,13 +923,13 @@ export class MorningOSSettingTab extends PluginSettingTab {
         selectedTab.fields.push(field);
         fLabelIn.value = "";
         fOptionsIn.value = "";
-        fOptionsWrap.style.display = "none";
+        fOptionsWrap.addClass("mos-field-options-hidden");
         fTypeSelect.value = "text";
         await saveDataOnly();
         renderFieldRows();
       };
       addFRow.createEl("button", { cls: "mos-btn mos-btn-primary", text: "Add" })
-        .addEventListener("click", doAddField);
+        .addEventListener("click", () => { void doAddField(); });
       fLabelIn.addEventListener("keydown", (e: KeyboardEvent) => { if (e.key === "Enter") void doAddField(); });
     };
 
@@ -932,18 +942,20 @@ export class MorningOSSettingTab extends PluginSettingTab {
       if (!area) return;
 
       // Header
-      const ph = right.createEl("div", { cls: "mos-areas-detail-header" });
-      const previewEl = ph.createEl("span", { cls: "mos-areas-detail-preview", text: `${area.icon} ${area.label}` });
-      const navItem = left.querySelector(`.mos-areas-nav-item[data-key="${area.key}"]`) as HTMLElement | null;
+      const ph = right.createDiv({ cls: "mos-areas-detail-header" });
+      const previewEl = ph.createSpan({ cls: "mos-areas-detail-preview", text: `${area.icon} ${area.label}` });
+      const navItem = left.querySelector(`.mos-areas-nav-item[data-key="${area.key}"]`);
 
       ph.createEl("button", { cls: "mos-btn mos-btn-inline mos-btn-danger", text: "Delete area" })
-        .addEventListener("click", async () => {
-          const idx = areas.findIndex(p => p.key === area.key);
-          if (idx !== -1) areas.splice(idx, 1);
-          this.selectedAreaKey = null;
-          await saveDataOnly();
-          left.empty(); renderLeft();
-          right.empty(); renderRight();
+        .addEventListener("click", () => {
+          void (async () => {
+            const idx = areas.findIndex(p => p.key === area.key);
+            if (idx !== -1) areas.splice(idx, 1);
+            this.selectedAreaKey = null;
+            await saveDataOnly();
+            left.empty(); renderLeft();
+            right.empty(); renderRight();
+          })();
         });
 
       // Label
@@ -963,19 +975,22 @@ export class MorningOSSettingTab extends PluginSettingTab {
       iconBtn.addEventListener("click", () => {
         const existing = right.querySelector(".mos-emoji-picker-wrap");
         if (existing) { existing.remove(); return; }
-        const wrap = right.createEl("div", { cls: "mos-emoji-picker-wrap" });
+        const wrap = right.createDiv({ cls: "mos-emoji-picker-wrap" });
         // emoji-picker-element is a web component — just instantiate and append
-        import("emoji-picker-element").then(({ Picker }) => {
+        void import("emoji-picker-element").then(({ Picker }) => {
           const picker = new Picker({ skinToneEmoji: "👋" });
-          picker.addEventListener("emoji-click", async (e: Event) => {
-            const unicode = (e as CustomEvent).detail?.unicode as string | undefined;
-            if (!unicode) return;
-            area.icon = unicode;
-            iconBtn.textContent = unicode;
-            previewEl.textContent = `${unicode} ${area.label}`;
-            if (navItem) navItem.textContent = `${unicode} ${area.label}`;
-            wrap.remove();
-            await saveAndSync();
+          picker.classList.add("mos-emoji-picker");
+          picker.addEventListener("emoji-click", (e: Event) => {
+            void (async () => {
+              const unicode = (e as CustomEvent<{ unicode?: string }>).detail?.unicode;
+              if (!unicode) return;
+              area.icon = unicode;
+              iconBtn.textContent = unicode;
+              previewEl.textContent = `${unicode} ${area.label}`;
+              if (navItem) navItem.textContent = `${unicode} ${area.label}`;
+              wrap.remove();
+              await saveAndSync();
+            })();
           });
           wrap.appendChild(picker);
         });
@@ -988,30 +1003,32 @@ export class MorningOSSettingTab extends PluginSettingTab {
       });
 
       // Tabs section
-      right.createEl("div", { cls: "setting-item-heading mos-areas-sub-heading", text: "Tabs" });
+      right.createDiv({ cls: "setting-item-heading mos-areas-sub-heading", text: "Tabs" });
 
-      const tabNav = right.createEl("div", { cls: "mos-areas-tab-nav" });
-      const tabDetailContainer = right.createEl("div");
+      const tabNav = right.createDiv({ cls: "mos-areas-tab-nav" });
+      const tabDetailContainer = right.createDiv();
 
       const renderTabNav = () => {
         tabNav.empty();
         area.tabs.forEach(tab => {
-          const tabBtn = tabNav.createEl("div", {
+          const tabBtn = tabNav.createDiv({
             cls: "mos-areas-tab-btn" + (this.selectedTabKey === tab.key ? " is-active" : ""),
             attr: { "data-tabkey": tab.key },
           });
-          tabBtn.createEl("span", { text: tab.label });
+          tabBtn.createSpan({ text: tab.label });
           tabBtn.createEl("button", { cls: "mos-btn mos-btn-icon", text: "✕" })
-            .addEventListener("click", async (e) => {
-              e.stopPropagation();
-              const ti = area.tabs.findIndex(t => t.key === tab.key);
-              if (ti !== -1) area.tabs.splice(ti, 1);
-              if (this.selectedTabKey === tab.key) {
-                this.selectedTabKey = null;
-                tabDetailContainer.empty();
-              }
-              await saveDataOnly();
-              renderTabNav();
+            .addEventListener("click", (e) => {
+              void (async () => {
+                e.stopPropagation();
+                const ti = area.tabs.findIndex(t => t.key === tab.key);
+                if (ti !== -1) area.tabs.splice(ti, 1);
+                if (this.selectedTabKey === tab.key) {
+                  this.selectedTabKey = null;
+                  tabDetailContainer.empty();
+                }
+                await saveDataOnly();
+                renderTabNav();
+              })();
             });
           tabBtn.addEventListener("click", () => {
             this.selectedTabKey = this.selectedTabKey === tab.key ? null : tab.key;
@@ -1030,7 +1047,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
       if (currentTab) renderTabDetail(tabDetailContainer, currentTab);
 
       // Add tab
-      const addTabRow = right.createEl("div", { cls: "mos-area-builder-row" });
+      const addTabRow = right.createDiv({ cls: "mos-area-builder-row" });
       const tabLabelIn = addTabRow.createEl("input", { type: "text", cls: "morning-os-wins-input", placeholder: "New tab…" });
       const doAddTab = async () => {
         const l = tabLabelIn.value.trim();
@@ -1047,7 +1064,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
         renderTabDetail(tabDetailContainer, newTab);
       };
       addTabRow.createEl("button", { cls: "mos-btn mos-btn-primary", text: "Add tab" })
-        .addEventListener("click", doAddTab);
+        .addEventListener("click", () => { void doAddTab(); });
       tabLabelIn.addEventListener("keydown", (e: KeyboardEvent) => { if (e.key === "Enter") void doAddTab(); });
     };
 
