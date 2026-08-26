@@ -3,7 +3,7 @@ import { MorningView, VIEW_TYPE_MORNING, AreaView, DumpView, TrashView, VIEW_TYP
 import { MorningOSSettings, DEFAULT_SETTINGS, MorningOSSettingTab } from "./settings";
 import { runAgent, refreshBrief, AgentResult } from "./agent/run";
 import { scaffoldDailyNote } from "./agent/scaffold-daily-note";
-import { loadRegistry, saveRegistry, createTask } from "./task-registry";
+import { loadRegistry, saveRegistry, createTask, recoverRegistryAreas } from "./task-registry";
 import { parseBulletFile, parseDailyNote, parseSectionFromFile, appendWinToLog } from "./agent/vault-reader";
 import { todayStr } from "./utils";
 
@@ -46,6 +46,24 @@ export default class MorningOSPlugin extends Plugin {
     if (!this.settings.onboarded && this.settings.agentLastRunDate) {
       this.settings.onboarded = true;
       await this.saveData(this.settings);
+    }
+
+    // Must run before any view or agent can load and re-save the registry.
+    const areasRecovery = await recoverRegistryAreas(this.app, this.settings.areas);
+    if (areasRecovery.settingsChanged) {
+      await this.saveData(this.settings);
+    }
+    if (areasRecovery.error) {
+      console.error("Morning OS area recovery failed:", areasRecovery.error);
+      new Notice(`Morning OS: area recovery failed — ${areasRecovery.error}`);
+    } else if (areasRecovery.changed || areasRecovery.settingsChanged) {
+      const details = [
+        `${areasRecovery.tasksRecovered} task${areasRecovery.tasksRecovered === 1 ? "" : "s"} recovered`,
+        `${areasRecovery.areasCreated} area${areasRecovery.areasCreated === 1 ? "" : "s"} created`,
+        `${areasRecovery.tabsCreated} tab${areasRecovery.tabsCreated === 1 ? "" : "s"} created`,
+      ];
+      if (areasRecovery.backupCreated) details.push("backup saved");
+      new Notice(`Morning OS: area recovery complete — ${details.join(", ")}.`, 8000);
     }
 
     this.registerView(VIEW_TYPE_MORNING, (leaf) => new MorningView(leaf, this.settings, this));
