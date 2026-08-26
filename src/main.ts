@@ -117,7 +117,7 @@ export default class MorningOSPlugin extends Plugin {
         new Notice("Morning OS: brief ready ✓");
       }
       this.settingTab.clearDirty();
-      this.refreshView();
+      await this.refreshView();
     } catch (err) {
       const msg = (err as Error).message;
       if (msg.startsWith("LLM_FAILED:")) {
@@ -147,25 +147,29 @@ export default class MorningOSPlugin extends Plugin {
     try {
       await refreshBrief(this.app, this.settings);
       new Notice("Morning OS: brief refreshed ✓");
-      this.refreshView();
+      await this.refreshView();
     } catch (err) {
       new Notice(`Morning OS: ${(err as Error).message}`);
     }
   }
 
-  refreshView() {
+  async refreshView(): Promise<void> {
     for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_MORNING)) {
-      void (leaf.view as MorningView).refresh();
+      await leaf.loadIfDeferred();
+      if (leaf.view instanceof MorningView) await leaf.view.refresh();
     }
     for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_DUMP)) {
-      void (leaf.view as DumpView).refresh();
+      await leaf.loadIfDeferred();
+      if (leaf.view instanceof DumpView) await leaf.view.refresh();
     }
     for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_TRASH)) {
-      void (leaf.view as TrashView).refresh();
+      await leaf.loadIfDeferred();
+      if (leaf.view instanceof TrashView) await leaf.view.refresh();
     }
     for (const area of this.settings.areas) {
       for (const leaf of this.app.workspace.getLeavesOfType(`${VIEW_TYPE_AREA}-${area.key}`)) {
-        void (leaf.view as AreaView).refresh();
+        await leaf.loadIfDeferred();
+        if (leaf.view instanceof AreaView) await leaf.view.refresh();
       }
     }
   }
@@ -179,7 +183,7 @@ export default class MorningOSPlugin extends Plugin {
       const key = area.key;
       this.registerView(`${VIEW_TYPE_AREA}-${key}`, (leaf) => new AreaView(leaf, this.settings, this, key));
     }
-    this.refreshView();
+    await this.refreshView();
   }
 
   async activateDump() {
