@@ -23,7 +23,6 @@ export interface MorningOSSettings {
   sectionRedAlert: string;
   sectionRegular: string;
   sectionThoughts: string;
-  sectionPending: string;
 
   // Goals file section headings
   goalsShortTerm: string;
@@ -38,11 +37,10 @@ export interface MorningOSSettings {
   modeGoals: boolean;
   modeHobbyTasks: boolean;
   modeSuggestion: boolean;
-  modeTechnicalTasks: boolean;
-  modeTasks: boolean;
   modeWins: boolean;
 
   // Intelligence LLM
+  aiEnabled: boolean;
   intelligenceProvider: string;
   intelligenceModel: string;
   intelligenceRegion: string;
@@ -62,7 +60,11 @@ export interface MorningOSSettings {
   goalsLongTermCount: number;
   hobbyTasksCount: number;
   suggestionCount: number;
-  technicalTasksCount: number;
+
+  // Home dashboard visibility
+  showIdentity: boolean;
+  showGoals: boolean;
+  showRulesForToday: boolean;
 
   // Carry detection
   carryLookbackDays: number;
@@ -84,6 +86,9 @@ export interface MorningOSSettings {
 
   lastSeenVersion: string;
   areas: AreaConfig[];
+
+  // Advanced area functionality
+  advancedAreaFeatures: boolean;
 
   // Subtasks
   requireSubtasksComplete: boolean;
@@ -115,7 +120,6 @@ export const DEFAULT_SETTINGS: MorningOSSettings = {
   sectionRedAlert: "Red alert",
   sectionRegular: "Regular",
   sectionThoughts: "Thoughts",
-  sectionPending: "Top 3 pending",
 
   goalsShortTerm: "Short Term",
   goalsLongTerm: "Long Term",
@@ -125,10 +129,9 @@ export const DEFAULT_SETTINGS: MorningOSSettings = {
   modeGoals: true,
   modeHobbyTasks: true,
   modeSuggestion: true,
-  modeTechnicalTasks: false,
-  modeTasks: false,
   modeWins: false,
 
+  aiEnabled: true,
   intelligenceProvider: "openai",
   intelligenceModel: "gpt-4o",
   intelligenceRegion: "us-east-2",
@@ -148,7 +151,10 @@ export const DEFAULT_SETTINGS: MorningOSSettings = {
   goalsLongTermCount: 1,
   hobbyTasksCount: 3,
   suggestionCount: 3,
-  technicalTasksCount: 5,
+
+  showIdentity: false,
+  showGoals: true,
+  showRulesForToday: true,
 
   carryLookbackDays: 7,
 
@@ -183,6 +189,8 @@ export const DEFAULT_SETTINGS: MorningOSSettings = {
     { key: "family",       label: "Family",         icon: "👨‍👩‍👧", feedToLLM: false, tabs: [] },
     { key: "relationship", label: "Relationships",  icon: "💞",  feedToLLM: false, tabs: [] },
   ],
+
+  advancedAreaFeatures: false,
 
   requireSubtasksComplete: false,
 
@@ -249,16 +257,12 @@ export class MorningOSSettingTab extends PluginSettingTab {
     if (this.dirtySections.has(text)) s.settingEl.setAttribute("data-dirty", "true");
   }
 
-  private activeSettingsTab = "briefing";
+  private activeSettingsTab = "general";
 
   private renderTabBar(containerEl: HTMLElement) {
     const tabs = [
-      { key: "briefing", label: "Briefing" },
-      { key: "ai",       label: "AI" },
-      { key: "vault",    label: "Vault" },
-      { key: "display",  label: "Display" },
-      { key: "areas",  label: "Areas" },
-      { key: "about",    label: "About" },
+      { key: "general", label: "General" },
+      { key: "advanced", label: "Advanced" },
     ];
     const bar = containerEl.createDiv({ cls: "mos-settings-tab-bar" });
     for (const tab of tabs) {
@@ -284,12 +288,22 @@ export class MorningOSSettingTab extends PluginSettingTab {
 
     const content = containerEl.createDiv({ cls: "mos-settings-content" });
     switch (this.activeSettingsTab) {
-      case "briefing": this.renderAgentSection(content); break;
-      case "ai":       this.renderAISection(content); break;
-      case "vault":    this.renderPathsSection(content); this.renderHeadingsSection(content); break;
-      case "display":  this.renderCountsSection(content); this.renderModesSection(content); break;
-      case "areas":  this.renderAreasSection(content); break;
-      case "about":    this.renderAboutSection(content); break;
+      case "general":
+        this.renderAISection(content);
+        this.renderHomeSection(content);
+        this.renderTaskBehaviorSection(content);
+        this.renderAreasSection(content);
+        break;
+      case "advanced":
+        this.renderAdvancedAreaFeaturesSection(content);
+        this.renderAgentSection(content);
+        this.renderAdvancedAISection(content);
+        this.renderPathsSection(content);
+        this.renderWinsSettingsSection(content);
+        this.renderCountsSection(content);
+        this.renderModesSection(content);
+        this.renderAreaBriefingSourcesSection(content);
+        break;
     }
   }
 
@@ -365,6 +379,20 @@ export class MorningOSSettingTab extends PluginSettingTab {
     this.sectionHeading(containerEl, "AI provider");
 
     new Setting(containerEl)
+      .setName("Use AI for briefings")
+      .setDesc("Turn off to build briefings directly from your vault without contacting an AI provider.")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.aiEnabled)
+          .onChange(async (value) => {
+            await this.save({ aiEnabled: value }, "AI provider");
+            this.rerender();
+          })
+      );
+
+    if (!this.plugin.settings.aiEnabled) return;
+
+    new Setting(containerEl)
       .setName("Provider")
       .setDesc("Which AI service generates your daily brief.")
       .addDropdown((dd) =>
@@ -379,15 +407,6 @@ export class MorningOSSettingTab extends PluginSettingTab {
             }, "AI provider");
             this.rerender();
           })
-      );
-
-    new Setting(containerEl)
-      .setName("Model")
-      .setDesc("Model ID to use. Defaults are pre-filled per provider.")
-      .addText((text) =>
-        text
-          .setValue(this.plugin.settings.intelligenceModel)
-          .onChange(async (value) => { await this.save({ intelligenceModel: value }, "AI provider"); })
       );
 
     const p = this.plugin.settings.intelligenceProvider;
@@ -453,41 +472,27 @@ export class MorningOSSettingTab extends PluginSettingTab {
 
   }
 
+  private renderAdvancedAISection(containerEl: HTMLElement) {
+    this.sectionHeading(containerEl, "AI model");
+
+    new Setting(containerEl)
+      .setName("Model")
+      .setDesc("Provider model ID. Change this only when you need a model other than the default.")
+      .addText((text) =>
+        text
+          .setValue(this.plugin.settings.intelligenceModel)
+          .onChange(async (value) => { await this.save({ intelligenceModel: value }, "AI model"); })
+      );
+  }
+
   private renderPathsSection(containerEl: HTMLElement) {
-    this.sectionHeading(containerEl, "Vault paths");
-    containerEl.createEl("p", {
-      cls: "setting-item-description",
-      text: "All paths are relative to your vault root. Change these only if your vault structure differs from the defaults.",
-    });
-
     const migrationDone = this.plugin.settings.migrationComplete;
-    const migrationSetting = new Setting(containerEl)
-      .setName("Migrate vault to areas")
-      .setDesc(migrationDone
-        ? "Migration complete. Your vault is using the new area system."
-        : "Move your existing rules, goals, and tasks to the new area system. Old files are archived to _archive/pre-migration/.");
-
-    if (migrationDone) {
-      migrationSetting.setDesc("Migration complete. Re-run to import new legacy content or restore content from _archive/pre-migration/ into your areas.");
-      migrationSetting.addButton(btn => {
-        btn.setButtonText("Migrated ✓").setDisabled(true);
-        btn.buttonEl.addClass("mos-btn-success");
-      });
-      migrationSetting.addButton(btn => {
-        btn.setButtonText("Re-run").onClick(async () => {
-          btn.setButtonText("Checking…");
-          btn.setDisabled(true);
-          try {
-            await this.plugin.migrateVault();
-            this.rerender();
-          } catch {
-            btn.setButtonText("Failed ✗");
-            window.setTimeout(() => { btn.setButtonText("Re-run"); btn.setDisabled(false); }, 3000);
-          }
-        });
-      });
-    } else {
-      migrationSetting.addButton(btn =>
+    if (!migrationDone) {
+      this.sectionHeading(containerEl, "Vault migration");
+      new Setting(containerEl)
+        .setName("Migrate vault to areas")
+        .setDesc("Move rules, goals, and tasks from an earlier Morning OS vault into Areas. Old files are archived to _archive/pre-migration/.")
+        .addButton(btn =>
         btn.setButtonText("Migrate").setCta().onClick(async () => {
           btn.setButtonText("Migrating…");
           btn.setDisabled(true);
@@ -502,15 +507,11 @@ export class MorningOSSettingTab extends PluginSettingTab {
       );
     }
 
-    new Setting(containerEl)
-      .setName("Daily notes folder")
-      .setDesc("Used by migration to archive old daily notes. Run migration to move these to _archive/daily-notes/ and remove this folder.")
-      .addText((text) =>
-        text
-          .setPlaceholder("Essential/Daily")
-          .setValue(this.plugin.settings.dailyNoteDir)
-          .onChange(async (value) => { await this.save({ dailyNoteDir: value }, "Vault paths"); })
-      );
+    this.sectionHeading(containerEl, "Vault paths");
+    containerEl.createEl("p", {
+      cls: "setting-item-description",
+      text: "All paths are relative to your vault root. Change these only if your vault structure differs from the defaults.",
+    });
 
     new Setting(containerEl)
       .setName("Briefs output folder")
@@ -533,48 +534,6 @@ export class MorningOSSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("Tactical rules file")
-      .addText((text) =>
-        text
-          .setValue(this.plugin.settings.sourceTacticalRules)
-          .onChange(async (value) => { await this.save({ sourceTacticalRules: value }, "Vault paths"); })
-      );
-
-    new Setting(containerEl)
-      .setName("Emotional rules file")
-      .addText((text) =>
-        text
-          .setValue(this.plugin.settings.sourceEmotionalRules)
-          .onChange(async (value) => { await this.save({ sourceEmotionalRules: value }, "Vault paths"); })
-      );
-
-    new Setting(containerEl)
-      .setName("Goals file")
-      .addText((text) =>
-        text
-          .setValue(this.plugin.settings.sourceGoals)
-          .onChange(async (value) => { await this.save({ sourceGoals: value }, "Vault paths"); })
-      );
-
-    new Setting(containerEl)
-      .setName("Technical tasks file")
-      .setDesc("Legacy — tasks now live in the registry. Kept for brief context.")
-      .addText((text) =>
-        text
-          .setValue(this.plugin.settings.sourceTechnicalTasks)
-          .onChange(async (value) => { await this.save({ sourceTechnicalTasks: value }, "Vault paths"); })
-      );
-
-    new Setting(containerEl)
-      .setName("Hobby tasks file")
-      .setDesc("Legacy — tasks now live in the registry. Kept for brief context.")
-      .addText((text) =>
-        text
-          .setValue(this.plugin.settings.sourceHobbyTasks)
-          .onChange(async (value) => { await this.save({ sourceHobbyTasks: value }, "Vault paths"); })
-      );
-
-    new Setting(containerEl)
       .setName("Identity Anchor file")
       .setDesc("5 static lines rendered at the top of the Home view.")
       .addText((text) =>
@@ -593,72 +552,15 @@ export class MorningOSSettingTab extends PluginSettingTab {
       );
   }
 
-  private renderHeadingsSection(containerEl: HTMLElement) {
-    this.sectionHeading(containerEl, "Section headings");
-    containerEl.createEl("p", {
-      cls: "setting-item-description",
-      text: "The ## heading names used in your daily note and goals file. Must match exactly (case-insensitive).",
-    });
-
-    new Setting(containerEl)
-      .setName("Red alert heading")
-      .setDesc("Daily note heading for urgent tasks.")
-      .addText((text) =>
-        text
-          .setValue(this.plugin.settings.sectionRedAlert)
-          .onChange(async (value) => { await this.save({ sectionRedAlert: value }, "Section headings"); })
-      );
-
-    new Setting(containerEl)
-      .setName("Regular tasks heading")
-      .addText((text) =>
-        text
-          .setValue(this.plugin.settings.sectionRegular)
-          .onChange(async (value) => { await this.save({ sectionRegular: value }, "Section headings"); })
-      );
-
+  private renderWinsSettingsSection(containerEl: HTMLElement) {
+    this.sectionHeading(containerEl, "Wins log");
     new Setting(containerEl)
       .setName("Wins heading")
-      .setDesc("Used in both your daily note and the dashboard input.")
+      .setDesc("Markdown heading used for entries in the Wins log.")
       .addText((text) =>
         text
           .setValue(this.plugin.settings.sectionWins)
-          .onChange(async (value) => { await this.save({ sectionWins: value }, "Section headings"); })
-      );
-
-    new Setting(containerEl)
-      .setName("Thoughts heading")
-      .setDesc("Daily note heading for unstructured captures.")
-      .addText((text) =>
-        text
-          .setValue(this.plugin.settings.sectionThoughts)
-          .onChange(async (value) => { await this.save({ sectionThoughts: value }, "Section headings"); })
-      );
-
-    new Setting(containerEl)
-      .setName("Top pending heading")
-      .setDesc("Daily note heading for the top 3 pending items.")
-      .addText((text) =>
-        text
-          .setValue(this.plugin.settings.sectionPending)
-          .onChange(async (value) => { await this.save({ sectionPending: value }, "Section headings"); })
-      );
-
-    new Setting(containerEl)
-      .setName("Short-term goals heading")
-      .setDesc("Heading in your goals file.")
-      .addText((text) =>
-        text
-          .setValue(this.plugin.settings.goalsShortTerm)
-          .onChange(async (value) => { await this.save({ goalsShortTerm: value }, "Section headings"); })
-      );
-
-    new Setting(containerEl)
-      .setName("Long-term goals heading")
-      .addText((text) =>
-        text
-          .setValue(this.plugin.settings.goalsLongTerm)
-          .onChange(async (value) => { await this.save({ goalsLongTerm: value }, "Section headings"); })
+          .onChange(async (value) => { await this.save({ sectionWins: value }, "Wins log"); })
       );
   }
 
@@ -687,11 +589,76 @@ export class MorningOSSettingTab extends PluginSettingTab {
     count("Long-term goals (shown in bar)", "goalsLongTermCount");
     count("Hobby tasks", "hobbyTasksCount");
     count("Suggestions", "suggestionCount");
-    count("Pending technical tasks", "technicalTasksCount");
   }
 
-  private renderAboutSection(containerEl: HTMLElement) {
-    this.sectionHeading(containerEl, "About");
+  private renderHomeSection(containerEl: HTMLElement) {
+    this.sectionHeading(containerEl, "Home dashboard");
+
+    const toggle = (name: string, desc: string, key: "showIdentity" | "showGoals" | "showRulesForToday") => {
+      new Setting(containerEl)
+        .setName(name)
+        .setDesc(desc)
+        .addToggle((t) =>
+          t
+            .setValue(this.plugin.settings[key])
+            .onChange(async (value) => {
+              this.plugin.settings[key] = value;
+              await this.plugin.saveData(this.plugin.settings);
+              await this.plugin.refreshView();
+            })
+        );
+    };
+
+    toggle("Show identity", "Show your Identity Anchor at the top of Home.", "showIdentity");
+    toggle("Show goals", "Show short- and long-term goals near the top of Home.", "showGoals");
+    toggle("Show rules for today", "Show the briefing agent's task-relevant rules beside today's tasks.", "showRulesForToday");
+  }
+
+  private renderTaskBehaviorSection(containerEl: HTMLElement) {
+    this.sectionHeading(containerEl, "Task behavior");
+
+    new Setting(containerEl)
+      .setName("Require subtasks complete before parent")
+      .setDesc("When on, a task with open subtasks cannot be completed until every subtask is done.")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.requireSubtasksComplete)
+          .onChange(async (value) => {
+            this.plugin.settings.requireSubtasksComplete = value;
+            await this.plugin.saveData(this.plugin.settings);
+            await this.plugin.refreshView();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Show notes indicator")
+      .setDesc("Show a small indicator on tasks that have notes.")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.showNotesIndicator)
+          .onChange(async (value) => {
+            this.plugin.settings.showNotesIndicator = value;
+            await this.plugin.saveData(this.plugin.settings);
+            await this.plugin.refreshView();
+          })
+      );
+  }
+
+  private renderAdvancedAreaFeaturesSection(containerEl: HTMLElement) {
+    this.sectionHeading(containerEl, "Area features");
+
+    new Setting(containerEl)
+      .setName("Advanced area features")
+      .setDesc("Enable custom fields and table view. Existing field data is preserved when this is off.")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.advancedAreaFeatures)
+          .onChange(async (value) => {
+            this.plugin.settings.advancedAreaFeatures = value;
+            await this.plugin.saveData(this.plugin.settings);
+            await this.plugin.refreshView();
+          })
+      );
   }
 
   private renderModesSection(containerEl: HTMLElement) {
@@ -717,40 +684,35 @@ export class MorningOSSettingTab extends PluginSettingTab {
     toggle("Goals", "AI selects and orders goals based on current tasks.", "modeGoals");
     toggle("Hobby tasks", "AI picks hobby tasks from your file — no generation.", "modeHobbyTasks");
     toggle("Suggestions", "AI generates new suggestion text (the only field where it writes new content).", "modeSuggestion");
-    toggle("Technical tasks", "AI filters technical tasks. Off = top N items in order.", "modeTechnicalTasks");
-    toggle("Tasks", "AI processes red alert and regular tasks. Off = read directly from daily note.", "modeTasks");
-    toggle("Wins", "AI processes wins. Off = read directly from daily note.", "modeWins");
+    toggle("Wins", "AI orders recent wins. Off reads the Wins log directly.", "modeWins");
+  }
 
-    this.sectionHeading(containerEl, "Subtasks");
-    new Setting(containerEl)
-      .setName("Require subtasks complete before parent")
-      .setDesc("When on, a task with open subtasks can't be checked off until every subtask is done. When off, a task's own checkbox is independent of its subtasks.")
-      .addToggle((t) =>
-        t
-          .setValue(this.plugin.settings.requireSubtasksComplete)
-          .onChange(async (value) => { await this.save({ requireSubtasksComplete: value }, "Subtasks"); })
-      );
+  private renderAreaBriefingSourcesSection(containerEl: HTMLElement) {
+    this.sectionHeading(containerEl, "Area briefing sources");
+    containerEl.createEl("p", {
+      cls: "setting-item-description",
+      text: "Choose which Areas may contribute Markdown sections to AI-generated briefings.",
+    });
 
-    this.sectionHeading(containerEl, "Notes");
-    new Setting(containerEl)
-      .setName("Show notes indicator")
-      .setDesc("When on, tasks with notes show a small indicator on their row.")
-      .addToggle((t) =>
-        t
-          .setValue(this.plugin.settings.showNotesIndicator)
-          .onChange(async (value) => { await this.save({ showNotesIndicator: value }, "Notes"); })
-      );
+    for (const area of this.plugin.settings.areas) {
+      new Setting(containerEl)
+        .setName(`${area.icon} ${area.label}`)
+        .addToggle((toggle) =>
+          toggle
+            .setValue(area.feedToLLM ?? true)
+            .onChange(async (value) => {
+              area.feedToLLM = value;
+              await this.save({ areas: [...this.plugin.settings.areas] }, "Area briefing sources");
+            })
+        );
+    }
   }
 
   private selectedAreaKey: string | null = null;
   private selectedTabKey: string | null = null;
 
-  private async saveAreas() {
-    await this.save({ areas: [...this.plugin.settings.areas] });
-    await this.plugin.reregisterAreaViews();
-  }
-
   private renderAreasSection(containerEl: HTMLElement) {
+    this.sectionHeading(containerEl, "Areas");
     const areas = this.plugin.settings.areas;
     const saveDataOnly = async () => {
       await this.plugin.saveData(this.plugin.settings);
@@ -853,6 +815,8 @@ export class MorningOSSettingTab extends PluginSettingTab {
           await saveAndSync();
         });
       });
+
+      if (!this.plugin.settings.advancedAreaFeatures) return;
 
       // View mode toggle
       new Setting(tabDetailEl).setName("View mode").setDesc("Cards show task cards with chips. Table shows a spreadsheet-style grid.").addDropdown(dd => {
@@ -994,12 +958,6 @@ export class MorningOSSettingTab extends PluginSettingTab {
           });
           wrap.appendChild(picker);
         });
-      });
-
-      // Feed to LLM toggle
-      new Setting(right).setName("Feed to LLM").setDesc("Allow this area's markdown sections in AI prompts. Direct-mode briefing fields always read every area.").addToggle(t => {
-        t.setValue(area.feedToLLM ?? true);
-        t.onChange(async v => { area.feedToLLM = v; await saveAndSync(); });
       });
 
       // Tabs section

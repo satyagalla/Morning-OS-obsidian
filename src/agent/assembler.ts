@@ -10,7 +10,6 @@ export interface LLMOutput {
   suggestions?: { text: string; source: string }[];
   hobby_tasks?: string[];
   goals?: { short_term?: string[]; long_term?: string[] };
-  technical_tasks?: string[];
   wins?: string[];
 }
 
@@ -20,7 +19,6 @@ export function assembleBrief(
   allTacticalRules: string[],
   allEmotionalRules: string[],
   allHobbyTasks: string[],
-  allTechnicalTasks: string[],
   yesterdayWins: string[],
   llmOutput: LLMOutput | null,
   settings: MorningOSSettings
@@ -56,11 +54,6 @@ export function assembleBrief(
         }))
       : [];
 
-  const technicalTasks =
-    settings.modeTechnicalTasks && llmOutput?.technical_tasks
-      ? llmOutput.technical_tasks.slice(0, settings.technicalTasksCount)
-      : allTechnicalTasks.slice(0, settings.technicalTasksCount);
-
   const wins =
     settings.modeWins && llmOutput?.wins
       ? llmOutput.wins
@@ -77,7 +70,6 @@ export function assembleBrief(
     identity: { rules: identityRules },
     goals,
     tactical_rules: tacticalRules,
-    technical_tasks: technicalTasks,
     hobby_tasks: hobbyTasks,
     suggestions,
     wins,

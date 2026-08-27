@@ -76,7 +76,6 @@ export interface DailyBrief {
     long_term: string[];
   };
   tactical_rules?: string[];
-  technical_tasks?: string[];
   hobby_tasks?: string[];
   suggestions?: Suggestion[];
   wins?: string[];

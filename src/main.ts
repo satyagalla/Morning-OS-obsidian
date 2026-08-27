@@ -122,7 +122,7 @@ export default class MorningOSPlugin extends Plugin {
       const msg = (err as Error).message;
       if (msg.startsWith("LLM_FAILED:")) {
         const detail = msg.replace("LLM_FAILED: ", "");
-        new Notice(`Morning OS: LLM error — ${detail}\n\nCheck your API key in settings, or disable AI modes to use direct mode.`, 10000);
+        new Notice(`Morning OS: LLM error — ${detail}\n\nCheck your API key in settings, or turn off Use AI for briefings.`, 10000);
       } else {
         new Notice(`Morning OS: agent failed — ${msg.slice(0, 120)}`);
       }

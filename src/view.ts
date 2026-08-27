@@ -240,7 +240,6 @@ export class MorningView extends ItemView {
     this.renderTacticalRules(right);
     this.renderSuggestion(right);
 
-    this.renderPendingTasks(wrapper);
     this.renderHobbyTasks(wrapper);
     this.renderWins(wrapper);
     this.renderFeedbackFooter(wrapper);
@@ -258,9 +257,9 @@ export class MorningView extends ItemView {
 
   private wantsAI(): boolean {
     const s = this.settings;
-    return (
+    return s.aiEnabled && (
       s.modeTacticalRules || s.modeIdentityRules || s.modeGoals ||
-      s.modeHobbyTasks || s.modeSuggestion || s.modeTechnicalTasks ||
+      s.modeHobbyTasks || s.modeSuggestion ||
       s.modeWins
     );
   }
@@ -268,7 +267,7 @@ export class MorningView extends ItemView {
   private renderApiKeyBanner(parent: HTMLElement) {
     const banner = parent.createDiv({ cls: "mos-onboard-banner" });
     banner.createSpan({
-      text: "Add your API key in Settings → Morning OS to generate personalized briefs, or turn off AI mode in all settings.",
+      text: "Add your API key in Morning OS settings to generate personalized briefings, or turn off Use AI for briefings.",
     });
     const dismiss = banner.createEl("button", { cls: "mos-onboard-banner-dismiss", text: "✕" });
     dismiss.addEventListener("click", () => banner.remove());
@@ -296,6 +295,7 @@ export class MorningView extends ItemView {
   }
 
   private renderIdentityStrip(parent: HTMLElement) {
+    if (!this.settings.showIdentity) return;
     const lines = this.identityLines.length > 0 ? this.identityLines : (this.brief?.identity?.rules ?? []);
     if (!lines.length) return;
     const strip = parent.createDiv({ cls: "morning-os-identity-strip" });
@@ -307,6 +307,7 @@ export class MorningView extends ItemView {
   }
 
   private renderGoals(parent: HTMLElement) {
+    if (!this.settings.showGoals) return;
     const goals = this.brief?.goals;
     if (!goals?.short_term?.length && !goals?.long_term?.length) return;
     const { short_term, long_term } = goals;
@@ -380,7 +381,7 @@ export class MorningView extends ItemView {
       }
     }
 
-    renderAddTaskInput(parent, this.app, "Add task for today… (#p/area, @remind(YYYY-MM-DD))", async (text) => {
+    renderAddTaskInput(parent, this.app, "Capture a task…", async (text) => {
       const task = createTask(text, { is_today: true, status_priority: "regular" });
       const reg = await loadRegistry(this.app);
       reg.push(task);
@@ -477,7 +478,7 @@ export class MorningView extends ItemView {
                 if (idx !== -1) reg[idx] = updated;
                 await saveRegistry(this.app, reg);
                 this.plugin.refreshView();
-              }, false, this.plugin.settings.areas).open();
+              }, false, this.plugin.settings.areas, this.plugin.settings.advancedAreaFeatures).open();
             },
           },
           {
@@ -564,6 +565,7 @@ export class MorningView extends ItemView {
   }
 
   private renderTacticalRules(parent: HTMLElement) {
+    if (!this.settings.showRulesForToday) return;
     const hasTasks = this.registry.some(t => t.is_today && !t.is_deleted && t.status_completion !== "done");
     if (!hasTasks || !this.brief?.tactical_rules?.length) return;
     parent.createEl("h2", { cls: "morning-os-section-heading", text: "Rules for today" });
@@ -690,23 +692,6 @@ export class MorningView extends ItemView {
           void setTaskStatus(this.app, task._id, "done").then(() => this.plugin.refreshView());
         }
       });
-    }
-  }
-
-  private renderPendingTasks(parent: HTMLElement) {
-    const tasks = this.brief?.technical_tasks ?? [];
-    const count = tasks.length;
-    const wrap = parent.createDiv({ cls: "morning-os-pending-wrap" });
-    const toggle = wrap.createDiv({ cls: "morning-os-pending-toggle" });
-    toggle.createSpan({ cls: "morning-os-pending-label", text: "Pending tasks" });
-    toggle.createSpan({ cls: "morning-os-pending-count", text: `${count}` });
-
-    const panel = wrap.createDiv({ cls: "morning-os-pending-panel" });
-    if (count === 0) {
-      panel.createEl("p", { cls: "morning-os-empty-state", text: "No pending technical tasks." });
-    } else {
-      const list = panel.createEl("ul", { cls: "morning-os-pending-list" });
-      for (const item of tasks) renderMdContent(this.app, this, list, "li", "", item);
     }
   }
 
@@ -1155,7 +1140,7 @@ function renderTaskRowShared(
             await saveRegistry(app, reg);
             if (plugin) plugin.refreshView();
             onRefresh();
-          }, showUrgency, plugin?.settings.areas ?? []).open();
+          }, showUrgency, plugin?.settings.areas ?? [], plugin?.settings.advancedAreaFeatures ?? false).open();
         },
       },
       {
@@ -1276,10 +1261,13 @@ export class AreaView extends ItemView {
 
     const sortFilterRow = controlRow.createDiv({ cls: "mos-sort-filter-row" });
     this.renderSortControls(sortFilterRow);
-    renderFilterSelects(sortFilterRow, this.filters, (f) => { this.filters = f; this.render(); }, false, activeTabConfig?.fields);
+    const advancedAreaFeatures = this.plugin.settings.advancedAreaFeatures;
+    if (!advancedAreaFeatures) delete this.filters.custom;
+    const activeFields = advancedAreaFeatures ? activeTabConfig?.fields : undefined;
+    renderFilterSelects(sortFilterRow, this.filters, (f) => { this.filters = f; this.render(); }, false, activeFields);
 
     // View mode: table vs cards
-    if (activeTabConfig?.view_mode === "table") {
+    if (advancedAreaFeatures && activeTabConfig?.view_mode === "table") {
       this.renderTableView(inner, activeTabConfig, area);
     } else {
       let tasks = this.registry.filter(t =>
@@ -1295,11 +1283,11 @@ export class AreaView extends ItemView {
         inner.createEl("p", { cls: "morning-os-empty-state", text: "No tasks here yet." });
       } else {
         const card = inner.createDiv({ cls: "morning-os-card" });
-        const fields = activeTabConfig?.fields ?? [];
+        const fields = activeFields ?? [];
         for (const t of tasks) renderTaskRowShared(card, t, this.app, this, () => void this.refresh(), this.plugin, false, fields, this.registry);
       }
 
-      renderAddTaskInput(inner, this.app, "Add task… (#p/area, #t/tab, @remind(YYYY-MM-DD))", async (text) => {
+      renderAddTaskInput(inner, this.app, "Capture a task…", async (text) => {
         const activeTab = this.activeTab;
         const tag = activeTab ? { [area.key]: activeTab } : {};
         const task = createTask(text, { areas: [area.key], tags: tag });
@@ -1462,7 +1450,7 @@ export class AreaView extends ItemView {
                 await saveRegistry(this.app, reg);
                 if (this.plugin) this.plugin.refreshView();
                 void this.refresh();
-              }, false, this.plugin?.settings.areas ?? []).open();
+              }, false, this.plugin?.settings.areas ?? [], this.plugin?.settings.advancedAreaFeatures ?? false).open();
             },
           },
           {
@@ -1595,7 +1583,7 @@ export class DumpView extends ItemView {
     titleRow.createEl("h1", { cls: "morning-os-section-heading", text: "Inbox" });
     this.renderSortControls(titleRow);
 
-    renderAddTaskInput(inner, this.app, "Capture a task… (#p/area, #t/tab, @remind(YYYY-MM-DD))", async (text) => {
+    renderAddTaskInput(inner, this.app, "Capture a task…", async (text) => {
       const task = createTask(text);
       const reg = await loadRegistry(this.app);
       reg.push(task);
@@ -1638,13 +1626,22 @@ class TaskEditModal extends ObsidianModal {
   private onSave: (task: Task) => Promise<void>;
   private showUrgency: boolean;
   private areaConfigs: AreaConfig[];
+  private showAdvancedAreaFeatures: boolean;
 
-  constructor(app: App, task: Task, onSave: (task: Task) => Promise<void>, showUrgency = false, areaConfigs: AreaConfig[] = []) {
+  constructor(
+    app: App,
+    task: Task,
+    onSave: (task: Task) => Promise<void>,
+    showUrgency = false,
+    areaConfigs: AreaConfig[] = [],
+    showAdvancedAreaFeatures = false
+  ) {
     super(app);
     this.task = { ...task, areas: [...task.areas], tags: { ...task.tags } };
     this.onSave = onSave;
     this.showUrgency = showUrgency;
     this.areaConfigs = areaConfigs;
+    this.showAdvancedAreaFeatures = showAdvancedAreaFeatures;
   }
 
   private field(parent: HTMLElement, label: string): HTMLElement {
@@ -1731,7 +1728,7 @@ class TaskEditModal extends ObsidianModal {
     const areaConfig = taskArea ? this.areaConfigs.find(p => p.key === taskArea) : undefined;
     const taskTabKey = taskArea ? this.task.tags[taskArea] : undefined;
     const tabConfig = taskTabKey ? areaConfig?.tabs.find(t => t.key === taskTabKey) : undefined;
-    if (tabConfig?.fields.length) {
+    if (this.showAdvancedAreaFeatures && tabConfig?.fields.length) {
       const fieldsWrap = this.field(contentEl, "Fields");
       for (const fieldDef of tabConfig.fields) {
         const fRow = fieldsWrap.createDiv({ cls: "mos-edit-field-row" });
@@ -1881,7 +1878,7 @@ export class CaptureModal extends ObsidianModal {
       type: "text",
       cls: "morning-os-wins-input mos-capture-input",
     });
-    input.placeholder = "Task text… (#p/career, #t/applications, @remind(YYYY-MM-DD))";
+    input.placeholder = "Capture a task…";
     attachTaskTextSuggest(this.app, input);
 
     const footer = contentEl.createDiv({ cls: "mos-feedback-modal-footer" });

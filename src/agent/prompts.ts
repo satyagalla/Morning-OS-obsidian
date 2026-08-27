@@ -16,14 +16,11 @@ export interface UserPromptData {
   identityRulesCount: number;
   suggestionCount: number;
   hobbyTasksCount: number;
-  technicalTasksCount: number;
   modeTacticalRules: boolean;
   modeIdentityRules: boolean;
   modeGoals: boolean;
   modeHobbyTasks: boolean;
   modeSuggestion: boolean;
-  modeTechnicalTasks: boolean;
-  modeTasks: boolean;
   modeWins: boolean;
 }
 
@@ -59,9 +56,7 @@ ${data.yesterdayCompleted}`;
     prompt += `\n\n## Hobby Tasks (pick ${data.hobbyTasksCount} items)\n${data.hobbyTasks}`;
   }
 
-  if (data.modeTechnicalTasks) {
-    prompt += `\n\n## Technical Tasks Backlog (pick ${data.technicalTasksCount} most relevant to today's goals/tasks)\n${data.technicalTasks}`;
-  } else if (data.modeSuggestion) {
+  if (data.modeSuggestion) {
     prompt += `\n\n## Technical Tasks Backlog (use for suggestions context)\n${data.technicalTasks}`;
   }
 
@@ -92,16 +87,6 @@ ${data.yesterdayCompleted}`;
   if (data.modeSuggestion) {
     schemaFields.push(`  "suggestions": [{"text": "...", "source": "tasks|goals|technical_backlog|carried_tasks|wins"}]`);
     rules.push(`- suggestions: Generate exactly ${data.suggestionCount} short insights (1-2 sentences each). This is the ONLY field where you may generate new text. Use Yesterday's Wins and Yesterday's Completed Tasks to understand momentum — what went well, what got done. Suggest what to tackle next by drawing from the Technical Tasks Backlog in relation to today's tasks and goals. Also point out stale carried tasks or surface patterns (e.g., avoidance). source MUST be exactly one of: "tasks", "goals", "technical_backlog", "carried_tasks", "wins" — pick whichever section the insight primarily draws from. No other values are allowed.`);
-  }
-
-  if (data.modeTechnicalTasks) {
-    schemaFields.push(`  "technical_tasks": ["task1", "task2"]`);
-    rules.push(`- technical_tasks: Pick ${data.technicalTasksCount} from the Technical Tasks Backlog most relevant to today's goals/tasks. Copy them VERBATIM — do not rephrase or generate new tasks.`);
-  }
-
-  if (data.modeTasks) {
-    schemaFields.push(`  "tasks": {\n    "red_alert": ["task1", "task2"],\n    "regular": ["task1", "task2"]\n  }`);
-    rules.push(`- tasks: Reorder the red_alert and regular tasks by priority for today. Copy them VERBATIM — do not rephrase or drop any tasks. Return ALL tasks — just reordered.`);
   }
 
   if (data.modeWins) {

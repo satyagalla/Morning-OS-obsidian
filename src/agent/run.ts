@@ -10,6 +10,8 @@ import { assembleBrief, LLMOutput } from "./assembler";
 import { INTELLIGENCE_SYSTEM, formatUserPrompt } from "./prompts";
 import { todayStr } from "../utils";
 
+const TECHNICAL_CONTEXT_LIMIT = 15;
+
 export interface AgentResult {
   mode: "llm" | "direct" | "direct-no-keys";
 }
@@ -86,7 +88,7 @@ export async function runAgent(app: App, settings: MorningOSSettings): Promise<A
 
   const technicalTasks = registry
     .filter(t => !t.is_deleted && !t.is_today && t.areas.includes("career") && t.status_completion === "open")
-    .slice(0, settings.technicalTasksCount * 3)
+    .slice(0, TECHNICAL_CONTEXT_LIMIT)
     .map(t => t.text);
 
   const hobbyTasksRaw = registry
@@ -99,10 +101,11 @@ export async function runAgent(app: App, settings: MorningOSSettings): Promise<A
 
   await computeFeedback(todayForCarry, dateStr, app, settings);
 
-  const needsLLM =
+  const needsLLM = settings.aiEnabled && (
     settings.modeTacticalRules || settings.modeIdentityRules || settings.modeGoals ||
-    settings.modeHobbyTasks || settings.modeSuggestion || settings.modeTechnicalTasks ||
-    settings.modeWins;
+    settings.modeHobbyTasks || settings.modeSuggestion ||
+    settings.modeWins
+  );
 
   let llmOutput: LLMOutput | null = null;
   let resultMode: AgentResult["mode"] = "direct";
@@ -138,14 +141,11 @@ export async function runAgent(app: App, settings: MorningOSSettings): Promise<A
       identityRulesCount:   settings.identityRulesCount,
       suggestionCount:      settings.suggestionCount,
       hobbyTasksCount:      settings.hobbyTasksCount,
-      technicalTasksCount:  settings.technicalTasksCount,
       modeTacticalRules:    settings.modeTacticalRules,
       modeIdentityRules:    settings.modeIdentityRules,
       modeGoals:            settings.modeGoals,
       modeHobbyTasks:       settings.modeHobbyTasks,
       modeSuggestion:       settings.modeSuggestion,
-      modeTechnicalTasks:   settings.modeTechnicalTasks,
-      modeTasks:            settings.modeTasks,
       modeWins:             settings.modeWins,
     });
 
@@ -166,7 +166,7 @@ export async function runAgent(app: App, settings: MorningOSSettings): Promise<A
 
   const brief = assembleBrief(
     dateStr, goals, directSections.tacticalRules, directSections.emotionalRules,
-    hobbyTasksRaw, technicalTasks, yesterdayWins, llmOutput, settings
+    hobbyTasksRaw, yesterdayWins, llmOutput, settings
   );
   await app.vault.adapter.mkdir(settings.briefsDir);
   await app.vault.adapter.write(`${settings.briefsDir}/${dateStr}.json`, JSON.stringify(brief, null, 2));
@@ -184,13 +184,12 @@ export async function refreshBrief(app: App, settings: MorningOSSettings): Promi
   const existingBrief = JSON.parse(await app.vault.adapter.read(briefPath)) as DailyBrief;
 
   const cachedLLM: LLMOutput = {};
-  if (settings.modeTacticalRules)  cachedLLM.tactical_rules  = existingBrief.tactical_rules;
-  if (settings.modeIdentityRules)  cachedLLM.identity_rules   = existingBrief.identity?.rules;
-  if (settings.modeSuggestion)     cachedLLM.suggestions      = existingBrief.suggestions;
-  if (settings.modeHobbyTasks)     cachedLLM.hobby_tasks      = existingBrief.hobby_tasks;
-  if (settings.modeGoals)          cachedLLM.goals            = existingBrief.goals;
-  if (settings.modeTechnicalTasks) cachedLLM.technical_tasks  = existingBrief.technical_tasks;
-  if (settings.modeWins)           cachedLLM.wins             = existingBrief.wins;
+  if (settings.aiEnabled && settings.modeTacticalRules) cachedLLM.tactical_rules = existingBrief.tactical_rules;
+  if (settings.aiEnabled && settings.modeIdentityRules) cachedLLM.identity_rules = existingBrief.identity?.rules;
+  if (settings.aiEnabled && settings.modeSuggestion) cachedLLM.suggestions = existingBrief.suggestions;
+  if (settings.aiEnabled && settings.modeHobbyTasks) cachedLLM.hobby_tasks = existingBrief.hobby_tasks;
+  if (settings.aiEnabled && settings.modeGoals) cachedLLM.goals = existingBrief.goals;
+  if (settings.aiEnabled && settings.modeWins) cachedLLM.wins = existingBrief.wins;
 
   const registry = await loadRegistry(app);
   const [directSections, yesterdayWins] = await Promise.all([
@@ -199,11 +198,6 @@ export async function refreshBrief(app: App, settings: MorningOSSettings): Promi
   ]);
   const goals = { short_term: directSections.goalsShort, long_term: directSections.goalsLong };
 
-  const technicalTasks = registry
-    .filter(t => !t.is_deleted && !t.is_today && t.areas.includes("career") && t.status_completion === "open")
-    .slice(0, settings.technicalTasksCount * 3)
-    .map(t => t.text);
-
   const hobbyTasksRaw = registry
     .filter(t => !t.is_deleted && !t.is_today && t.areas.includes("interests") && t.status_completion === "open")
     .slice(0, settings.hobbyTasksCount * 3)
@@ -211,7 +205,7 @@ export async function refreshBrief(app: App, settings: MorningOSSettings): Promi
 
   const brief = assembleBrief(
     dateStr, goals, directSections.tacticalRules, directSections.emotionalRules,
-    hobbyTasksRaw, technicalTasks, yesterdayWins, cachedLLM, settings
+    hobbyTasksRaw, yesterdayWins, cachedLLM, settings
   );
   await app.vault.adapter.write(briefPath, JSON.stringify(brief, null, 2));
 }
