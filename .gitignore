@@ -5,6 +5,9 @@ obsidian/
 # Environment
 .env
 .claude/
+.codex/
+.agents/
+AGENTS.md
 load-env.ps1
 
 # OS
