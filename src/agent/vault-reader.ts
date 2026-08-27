@@ -189,16 +189,18 @@ export async function parseSectionFromFile(path: string, sectionHeading: string,
   return extractSection(content, sectionHeading).map(item => item.text);
 }
 
-// Gather a named section from ALL enabled area markdowns
+// Gather a named section from area markdowns. Direct briefing fields always
+// read every area; AI prompt inputs may opt in to Feed to LLM filtering.
 export async function parseAllAreaSections(
   app: App,
   settings: MorningOSSettings,
-  sectionHeading: string
+  sectionHeading: string,
+  onlyFeedToLLM = false
 ): Promise<string[]> {
   const userFolder = settings.dailyNoteDir.split("/")[0] || "Essential";
   const results: string[] = [];
   for (const area of settings.areas) {
-    if (!area.feedToLLM) continue;
+    if (onlyFeedToLLM && !area.feedToLLM) continue;
     const path = `${userFolder}/Areas/${area.label}.md`;
     const bullets = await parseSectionFromFile(path, sectionHeading, app);
     results.push(...bullets);

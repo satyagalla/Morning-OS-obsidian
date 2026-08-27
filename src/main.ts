@@ -224,12 +224,27 @@ export default class MorningOSPlugin extends Plugin {
     const today = todayStr();
     const userFolder = this.settings.dailyNoteDir.split("/")[0] || "Essential";
     const results: string[] = [];
+    const archiveDir = "_archive/pre-migration";
 
     // Ensure Areas directory exists
     const areasDir = `${userFolder}/Areas`;
     if (!(await this.app.vault.adapter.exists(areasDir))) {
       await this.app.vault.adapter.mkdir(areasDir);
     }
+
+    // On an explicit re-run, use a previously archived source when its legacy
+    // location no longer exists. This keeps migration recovery non-destructive.
+    const resolveMigrationSource = async (sourcePath: string, archiveName: string) => {
+      if (await this.app.vault.adapter.exists(sourcePath)) return sourcePath;
+      const archivedPath = `${archiveDir}/${archiveName}`;
+      return (await this.app.vault.adapter.exists(archivedPath)) ? archivedPath : null;
+    };
+
+    // Area keys are stable identifiers; labels are user-editable filenames.
+    const areaLabelForKey = (key: string) =>
+      this.settings.areas.find(area => area.key === key)?.label ?? null;
+    const healthAreaLabel = areaLabelForKey("health");
+    const careerAreaLabel = areaLabelForKey("career");
 
     // Helper: append missing bullets to a section in an area markdown (idempotent per bullet)
     const appendSectionToArea = async (areaLabel: string, sectionHeading: string, bullets: string[]) => {
@@ -277,29 +292,36 @@ export default class MorningOSPlugin extends Plugin {
     if (areasCreated > 0) results.push(`✓ Created ${areasCreated} area markdown files`);
 
     // 1. Migrate Tactical Rules → Health.md ## Tactical Rules
-    const tactical = await parseBulletFile(this.settings.sourceTacticalRules, this.app);
-    if (tactical.length) {
-      await appendSectionToArea("Health", "Tactical Rules", tactical);
+    const tacticalSource = await resolveMigrationSource(this.settings.sourceTacticalRules, "Tactical Rules.md");
+    const tactical = tacticalSource ? await parseBulletFile(tacticalSource, this.app) : [];
+    const tacticalMigrated = tactical.length > 0 && healthAreaLabel !== null;
+    if (tacticalMigrated) {
+      await appendSectionToArea(healthAreaLabel, "Tactical Rules", tactical);
       results.push(`✓ ${tactical.length} tactical rules → Health area`);
     }
 
     // 2. Migrate Emotional Rules → Health.md ## Emotional Rules
-    const emotional = await parseBulletFile(this.settings.sourceEmotionalRules, this.app);
-    if (emotional.length) {
-      await appendSectionToArea("Health", "Emotional Rules", emotional);
+    const emotionalSource = await resolveMigrationSource(this.settings.sourceEmotionalRules, "Emotional Rules.md");
+    const emotional = emotionalSource ? await parseBulletFile(emotionalSource, this.app) : [];
+    const emotionalMigrated = emotional.length > 0 && healthAreaLabel !== null;
+    if (emotionalMigrated) {
+      await appendSectionToArea(healthAreaLabel, "Emotional Rules", emotional);
       results.push(`✓ ${emotional.length} emotional rules → Health area`);
     }
 
     // 3. Migrate Goals → Career.md ## Short Term / ## Long Term
-    const goalContent = await this.app.vault.adapter.exists(this.settings.sourceGoals)
-      ? await this.app.vault.adapter.read(this.settings.sourceGoals)
+    const goalsSource = await resolveMigrationSource(this.settings.sourceGoals, "Goals.md");
+    const goalContent = goalsSource
+      ? await this.app.vault.adapter.read(goalsSource)
       : "";
+    let goalsMigrated = false;
     if (goalContent) {
-      const shortGoals = await parseSectionFromFile(this.settings.sourceGoals, this.settings.goalsShortTerm, this.app);
-      const longGoals  = await parseSectionFromFile(this.settings.sourceGoals, this.settings.goalsLongTerm, this.app);
-      if (shortGoals.length) { await appendSectionToArea("Career", "Short Term", shortGoals); }
-      if (longGoals.length)  { await appendSectionToArea("Career", "Long Term", longGoals); }
-      if (shortGoals.length || longGoals.length) {
+      const shortGoals = await parseSectionFromFile(goalsSource!, this.settings.goalsShortTerm, this.app);
+      const longGoals  = await parseSectionFromFile(goalsSource!, this.settings.goalsLongTerm, this.app);
+      if ((shortGoals.length || longGoals.length) && careerAreaLabel) {
+        if (shortGoals.length) await appendSectionToArea(careerAreaLabel, "Short Term", shortGoals);
+        if (longGoals.length) await appendSectionToArea(careerAreaLabel, "Long Term", longGoals);
+        goalsMigrated = true;
         results.push(`✓ Goals (${shortGoals.length} short, ${longGoals.length} long) → Career area`);
       }
     }
@@ -316,12 +338,14 @@ export default class MorningOSPlugin extends Plugin {
       tasksAdded++;
     };
 
-    const technical = await parseBulletFile(this.settings.sourceTechnicalTasks, this.app);
+    const technicalSource = await resolveMigrationSource(this.settings.sourceTechnicalTasks, "Technical Tasks.md");
+    const technical = technicalSource ? await parseBulletFile(technicalSource, this.app) : [];
     for (const t of technical) add(t, { areas: ["career"] });
     if (technical.length) results.push(`✓ ${technical.length} technical tasks → Career registry`);
 
     // 5. Migrate Hobby Tasks → registry with interests area
-    const hobby = await parseBulletFile(this.settings.sourceHobbyTasks, this.app);
+    const hobbySource = await resolveMigrationSource(this.settings.sourceHobbyTasks, "Hobby Tasks.md");
+    const hobby = hobbySource ? await parseBulletFile(hobbySource, this.app) : [];
     for (const t of hobby) add(t, { areas: ["interests"] });
     if (hobby.length) results.push(`✓ ${hobby.length} hobby tasks → Interests registry`);
 
@@ -366,11 +390,10 @@ export default class MorningOSPlugin extends Plugin {
     else results.push(`✓ Created Wins.md`);
 
     // 8. Archive old source files (only if content was migrated)
-    const archiveDir = "_archive/pre-migration";
     const filesToArchive: { src: string; dest: string; migrated: boolean }[] = [
-      { src: this.settings.sourceTacticalRules, dest: `${archiveDir}/Tactical Rules.md`, migrated: tactical.length > 0 },
-      { src: this.settings.sourceEmotionalRules, dest: `${archiveDir}/Emotional Rules.md`, migrated: emotional.length > 0 },
-      { src: this.settings.sourceGoals, dest: `${archiveDir}/Goals.md`, migrated: goalContent.length > 0 },
+      { src: this.settings.sourceTacticalRules, dest: `${archiveDir}/Tactical Rules.md`, migrated: tacticalMigrated },
+      { src: this.settings.sourceEmotionalRules, dest: `${archiveDir}/Emotional Rules.md`, migrated: emotionalMigrated },
+      { src: this.settings.sourceGoals, dest: `${archiveDir}/Goals.md`, migrated: goalsMigrated },
       { src: this.settings.sourceTechnicalTasks, dest: `${archiveDir}/Technical Tasks.md`, migrated: technical.length > 0 },
       { src: this.settings.sourceHobbyTasks, dest: `${archiveDir}/Hobby Tasks.md`, migrated: hobby.length > 0 },
     ];

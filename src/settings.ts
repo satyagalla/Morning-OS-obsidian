@@ -468,7 +468,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
         : "Move your existing rules, goals, and tasks to the new area system. Old files are archived to _archive/pre-migration/.");
 
     if (migrationDone) {
-      migrationSetting.setDesc("Migration complete. Your vault is using the new area system. Only re-run if you've added new content to old source files.");
+      migrationSetting.setDesc("Migration complete. Re-run to import new legacy content or restore content from _archive/pre-migration/ into your areas.");
       migrationSetting.addButton(btn => {
         btn.setButtonText("Migrated ✓").setDisabled(true);
         btn.buttonEl.addClass("mos-btn-success");
@@ -997,7 +997,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
       });
 
       // Feed to LLM toggle
-      new Setting(right).setName("Feed to LLM").setDesc("Allow this area's markdown sections to feed into the briefing agent context.").addToggle(t => {
+      new Setting(right).setName("Feed to LLM").setDesc("Allow this area's markdown sections in AI prompts. Direct-mode briefing fields always read every area.").addToggle(t => {
         t.setValue(area.feedToLLM ?? true);
         t.onChange(async v => { area.feedToLLM = v; await saveAndSync(); });
       });

@@ -38,6 +38,30 @@ function getTodayTasksForPrompt(registry: TaskRegistry) {
   };
 }
 
+async function readMappedAreaSections(
+  app: App,
+  settings: MorningOSSettings,
+  onlyFeedToLLM = false
+) {
+  const mappings = settings.llmSectionMappings ?? [];
+  const getMappingHeading = (target: string) => mappings.find(m => m.target === target && m.enabled)?.heading;
+  const readSection = (target: string) => {
+    const heading = getMappingHeading(target);
+    return heading
+      ? parseAllAreaSections(app, settings, heading, onlyFeedToLLM)
+      : Promise.resolve([] as string[]);
+  };
+
+  const [tacticalRules, emotionalRules, goalsShort, goalsLong] = await Promise.all([
+    readSection("tactical_rules"),
+    readSection("emotional_rules"),
+    readSection("goals_short"),
+    readSection("goals_long"),
+  ]);
+
+  return { tacticalRules, emotionalRules, goalsShort, goalsLong };
+}
+
 export async function runAgent(app: App, settings: MorningOSSettings): Promise<AgentResult> {
   const dateStr = todayStr();
 
@@ -52,19 +76,13 @@ export async function runAgent(app: App, settings: MorningOSSettings): Promise<A
     .filter(t => t.status_completion === "done" && t.date_completed === yesterdayStr)
     .map(t => t.text);
 
-  // Gather context from area markdowns + registry + wins log
-  const mappings = settings.llmSectionMappings ?? [];
-  const getMappingHeading = (target: string) => mappings.find(m => m.target === target && m.enabled)?.heading;
-
-  const [tacticalRules, emotionalRules, goalsShort, goalsLong, yesterdayWins] = await Promise.all([
-    getMappingHeading("tactical_rules")  ? parseAllAreaSections(app, settings, getMappingHeading("tactical_rules")!)  : Promise.resolve([] as string[]),
-    getMappingHeading("emotional_rules") ? parseAllAreaSections(app, settings, getMappingHeading("emotional_rules")!) : Promise.resolve([] as string[]),
-    getMappingHeading("goals_short")     ? parseAllAreaSections(app, settings, getMappingHeading("goals_short")!)     : Promise.resolve([] as string[]),
-    getMappingHeading("goals_long")      ? parseAllAreaSections(app, settings, getMappingHeading("goals_long")!)      : Promise.resolve([] as string[]),
+  // Direct briefing fields read all areas. Feed to LLM is applied separately
+  // when an AI prompt is built, never while collecting direct content.
+  const [directSections, yesterdayWins] = await Promise.all([
+    readMappedAreaSections(app, settings),
     parseWinsFromLog(dateStr, app, settings),
   ]);
-
-  const goals = { short_term: goalsShort, long_term: goalsLong };
+  const goals = { short_term: directSections.goalsShort, long_term: directSections.goalsLong };
 
   const technicalTasks = registry
     .filter(t => !t.is_deleted && !t.is_today && t.areas.includes("career") && t.status_completion === "open")
@@ -99,6 +117,7 @@ export async function runAgent(app: App, settings: MorningOSSettings): Promise<A
       } catch { /* intentional */ }
     }
   } else if (needsLLM) {
+    const llmSections = await readMappedAreaSections(app, settings, true);
     const carried = [...carriedTasks.red_alert, ...carriedTasks.regular]
       .filter(t => t.carried_from)
       .map(t => `- ${t.text} (carried since ${t.carried_from})`);
@@ -107,10 +126,10 @@ export async function runAgent(app: App, settings: MorningOSSettings): Promise<A
       redAlertTasks:   carriedTasks.red_alert.map(t => `- ${t.text}`).join("\n") || "None",
       regularTasks:    carriedTasks.regular.map(t => `- ${t.text}`).join("\n") || "None",
       carriedSummary:  carried.length ? carried.join("\n") : "None",
-      tacticalRules:   tacticalRules.map(r => `- ${r}`).join("\n") || "None",
-      emotionalRules:  emotionalRules.map(r => `- ${r}`).join("\n") || "None",
-      shortTermGoals:  goals.short_term.map(g => `- ${g}`).join("\n") || "None",
-      longTermGoals:   goals.long_term.map(g => `- ${g}`).join("\n") || "None",
+      tacticalRules:   llmSections.tacticalRules.map(r => `- ${r}`).join("\n") || "None",
+      emotionalRules:  llmSections.emotionalRules.map(r => `- ${r}`).join("\n") || "None",
+      shortTermGoals:  llmSections.goalsShort.map(g => `- ${g}`).join("\n") || "None",
+      longTermGoals:   llmSections.goalsLong.map(g => `- ${g}`).join("\n") || "None",
       technicalTasks:  technicalTasks.map(t => `- ${t}`).join("\n") || "None",
       hobbyTasks:      hobbyTasksRaw.map(t => `- ${t}`).join("\n") || "None",
       yesterdayWins:   yesterdayWins.map(w => `- ${w}`).join("\n") || "None",
@@ -146,7 +165,7 @@ export async function runAgent(app: App, settings: MorningOSSettings): Promise<A
   }
 
   const brief = assembleBrief(
-    dateStr, goals, tacticalRules, emotionalRules,
+    dateStr, goals, directSections.tacticalRules, directSections.emotionalRules,
     hobbyTasksRaw, technicalTasks, yesterdayWins, llmOutput, settings
   );
   await app.vault.adapter.mkdir(settings.briefsDir);
@@ -174,18 +193,11 @@ export async function refreshBrief(app: App, settings: MorningOSSettings): Promi
   if (settings.modeWins)           cachedLLM.wins             = existingBrief.wins;
 
   const registry = await loadRegistry(app);
-  const mappings = settings.llmSectionMappings ?? [];
-  const getMappingHeading = (target: string) => mappings.find(m => m.target === target && m.enabled)?.heading;
-
-  const [tacticalRules, emotionalRules, goalsShort, goalsLong, yesterdayWins] = await Promise.all([
-    getMappingHeading("tactical_rules")  ? parseAllAreaSections(app, settings, getMappingHeading("tactical_rules")!)  : Promise.resolve([] as string[]),
-    getMappingHeading("emotional_rules") ? parseAllAreaSections(app, settings, getMappingHeading("emotional_rules")!) : Promise.resolve([] as string[]),
-    getMappingHeading("goals_short")     ? parseAllAreaSections(app, settings, getMappingHeading("goals_short")!)     : Promise.resolve([] as string[]),
-    getMappingHeading("goals_long")      ? parseAllAreaSections(app, settings, getMappingHeading("goals_long")!)      : Promise.resolve([] as string[]),
+  const [directSections, yesterdayWins] = await Promise.all([
+    readMappedAreaSections(app, settings),
     parseWinsFromLog(dateStr, app, settings),
   ]);
-
-  const goals = { short_term: goalsShort, long_term: goalsLong };
+  const goals = { short_term: directSections.goalsShort, long_term: directSections.goalsLong };
 
   const technicalTasks = registry
     .filter(t => !t.is_deleted && !t.is_today && t.areas.includes("career") && t.status_completion === "open")
@@ -198,7 +210,7 @@ export async function refreshBrief(app: App, settings: MorningOSSettings): Promi
     .map(t => t.text);
 
   const brief = assembleBrief(
-    dateStr, goals, tacticalRules, emotionalRules,
+    dateStr, goals, directSections.tacticalRules, directSections.emotionalRules,
     hobbyTasksRaw, technicalTasks, yesterdayWins, cachedLLM, settings
   );
   await app.vault.adapter.write(briefPath, JSON.stringify(brief, null, 2));

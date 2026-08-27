@@ -238,7 +238,10 @@ export class MorningView extends ItemView {
 
     this.renderTasks(left);
     this.renderTacticalRules(right);
+    this.renderSuggestion(right);
 
+    this.renderPendingTasks(wrapper);
+    this.renderHobbyTasks(wrapper);
     this.renderWins(wrapper);
     this.renderFeedbackFooter(wrapper);
   }
