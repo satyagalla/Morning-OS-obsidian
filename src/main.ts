@@ -1,11 +1,12 @@
-import { Plugin, WorkspaceLeaf, Notice } from "obsidian";
-import { MorningView, VIEW_TYPE_MORNING, AreaView, DumpView, TrashView, VIEW_TYPE_AREA, VIEW_TYPE_DUMP, VIEW_TYPE_TRASH } from "./view";
+import { Plugin, WorkspaceLeaf, Notice, TFile } from "obsidian";
+import { MorningView, VIEW_TYPE_MORNING, AreaView, DumpView, TrashView, VIEW_TYPE_AREA, VIEW_TYPE_DUMP, VIEW_TYPE_ALL_ITEMS, VIEW_TYPE_TRASH } from "./view";
 import { MorningOSSettings, DEFAULT_SETTINGS, MorningOSSettingTab } from "./settings";
-import { runAgent, refreshBrief, AgentResult } from "./agent/run";
-import { scaffoldDailyNote } from "./agent/scaffold-daily-note";
-import { loadRegistry, saveRegistry, createTask, recoverRegistryAreas } from "./task-registry";
+import { runAgent } from "./agent/run";
+import { loadRegistry, saveRegistry, createTask, initializeRegistryState, recoverRegistryAreas } from "./task-registry";
 import { parseBulletFile, parseDailyNote, parseSectionFromFile, appendWinToLog } from "./agent/vault-reader";
 import { todayStr } from "./utils";
+import { getStateStore, STATE_PATH } from "./data/state-store";
+import { hasActiveEditingSession, onEditingSessionsSettled } from "./editing-session";
 
 // Undocumented internal API surface used to coordinate with the remotely-save
 // community plugin (if installed) so large archive batches don't race its sync.
@@ -22,9 +23,19 @@ export default class MorningOSPlugin extends Plugin {
   settings: MorningOSSettings;
   settingTab: MorningOSSettingTab;
   private agentRunning = false;
+  private externalRefreshQueued = false;
+  private externalEditNoticeShown = false;
+  private refreshDeferredByEditor = false;
+  private refreshDeferredLayout = false;
 
   async onload() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData()) as MorningOSSettings;
+    const savedSettings = (await this.loadData() ?? {}) as Record<string, unknown>;
+    const hobbySettingsRemoved = ["sourceHobbyTasks", "modeHobbyTasks", "hobbyTasksCount"]
+      .some(key => key in savedSettings);
+    delete savedSettings.sourceHobbyTasks;
+    delete savedSettings.modeHobbyTasks;
+    delete savedSettings.hobbyTasksCount;
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, savedSettings) as MorningOSSettings;
 
     // Migrate feedToLLM onto existing area configs that predate the field
     for (const area of this.settings.areas) {
@@ -43,12 +54,27 @@ export default class MorningOSPlugin extends Plugin {
       this.settings.sourceWins = DEFAULT_SETTINGS.sourceWins;
     }
 
+    if (hobbySettingsRemoved) {
+      await this.saveData(this.settings);
+    }
+
     if (!this.settings.onboarded && this.settings.agentLastRunDate) {
       this.settings.onboarded = true;
       await this.saveData(this.settings);
     }
 
-    // Must run before any view or agent can load and re-save the registry.
+    // Preserve exact legacy bytes before activating the new versioned state.
+    try {
+      const stateInit = await initializeRegistryState(this.app);
+      if (stateInit.migrated) {
+        new Notice(`Morning OS: safely migrated ${stateInit.itemCount} item${stateInit.itemCount === 1 ? "" : "s"} to versioned state.`, 8000);
+      }
+    } catch (error) {
+      console.error("Morning OS state initialization failed:", error);
+      new Notice(`Morning OS: item data was not opened for writing — ${(error as Error).message}`);
+    }
+
+    // Compatibility repair is inert after the versioned state takes ownership.
     const areasRecovery = await recoverRegistryAreas(this.app, this.settings.areas);
     if (areasRecovery.settingsChanged) {
       await this.saveData(this.settings);
@@ -68,6 +94,7 @@ export default class MorningOSPlugin extends Plugin {
 
     this.registerView(VIEW_TYPE_MORNING, (leaf) => new MorningView(leaf, this.settings, this));
     this.registerView(VIEW_TYPE_DUMP, (leaf) => new DumpView(leaf, this.settings, this));
+    this.registerView(VIEW_TYPE_ALL_ITEMS, (leaf) => new DumpView(leaf, this.settings, this, true));
     this.registerView(VIEW_TYPE_TRASH, (leaf) => new TrashView(leaf, this.settings, this));
     for (const area of this.settings.areas) {
       const key = area.key;
@@ -77,6 +104,22 @@ export default class MorningOSPlugin extends Plugin {
     this.addRibbonIcon("sun", "Morning OS", () => {
       void this.activateView();
     });
+
+    this.registerEvent(this.app.vault.on("modify", file => {
+      if (file instanceof TFile && file.path === STATE_PATH) void this.reconcileExternalState();
+    }));
+    this.registerEvent(this.app.workspace.on("active-leaf-change", () => {
+      void this.reconcileExternalState();
+    }));
+    this.register(onEditingSessionsSettled(() => {
+      if (this.refreshDeferredByEditor) {
+        const layout = this.refreshDeferredLayout;
+        this.refreshDeferredByEditor = false;
+        this.refreshDeferredLayout = false;
+        if (layout) void this.refreshView(true);
+        else void this.reconcileExternalState();
+      }
+    }));
 
     this.settingTab = new MorningOSSettingTab(this.app, this);
     this.addSettingTab(this.settingTab);
@@ -97,7 +140,8 @@ export default class MorningOSPlugin extends Plugin {
     await workspace.revealLeaf(leaf);
   }
 
-  async triggerAgent(): Promise<void> {
+  /** The only user-facing briefing action. It uses AI only when the settings require it. */
+  async regenerateBriefing(): Promise<void> {
     if (this.agentRunning) {
       new Notice("Morning OS: agent is already running.");
       return;
@@ -107,7 +151,7 @@ export default class MorningOSPlugin extends Plugin {
     new Notice("Morning OS: running briefing agent…");
 
     try {
-      const result: AgentResult = await runAgent(this.app, this.settings);
+      const result = await runAgent(this.app, this.settings);
       this.settings.agentLastRunDate = todayStr();
       this.settings.settingsChangedSinceRun = false;
       await this.saveData(this.settings);
@@ -126,7 +170,7 @@ export default class MorningOSPlugin extends Plugin {
       } else {
         new Notice(`Morning OS: agent failed — ${msg.slice(0, 120)}`);
       }
-      console.error("Morning OS agent error:", err);
+      console.error("Morning OS briefing error:", err);
     } finally {
       this.agentRunning = false;
     }
@@ -135,17 +179,17 @@ export default class MorningOSPlugin extends Plugin {
   async triggerRefresh(): Promise<void> {
     const today = todayStr();
 
-    await scaffoldDailyNote(today, this.app, this.settings);
+    void today;
 
     const briefPath = `${this.settings.briefsDir}/${today}.json`;
     const briefExists = await this.app.vault.adapter.exists(briefPath);
     if (!briefExists) {
-      await this.triggerAgent();
+      await this.regenerateBriefing();
       return;
     }
 
     try {
-      await refreshBrief(this.app, this.settings);
+      await this.regenerateBriefing();
       new Notice("Morning OS: brief refreshed ✓");
       await this.refreshView();
     } catch (err) {
@@ -153,14 +197,23 @@ export default class MorningOSPlugin extends Plugin {
     }
   }
 
-  async refreshView(): Promise<void> {
+  async refreshView(layout = false): Promise<void> {
+    if (hasActiveEditingSession()) {
+      this.refreshDeferredByEditor = true;
+      this.refreshDeferredLayout ||= layout;
+      return;
+    }
     for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_MORNING)) {
       await leaf.loadIfDeferred();
       if (leaf.view instanceof MorningView) await leaf.view.refresh();
     }
     for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_DUMP)) {
       await leaf.loadIfDeferred();
-      if (leaf.view instanceof DumpView) await leaf.view.refresh();
+      if (leaf.view instanceof DumpView) await leaf.view.refresh(layout);
+    }
+    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_ALL_ITEMS)) {
+      await leaf.loadIfDeferred();
+      if (leaf.view instanceof DumpView) await leaf.view.refresh(layout);
     }
     for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_TRASH)) {
       await leaf.loadIfDeferred();
@@ -169,9 +222,37 @@ export default class MorningOSPlugin extends Plugin {
     for (const area of this.settings.areas) {
       for (const leaf of this.app.workspace.getLeavesOfType(`${VIEW_TYPE_AREA}-${area.key}`)) {
         await leaf.loadIfDeferred();
-        if (leaf.view instanceof AreaView) await leaf.view.refresh();
+        if (leaf.view instanceof AreaView) await leaf.view.refresh(layout);
       }
     }
+  }
+
+  private async reconcileExternalState(): Promise<void> {
+    if (this.externalRefreshQueued) return;
+    this.externalRefreshQueued = true;
+    window.setTimeout(() => {
+      void (async () => {
+        this.externalRefreshQueued = false;
+        try {
+          // Validation is intentionally performed before any view adopts bytes
+          // supplied by a provider or another Obsidian process.
+          await getStateStore(this.app).read();
+          if (hasActiveEditingSession()) {
+            this.refreshDeferredByEditor = true;
+            if (!this.externalEditNoticeShown) {
+              this.externalEditNoticeShown = true;
+              new Notice("Morning OS: item data changed elsewhere. Your open draft is preserved; saving will show any conflicting fields.");
+            }
+            return;
+          }
+          this.externalEditNoticeShown = false;
+          await this.refreshView();
+        } catch (error) {
+          console.error("Morning OS external state refresh rejected:", error);
+          new Notice(`Morning OS: external item data was not adopted — ${(error as Error).message}`);
+        }
+      })();
+    }, 50);
   }
 
   async reregisterAreaViews() {
@@ -194,6 +275,14 @@ export default class MorningOSPlugin extends Plugin {
     await workspace.revealLeaf(leaf);
   }
 
+  async activateAllItems() {
+    const { workspace } = this.app;
+    const leaves = workspace.getLeavesOfType(VIEW_TYPE_ALL_ITEMS);
+    const leaf = leaves.length > 0 ? leaves[0] : workspace.getLeaf("tab");
+    await leaf.setViewState({ type: VIEW_TYPE_ALL_ITEMS, active: true });
+    await workspace.revealLeaf(leaf);
+  }
+
   async activateTrash() {
     const { workspace } = this.app;
     const leaves = workspace.getLeavesOfType(VIEW_TYPE_TRASH);
@@ -212,12 +301,7 @@ export default class MorningOSPlugin extends Plugin {
   }
 
   async autoRefreshBrief(): Promise<void> {
-    const briefPath = `${this.settings.briefsDir}/${todayStr()}.json`;
-    if (!(await this.app.vault.adapter.exists(briefPath))) {
-      void this.triggerAgent();
-      return;
-    }
-    try { await refreshBrief(this.app, this.settings); } catch { /* non-critical */ }
+    // Item mutations intentionally never regenerate a briefing or contact an LLM.
   }
 
   async migrateVault(): Promise<void> {
@@ -343,13 +427,7 @@ export default class MorningOSPlugin extends Plugin {
     for (const t of technical) add(t, { areas: ["career"] });
     if (technical.length) results.push(`✓ ${technical.length} technical tasks → Career registry`);
 
-    // 5. Migrate Hobby Tasks → registry with interests area
-    const hobbySource = await resolveMigrationSource(this.settings.sourceHobbyTasks, "Hobby Tasks.md");
-    const hobby = hobbySource ? await parseBulletFile(hobbySource, this.app) : [];
-    for (const t of hobby) add(t, { areas: ["interests"] });
-    if (hobby.length) results.push(`✓ ${hobby.length} hobby tasks → Interests registry`);
-
-    // 6. Migrate today's daily note tasks → registry (undone only, no area)
+    // 5. Migrate today's daily note tasks → registry (undone only, no area)
     const dailyData = await parseDailyNote(today, this.app, this.settings);
     if (dailyData) {
       for (const t of dailyData.red_alert.filter(t => !t.done))
@@ -362,7 +440,7 @@ export default class MorningOSPlugin extends Plugin {
 
     if (tasksAdded > 0) await saveRegistry(this.app, registry);
 
-    // 7. Migrate ALL wins from all daily notes → Essential/Wins.md
+    // 6. Migrate ALL wins from all daily notes → Essential/Wins.md
     const winsPath = this.settings.sourceWins;
     if (!(await this.app.vault.adapter.exists(winsPath))) {
       await this.app.vault.adapter.write(winsPath, "");
@@ -389,13 +467,12 @@ export default class MorningOSPlugin extends Plugin {
     if (totalWins > 0) results.push(`✓ ${totalWins} historical wins → Wins.md`);
     else results.push(`✓ Created Wins.md`);
 
-    // 8. Archive old source files (only if content was migrated)
+    // 7. Archive old source files (only if content was migrated)
     const filesToArchive: { src: string; dest: string; migrated: boolean }[] = [
       { src: this.settings.sourceTacticalRules, dest: `${archiveDir}/Tactical Rules.md`, migrated: tacticalMigrated },
       { src: this.settings.sourceEmotionalRules, dest: `${archiveDir}/Emotional Rules.md`, migrated: emotionalMigrated },
       { src: this.settings.sourceGoals, dest: `${archiveDir}/Goals.md`, migrated: goalsMigrated },
       { src: this.settings.sourceTechnicalTasks, dest: `${archiveDir}/Technical Tasks.md`, migrated: technical.length > 0 },
-      { src: this.settings.sourceHobbyTasks, dest: `${archiveDir}/Hobby Tasks.md`, migrated: hobby.length > 0 },
     ];
 
     let archived = 0;
@@ -416,7 +493,7 @@ export default class MorningOSPlugin extends Plugin {
     }
     if (archived > 0) results.push(`✓ ${archived} old files archived to _archive/pre-migration/`);
 
-    // 9. Archive daily notes in sync-safe batches
+    // 8. Archive daily notes in sync-safe batches
     const dailyDir = this.settings.dailyNoteDir;
     if (await this.app.vault.adapter.exists(dailyDir)) {
       const dailyArchiveDir = "_archive/daily-notes";

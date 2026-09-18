@@ -1,4 +1,17 @@
 export type CompletionStatus = "open" | "done" | "dismissed";
+export type ItemKind = "task" | "note";
+export type NoteStatus = "active" | "archived";
+export type TodayPriority = "red" | "regular";
+export type MetadataValue = string | number | boolean | null | MetadataValue[] | { [key: string]: MetadataValue };
+
+export interface ReminderOccurrence {
+  /** Changes whenever a reminder is explicitly set or reset. */
+  token: string;
+  /** A handled occurrence must not promote the item again. */
+  handledToken?: string;
+  /** Set only when the user removes a reminder-promoted item from Today. */
+  dismissedToken?: string;
+}
 
 export interface FieldDef {
   key: string;
@@ -33,7 +46,9 @@ export interface Task {
   text: string;
   notes: string;
   areas: string[];
-  tags: Record<string, string>;
+  /** Area/tab placement and custom-field values. Values are JSON data so child
+   * creation can copy them without sharing mutable references. */
+  tags: Record<string, MetadataValue>;
   status_completion: CompletionStatus;
   status_priority: "red" | "regular";
   status_urgency: "none" | "low" | "med" | "high";
@@ -44,6 +59,17 @@ export interface Task {
   date_completed: string | null;
   date_remind: string | null;
   parent_id: string | null;
+  /** New records use this explicitly; omitted legacy records are normalized to Tasks. */
+  kind: ItemKind;
+  /** Notes use their own lifecycle without reinterpreting Task completion data. */
+  status_note?: NoteStatus;
+  /** Details is the new name for legacy `notes`; both are retained for compatibility. */
+  details?: string;
+  reminder_occurrence?: ReminderOccurrence | null;
+  deletion_batch_id?: string | null;
+  deleted_member_ids?: string[];
+  /** Preserves legacy and future fields that this version does not interpret. */
+  [key: string]: unknown;
 }
 
 export type TaskRegistry = Task[];
@@ -52,7 +78,6 @@ export type SuggestionSource =
   | "tasks"
   | "goals"
   | "technical_backlog"
-  | "carried_tasks"
   | "wins";
 
 export interface Suggestion {
@@ -76,7 +101,6 @@ export interface DailyBrief {
     long_term: string[];
   };
   tactical_rules?: string[];
-  hobby_tasks?: string[];
   suggestions?: Suggestion[];
   wins?: string[];
 }

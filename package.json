@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "node esbuild.config.mjs watch",
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
-    "deploy": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs deploy"
+    "deploy": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs deploy",
+    "test": "node scripts/run-state-safety-tests.mjs"
   },
   "keywords": [],
   "author": "Satya Akhil Galla",
@@ -14,6 +15,7 @@
   "devDependencies": {
     "@types/node": "^20.0.0",
     "esbuild": "^0.21.0",
+    "happy-dom": "^20.14.5",
     "obsidian": "latest",
     "typescript": "^5.4.0"
   },

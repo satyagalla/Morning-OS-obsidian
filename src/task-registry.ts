@@ -1,9 +1,10 @@
 import { App } from "obsidian";
-import type { AreaConfig, TabConfig, Task, TaskRegistry, CompletionStatus } from "./types";
-import { writeHistorySnapshot } from "./agent/history";
+import type { AreaConfig, TabConfig, Task, TaskRegistry, CompletionStatus, TodayPriority, ItemKind, NoteStatus, MetadataValue } from "./types";
 import { todayStr } from "./utils";
+import { getStateStore, LEGACY_REGISTRY_PATH, STATE_PATH } from "./data/state-store";
+import { cloneItemDraft, forceDraftFields, mergeDraftTags, reconcileItemDraft, type DraftConflict, type DraftConflictChoice, type ItemDraft } from "./data/draft-reconciliation";
 
-const REGISTRY_PATH = "_generated/tasks.json";
+const REGISTRY_PATH = STATE_PATH;
 const AREAS_RECOVERY_BACKUP_PATH = "_generated/backups/tasks-before-areas-recovery.json";
 
 export interface AreasRecoveryResult {
@@ -17,21 +18,26 @@ export interface AreasRecoveryResult {
   error?: string;
 }
 
+export type DraftSaveResult =
+  | { status: "saved" }
+  | { status: "conflict"; conflicts: DraftConflict[] }
+  | { status: "deleted" };
+
+async function stateUpdate(app: App, operation: string, mutator: (state: import("./data/schemas").MorningState) => void): Promise<void> {
+  await getStateStore(app).update(mutator, operation);
+}
+
 function generateId(): string {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 }
 
 export async function loadRegistry(app: App): Promise<TaskRegistry> {
-  const exists = await app.vault.adapter.exists(REGISTRY_PATH);
-  if (!exists) return [];
-  try {
-    const raw = await app.vault.adapter.read(REGISTRY_PATH);
-    const tasks = JSON.parse(raw) as Record<string, unknown>[];
-    // Migrate old field names on read
-    return tasks.map(migrateTask);
-  } catch {
-    return [];
-  }
+  const state = await getStateStore(app).read();
+  return JSON.parse(JSON.stringify(state.items)) as TaskRegistry;
+}
+
+export async function initializeRegistryState(app: App): Promise<{ migrated: boolean; itemCount: number }> {
+  return getStateStore(app).initialize();
 }
 
 /**
@@ -51,7 +57,9 @@ export async function recoverRegistryAreas(app: App, configuredAreas: AreaConfig
     backupCreated: false,
   };
 
-  if (!(await app.vault.adapter.exists(REGISTRY_PATH))) return result;
+  // The legacy file is immutable after a successful state migration.
+  if (await app.vault.adapter.exists(STATE_PATH)) return result;
+  if (!(await app.vault.adapter.exists(LEGACY_REGISTRY_PATH))) return result;
 
   let raw: string;
   let tasks: Record<string, unknown>[];
@@ -202,7 +210,7 @@ function migrateTask(t: Record<string, unknown>): Task {
     text:              (t.text ?? "") as string,
     notes:             (t.notes ?? "") as string,
     areas:           (t.areas ?? []) as string[],
-    tags:              (t.tags ?? {}) as Record<string, string>,
+    tags:              (t.tags ?? {}) as Record<string, MetadataValue>,
     status_completion: migrateCompletion(t),
     status_priority:   (t.status_priority ?? t.priority ?? "regular") as "red" | "regular",
     status_urgency:    (t.status_urgency ?? t.urgency ?? "none") as Task["status_urgency"],
@@ -213,6 +221,8 @@ function migrateTask(t: Record<string, unknown>): Task {
     date_modified:     (t.date_modified ?? t.modified ?? todayStr()) as string,
     date_completed:    (t.date_completed ?? t.completed ?? null) as string | null,
     date_remind:       (t.date_remind ?? t.remind_date ?? null) as string | null,
+    kind:               (t.kind === "note" ? "note" : "task") as ItemKind,
+    status_note:        t.kind === "note" && t.status_note === "archived" ? "archived" : (t.kind === "note" ? "active" : undefined),
   };
 }
 
@@ -223,8 +233,7 @@ function migrateCompletion(t: Record<string, unknown>): CompletionStatus {
 }
 
 export async function saveRegistry(app: App, registry: TaskRegistry): Promise<void> {
-  await app.vault.adapter.mkdir("_generated");
-  await app.vault.adapter.write(REGISTRY_PATH, JSON.stringify(registry, null, 2));
+  await getStateStore(app).replaceItems(registry);
 }
 
 function parseTagsFromText(text: string): { cleanText: string; areas: string[]; tags: Record<string, string>; date_remind: string | null } {
@@ -264,8 +273,8 @@ export function createTask(
     _id: generateId(),
     text: parsed.cleanText,
     notes: "",
-    areas: opts.areas !== undefined ? opts.areas : parsed.areas,
-    tags: opts.tags !== undefined ? opts.tags : parsed.tags,
+    areas: opts.areas !== undefined ? [...opts.areas] : [...parsed.areas],
+    tags: opts.tags !== undefined ? cloneMetadata(opts.tags) : parsed.tags,
     status_completion: "open",
     status_priority: opts.status_priority ?? "regular",
     status_urgency: opts.status_urgency ?? "none",
@@ -276,7 +285,60 @@ export function createTask(
     date_modified: today,
     date_completed: null,
     date_remind: opts.date_remind !== undefined ? opts.date_remind : parsed.date_remind,
+    kind: "task",
   };
+}
+
+export function createNote(rawText: string, opts: Partial<Pick<Task, "areas" | "tags" | "is_today" | "parent_id">> = {}): Task {
+  const item = createTask(rawText, opts);
+  item.kind = "note";
+  item.status_note = "active";
+  return item;
+}
+
+/**
+ * A child receives a snapshot of the parent's placement/custom metadata at
+ * creation time. It never remains linked to those values afterwards.
+ */
+export function createChildItem(rawText: string, parent: Task, kind: ItemKind = "task"): Task {
+  const options = {
+    parent_id: parent._id,
+    areas: cloneMetadata(parent.areas),
+    tags: cloneMetadata(parent.tags),
+  };
+  return kind === "note" ? createNote(rawText, options) : createTask(rawText, options);
+}
+
+function cloneMetadata<T extends MetadataValue | MetadataValue[] | Record<string, MetadataValue>>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+export async function changeItemKind(app: App, id: string, kind: ItemKind): Promise<void> {
+  await stateUpdate(app, kind === "note" ? "convert-to-note" : "convert-to-task", state => {
+    const item = state.items.find(candidate => candidate._id === id);
+    if (!item || item.kind === kind) return;
+    if (kind === "note") {
+      item.status_note = item.status_completion === "open" ? "active" : "archived";
+    } else {
+      item.status_completion = item.status_note === "active" ? "open" : "done";
+      if (item.status_completion === "open") item.date_completed = null;
+      item.status_note = undefined;
+    }
+    item.kind = kind;
+    item.date_modified = todayStr();
+  });
+}
+
+export async function setNoteStatus(app: App, id: string, status: NoteStatus): Promise<void> {
+  await stateUpdate(app, status === "archived" ? "archive-note" : "unarchive-note", state => {
+    const item = state.items.find(candidate => candidate._id === id);
+    if (!item || item.kind !== "note" || item.status_note === status) return;
+    item.status_note = status;
+    // Keep the legacy status field coherent for existing projections and exports.
+    item.status_completion = status === "archived" ? "done" : "open";
+    item.date_completed = status === "archived" ? todayStr() : null;
+    item.date_modified = todayStr();
+  });
 }
 
 export function getChildren(registry: TaskRegistry, parentId: string): Task[] {
@@ -284,65 +346,200 @@ export function getChildren(registry: TaskRegistry, parentId: string): Task[] {
 }
 
 export function hasOpenChildren(registry: TaskRegistry, parentId: string): boolean {
-  return getChildren(registry, parentId).some(t => t.status_completion !== "done");
+  return getChildren(registry, parentId).some(t => t.kind === "note" ? t.status_note !== "archived" : t.status_completion === "open");
 }
 
-
-export async function updateTask(app: App, id: string, patch: Partial<Task>): Promise<void> {
-  const registry = await loadRegistry(app);
-  const idx = registry.findIndex(t => t._id === id);
-  if (idx === -1) return;
-  registry[idx] = { ...registry[idx], ...patch, date_modified: todayStr() };
-  await saveRegistry(app, registry);
-}
-
-export async function setTaskStatus(app: App, id: string, status: CompletionStatus): Promise<void> {
-  const today = todayStr();
-  await updateTask(app, id, {
-    status_completion: status,
-    date_completed: status === "done" ? today : null,
+/** Attach an ungrouped item to a root parent. One nesting level is enforced here,
+ * rather than relying on callers to manipulate parent_id safely. */
+export async function attachItemToParent(app: App, childId: string, parentId: string): Promise<void> {
+  await stateUpdate(app, "group-item", state => {
+    const child = state.items.find(item => item._id === childId);
+    const parent = state.items.find(item => item._id === parentId);
+    if (!child || !parent) throw new Error("item or parent was not found");
+    if (child.parent_id === parentId) return;
+    if (child._id === parent._id) throw new Error("an item cannot be its own parent");
+    if (child.parent_id !== null) throw new Error("only root items can be attached");
+    if (parent.parent_id !== null) throw new Error("a child cannot have children");
+    if (child.is_deleted || parent.is_deleted) throw new Error("deleted items cannot be grouped");
+    child.parent_id = parentId;
+    child.date_modified = todayStr();
   });
 }
 
-export async function moveTaskToToday(app: App, id: string, priority: "red" | "regular"): Promise<void> {
-  await updateTask(app, id, { is_today: true, status_priority: priority });
+/** Detaching retains all materialized values already stored on the child. */
+export async function detachItemFromParent(app: App, id: string): Promise<void> {
+  await stateUpdate(app, "ungroup-item", state => {
+    const item = state.items.find(candidate => candidate._id === id);
+    if (!item || item.parent_id === null) return;
+    item.parent_id = null;
+    item.date_modified = todayStr();
+  });
+}
+
+
+function applyReminderDateChange(item: Task, patch: Partial<Task>): void {
+  if (!("date_remind" in patch) || item.date_remind === patch.date_remind) return;
+  item.date_remind = patch.date_remind ?? null;
+  item.reminder_occurrence = item.date_remind ? { token: generateId() } : null;
+}
+
+export async function updateTask(app: App, id: string, patch: Partial<Task>): Promise<void> {
+  await stateUpdate(app, "edit-item", state => {
+    const item = state.items.find(task => task._id === id);
+    if (!item) return;
+    const changed = Object.keys(patch).some(field => {
+      const key = field as keyof Task;
+      return JSON.stringify(item[key]) !== JSON.stringify(patch[key]);
+    });
+    if (!changed) return;
+    const { date_remind: _dateRemind, ...otherPatch } = patch;
+    Object.assign(item, otherPatch);
+    applyReminderDateChange(item, patch);
+    item.date_modified = todayStr();
+  });
+}
+
+/** Applies only fields changed by an editor since it opened. Unrelated external
+ * changes remain in place; conflicting fields require an explicit UI choice. */
+export async function saveItemDraft(app: App, base: ItemDraft, draft: ItemDraft, forceFields: readonly DraftConflictChoice[] = []): Promise<DraftSaveResult> {
+  let outcome: DraftSaveResult = { status: "saved" };
+  await getStateStore(app).update(state => {
+    const item = state.items.find(candidate => candidate._id === base._id);
+    if (!item || item.is_deleted) {
+      outcome = { status: "deleted" };
+      return;
+    }
+    const reconciliation = reconcileItemDraft(base, draft, item);
+    const authorized = reconciliation.conflicts.filter(conflict => forceFields.some(choice =>
+      typeof choice === "object"
+        ? choice.field === conflict.field && choice.key === conflict.key
+        : choice === conflict.field && (choice !== "tags" || conflict.key === undefined),
+    ));
+    const unresolved = reconciliation.conflicts.filter(conflict => !authorized.includes(conflict));
+    if (unresolved.length) {
+      outcome = { status: "conflict", conflicts: unresolved };
+      return;
+    }
+    const forced = forceFields.length ? forceDraftFields(base, draft, item, forceFields) : {};
+    const patch = { ...reconciliation.patch, ...forced };
+    // Do this only after rejecting every unresolved conflict.  A single merge
+    // avoids later conflict choices replacing independently edited tag keys.
+    if ("tags" in reconciliation.patch || "tags" in forced) {
+      patch.tags = mergeDraftTags(base, draft, item);
+    }
+    if (Object.keys(patch).length === 0) return;
+    const { date_remind: _dateRemind, ...otherPatch } = patch;
+    Object.assign(item, otherPatch);
+    applyReminderDateChange(item, patch);
+    item.date_modified = todayStr();
+  }, "edit item");
+  return outcome;
+}
+
+export { cloneItemDraft };
+
+export async function setTaskStatus(app: App, id: string, status: CompletionStatus): Promise<void> {
+  await stateUpdate(app, status === "done" ? "complete-task" : "reopen-task", state => {
+    const item = state.items.find(candidate => candidate._id === id);
+    if (!item || item.kind === "note" || item.status_completion === status) return;
+    item.status_completion = status;
+    item.date_completed = status === "done" ? todayStr() : null;
+    item.date_modified = todayStr();
+  });
+}
+
+export async function moveTaskToToday(app: App, id: string, priority: TodayPriority): Promise<void> {
+  await stateUpdate(app, "add-to-today", state => {
+    const item = state.items.find(candidate => candidate._id === id);
+    if (!item || (item.is_today && item.status_priority === priority)) return;
+    item.is_today = true;
+    item.status_priority = priority;
+    item.date_modified = todayStr();
+  });
+}
+
+export async function changeTodayPriority(app: App, id: string, priority: TodayPriority): Promise<void> {
+  await stateUpdate(app, "change-today-priority", state => {
+    const item = state.items.find(candidate => candidate._id === id);
+    if (!item || !item.is_today || item.status_priority === priority) return;
+    item.status_priority = priority;
+    item.date_modified = todayStr();
+  });
+}
+
+export async function removeTaskFromToday(app: App, id: string): Promise<void> {
+  await stateUpdate(app, "remove-from-today", state => {
+    const task = state.items.find(item => item._id === id);
+    if (!task || !task.is_today) return;
+    task.is_today = false;
+    const occurrence = task.reminder_occurrence;
+    if (occurrence && occurrence.handledToken === occurrence.token) {
+      occurrence.dismissedToken = occurrence.token;
+    }
+    task.date_modified = todayStr();
+  });
+}
+
+export async function setTaskReminder(app: App, id: string, date: string | null): Promise<void> {
+  await stateUpdate(app, date === null ? "clear-reminder" : "set-reminder", state => {
+    const task = state.items.find(item => item._id === id);
+    if (!task || task.date_remind === date) return;
+    applyReminderDateChange(task, { date_remind: date });
+    task.date_modified = todayStr();
+  });
 }
 
 export async function deleteTask(app: App, id: string): Promise<void> {
-  const registry = await loadRegistry(app);
-  const today = todayStr();
-  for (const t of registry) {
-    if (t._id === id || t.parent_id === id) {
-      t.is_deleted = true;
-      t.is_today = false;
-      t.date_modified = today;
+  await stateUpdate(app, "delete-group", state => {
+    const root = state.items.find(task => task._id === id);
+    if (!root || root.is_deleted) return;
+    const batch = generateId();
+    const affected = state.items.filter(task => !task.is_deleted && (task._id === id || task.parent_id === id));
+    for (const task of affected) {
+      task.is_deleted = true;
+      task.is_today = false;
+      task.deletion_batch_id = batch;
+      task.date_modified = todayStr();
     }
-  }
-  await saveRegistry(app, registry);
+    root.deleted_member_ids = affected.map(task => task._id);
+  });
 }
 
 export async function restoreTask(app: App, id: string): Promise<void> {
-  await updateTask(app, id, { is_deleted: false });
+  await stateUpdate(app, "restore-group", state => {
+    const root = state.items.find(task => task._id === id);
+    if (!root || !root.is_deleted) return;
+    const batch = root.deletion_batch_id;
+    if (!batch) throw new Error("deleted item has no recovery batch");
+    for (const task of state.items) {
+      if (task.deletion_batch_id === batch && (task._id === id || task.parent_id === id)) {
+        task.is_deleted = false;
+        task.date_modified = todayStr();
+      }
+    }
+  });
+}
+
+/** Permanently remove a root and its current direct children. Callers must show a
+ * confirmation/preview before invoking this irreversible operation. */
+export async function purgeTask(app: App, id: string): Promise<number> {
+  let purged = 0;
+  await getStateStore(app).update(state => {
+    const root = state.items.find(item => item._id === id);
+    if (!root) return;
+    const ids = new Set([id]);
+    if (root.parent_id === null) {
+      for (const child of state.items) if (child.parent_id === id) ids.add(child._id);
+    }
+    purged = ids.size;
+    state.items = state.items.filter(item => !ids.has(item._id));
+  }, "purge-group");
+  return purged;
 }
 
 export async function clearNextDayTasks(app: App): Promise<void> {
-  const today = todayStr();
-  const d = new Date(today + "T12:00:00");
-  d.setDate(d.getDate() - 1);
-  const yesterdayStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-
-  const registry = await loadRegistry(app);
-
-  // Snapshot yesterday's state before clearing
-  await writeHistorySnapshot(app, yesterdayStr, registry);
-
-  for (const task of registry) {
-    if (task.is_today && task.status_completion === "done" && task.date_completed !== today) {
-      task.is_today = false;
-      task.date_modified = today;
-    }
-  }
-  await saveRegistry(app, registry);
+  // Kept as a compatibility no-op. Today membership is persistent, not a dated schedule.
+  void app;
 }
 
 export function getActiveReminders(registry: TaskRegistry): Task[] {
@@ -350,9 +547,33 @@ export function getActiveReminders(registry: TaskRegistry): Task[] {
   return registry.filter(t =>
     !t.is_deleted &&
     t.status_completion === "open" &&
+    (t.kind !== "note" || t.status_note === "active") &&
     t.date_remind !== null &&
-    t.date_remind <= today
+    t.date_remind <= today &&
+    t.reminder_occurrence?.handledToken !== t.reminder_occurrence?.token
   );
 }
 
-export { generateId, REGISTRY_PATH };
+export async function promoteDueReminders(app: App): Promise<number> {
+  let promoted = 0;
+  await getStateStore(app).update(state => {
+    const today = todayStr();
+    for (const task of state.items) {
+      if (task.is_deleted || task.status_completion !== "open" || (task.kind === "note" && task.status_note !== "active") || !task.date_remind || task.date_remind > today) continue;
+      const occurrence = task.reminder_occurrence ?? { token: `legacy-${task._id}-${task.date_remind}` };
+      task.reminder_occurrence = occurrence;
+      if (occurrence.handledToken === occurrence.token || occurrence.dismissedToken === occurrence.token) continue;
+      if (task.is_today) {
+        occurrence.handledToken = occurrence.token;
+        continue;
+      }
+      task.is_today = true;
+      occurrence.handledToken = occurrence.token;
+      task.date_modified = today;
+      promoted++;
+    }
+  }, "promote-reminders");
+  return promoted;
+}
+
+export { generateId, LEGACY_REGISTRY_PATH, REGISTRY_PATH };

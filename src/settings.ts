@@ -1,6 +1,9 @@
-import { App, PluginSettingTab, Setting } from "obsidian";
+import { App, Notice, PluginSettingTab, Setting } from "obsidian";
 import type MorningOSPlugin from "./main";
 import type { AreaConfig, FieldDef, LLMSectionMapping } from "./types";
+import { getStateStore } from "./data/state-store";
+import type { StateSnapshot } from "./data/state-store";
+import { hasActiveEditingSession } from "./editing-session";
 
 type NumericSettingsKey = { [K in keyof MorningOSSettings]: MorningOSSettings[K] extends number ? K : never }[keyof MorningOSSettings];
 
@@ -16,7 +19,6 @@ export interface MorningOSSettings {
   sourceEmotionalRules: string;
   sourceGoals: string;
   sourceTechnicalTasks: string;
-  sourceHobbyTasks: string;
   sourceIdentity: string;
 
   // Daily note section headings
@@ -35,7 +37,6 @@ export interface MorningOSSettings {
   modeTacticalRules: boolean;
   modeIdentityRules: boolean;
   modeGoals: boolean;
-  modeHobbyTasks: boolean;
   modeSuggestion: boolean;
   modeWins: boolean;
 
@@ -58,7 +59,6 @@ export interface MorningOSSettings {
   identityRulesCount: number;
   goalsShortTermCount: number;
   goalsLongTermCount: number;
-  hobbyTasksCount: number;
   suggestionCount: number;
 
   // Home dashboard visibility
@@ -104,6 +104,11 @@ export const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
   groq: "llama-3.3-70b-versatile",
 };
 
+function formatSnapshotDate(value: string): string {
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? "Unknown creation time" : parsed.toLocaleString();
+}
+
 export const DEFAULT_SETTINGS: MorningOSSettings = {
   briefsDir: "_generated/briefs",
   dailyNoteDir: "Essential/Daily",
@@ -114,7 +119,6 @@ export const DEFAULT_SETTINGS: MorningOSSettings = {
   sourceEmotionalRules: "Essential/State of Mind/Emotional Rules.md",
   sourceGoals: "Essential/State of Mind/Long-term and Short-term.md",
   sourceTechnicalTasks: "Essential/Pending Tasks/Technical Tasks.md",
-  sourceHobbyTasks: "Essential/Pending Tasks/Hobby Tasks.md",
   sourceIdentity: "Essential/Identity-Anchor.md",
 
   sectionRedAlert: "Red alert",
@@ -127,7 +131,6 @@ export const DEFAULT_SETTINGS: MorningOSSettings = {
   modeTacticalRules: true,
   modeIdentityRules: false,
   modeGoals: true,
-  modeHobbyTasks: true,
   modeSuggestion: true,
   modeWins: false,
 
@@ -149,7 +152,6 @@ export const DEFAULT_SETTINGS: MorningOSSettings = {
   identityRulesCount: 3,
   goalsShortTermCount: 2,
   goalsLongTermCount: 1,
-  hobbyTasksCount: 3,
   suggestionCount: 3,
 
   showIdentity: false,
@@ -258,6 +260,10 @@ export class MorningOSSettingTab extends PluginSettingTab {
   }
 
   private activeSettingsTab = "general";
+  private recoverySnapshots: StateSnapshot[] | null = null;
+  private recoverySnapshotError: string | null = null;
+  private restoringSnapshotPath: string | null = null;
+  private recoveryDisclosureOpen = false;
 
   private renderTabBar(containerEl: HTMLElement) {
     const tabs = [
@@ -295,6 +301,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
         this.renderAreasSection(content);
         break;
       case "advanced":
+        this.renderDataSafetySection(content);
         this.renderAdvancedAreaFeaturesSection(content);
         this.renderAgentSection(content);
         this.renderAdvancedAISection(content);
@@ -307,8 +314,147 @@ export class MorningOSSettingTab extends PluginSettingTab {
     }
   }
 
+  private renderDataSafetySection(containerEl: HTMLElement): void {
+    this.sectionHeading(containerEl, "Data safety & recovery");
+    const store = getStateStore(this.app);
+    new Setting(containerEl)
+      .setName("Back up now")
+      .setDesc("Create and verify a snapshot of Morning OS item state before making larger changes.")
+      .addButton((button) => button.setButtonText("Back up").onClick(async () => {
+        button.setDisabled(true);
+        try {
+          const path = await store.backupNow();
+          new Notice(`Morning OS: verified backup saved to ${path}`);
+          await this.reloadRecoverySnapshots();
+        } catch (error) {
+          new Notice(`Morning OS: backup failed — ${(error as Error).message}`);
+        } finally {
+          button.setDisabled(false);
+        }
+      }));
+    new Setting(containerEl)
+      .setName("Export item state")
+      .setDesc("Write a verified JSON export to _generated/exports. Exports contain item data, not provider credentials.")
+      .addButton((button) => button.setButtonText("Export JSON").onClick(async () => {
+        button.setDisabled(true);
+        try {
+          const path = await store.exportState();
+          new Notice(`Morning OS: item export saved to ${path}`);
+        } catch (error) {
+          new Notice(`Morning OS: export failed — ${(error as Error).message}`);
+        } finally {
+          button.setDisabled(false);
+        }
+      }));
+
+    this.renderRecoverySnapshotList(containerEl, store);
+  }
+
+  private renderRecoverySnapshotList(containerEl: HTMLElement, store: ReturnType<typeof getStateStore>): void {
+    containerEl.createEl("p", {
+      cls: "setting-item-description mos-recovery-coverage-note",
+      text: "Backups cover Morning OS item state only—not your whole vault or plugin settings—and are stored inside this vault.",
+    });
+    if (this.recoverySnapshots === null) {
+      containerEl.createEl("p", { cls: "setting-item-description mos-recovery-list-state", text: "Loading backups…" });
+      void this.reloadRecoverySnapshots();
+      return;
+    }
+    const disclosure = containerEl.createEl("details", { cls: "mos-recovery-disclosure" });
+    disclosure.open = this.recoveryDisclosureOpen;
+    disclosure.addEventListener("toggle", () => { this.recoveryDisclosureOpen = disclosure.open; });
+    disclosure.createEl("summary", { text: `Available backups (${this.recoverySnapshots.length})` });
+    const content = disclosure.createDiv({ cls: "mos-recovery-disclosure-content" });
+    if (this.recoverySnapshotError) {
+      content.createEl("p", { cls: "setting-item-description mos-recovery-list-state", text: `Could not load backups: ${this.recoverySnapshotError}` });
+      return;
+    }
+    if (!this.recoverySnapshots.length) {
+      content.createEl("p", { cls: "setting-item-description mos-recovery-list-state", text: "No Morning OS backups are available yet. Create one before making a larger change." });
+      return;
+    }
+    const validCount = this.recoverySnapshots.filter(snapshot => snapshot.valid).length;
+    content.createEl("p", { cls: "setting-item-description", text: `${validCount} verified backup${validCount === 1 ? "" : "s"} available. Automatic backups retain the latest 20; manual, migration, pre-restore, invalid, and damaged-state recovery copies are protected and can accumulate.` });
+    const list = content.createDiv({ cls: "mos-recovery-list", attr: { role: "list", "aria-label": "Morning OS backups" } });
+    for (const snapshot of this.recoverySnapshots) {
+      const row = list.createDiv({ cls: "mos-recovery-row", attr: { role: "listitem" } });
+      const details = row.createDiv({ cls: "mos-recovery-row-details" });
+      const filename = snapshot.path.split("/").pop() ?? snapshot.path;
+      const date = formatSnapshotDate(snapshot.createdAt);
+      details.createEl("div", { cls: "mos-recovery-row-title", text: date, attr: { title: snapshot.path } });
+      details.createEl("div", { cls: "mos-recovery-row-meta", text: `${snapshot.reason} · ${snapshot.itemCount} item${snapshot.itemCount === 1 ? "" : "s"} · ${filename}`, attr: { title: snapshot.path } });
+      const status = snapshot.status === "legacy" ? "Legacy (upgrades on restore)" : snapshot.status === "valid" ? "Valid" : "Invalid";
+      details.createEl("div", { cls: `mos-recovery-status is-${snapshot.status}`, text: status });
+      if (!snapshot.valid) details.createEl("div", { cls: "mos-recovery-row-error", text: snapshot.error ?? "This backup could not be validated and was preserved for investigation." });
+      const supported = snapshot.valid && (snapshot.status === "valid" || snapshot.status === "legacy");
+      const button = row.createEl("button", {
+        cls: "mod-cta mos-recovery-restore-button",
+        text: "Restore",
+        attr: { "aria-label": `Restore ${date} ${snapshot.reason} backup` },
+      });
+      button.disabled = !supported || this.restoringSnapshotPath !== null;
+      if (!supported) button.setAttribute("title", snapshot.error ?? "This backup is not supported for restore.");
+      button.addEventListener("click", () => { void this.restoreFromSnapshot(store, snapshot, button); });
+    }
+  }
+
+  private async restoreFromSnapshot(store: ReturnType<typeof getStateStore>, snapshot: StateSnapshot, button: HTMLButtonElement): Promise<void> {
+    if (hasActiveEditingSession()) {
+      new Notice("Morning OS: save or discard the active item draft before restoring a backup.");
+      return;
+    }
+    const date = formatSnapshotDate(snapshot.createdAt);
+    const legacyNote = snapshot.status === "legacy" ? " This legacy backup will be upgraded to the current item-state format." : "";
+    if (!window.confirm(`Restore the ${snapshot.reason} backup from ${date} (${snapshot.itemCount} item${snapshot.itemCount === 1 ? "" : "s"})? This replaces the whole Morning OS item state; it does not merge changes.${legacyNote}`)) return;
+    this.restoringSnapshotPath = snapshot.path;
+    button.disabled = true;
+    try {
+      const result = await store.restoreSnapshot(snapshot.path);
+      const recovery = result.recoveryPath ? ` Damaged prior bytes were preserved at ${result.recoveryPath}.` : "";
+      new Notice(`Morning OS: backup restored. Refreshing open views.${recovery}`);
+      await this.plugin.refreshView();
+    } catch (error) {
+      new Notice(`Morning OS: restore failed — ${(error as Error).message}`);
+    } finally {
+      this.restoringSnapshotPath = null;
+      await this.reloadRecoverySnapshots();
+    }
+  }
+
+  private async reloadRecoverySnapshots(): Promise<void> {
+    try {
+      this.recoverySnapshots = await getStateStore(this.app).listSnapshots();
+      this.recoverySnapshotError = null;
+    } catch (error) {
+      console.error("Morning OS could not list recovery snapshots:", error);
+      this.recoverySnapshots = [];
+      this.recoverySnapshotError = (error as Error).message;
+    }
+    this.display();
+  }
+
   private renderAgentSection(containerEl: HTMLElement) {
     this.sectionHeading(containerEl, "Briefing agent");
+
+    new Setting(containerEl)
+      .setName("Regenerate briefing")
+      .setDesc("Rebuild the briefing now. Morning OS uses AI only when your enabled briefing sections require it.")
+      .addButton((btn) =>
+        btn
+          .setButtonText("Regenerate")
+          .onClick(async () => {
+            btn.setButtonText("Regenerating…");
+            btn.setDisabled(true);
+            try {
+              await this.plugin.regenerateBriefing();
+              btn.setButtonText("Done ✓");
+              this.clearDirty();
+            } finally {
+              window.setTimeout(() => { btn.setButtonText("Regenerate"); btn.setDisabled(false); }, 3000);
+            }
+          })
+      );
+    return;
 
     new Setting(containerEl)
       .setName("Carry lookback days")
@@ -343,7 +489,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
             btn.setButtonText("Running…");
             btn.setDisabled(true);
             try {
-              await this.plugin.triggerAgent();
+              await this.plugin.regenerateBriefing();
               btn.setButtonText("Done ✓");
               this.clearDirty();
             } catch {
@@ -364,7 +510,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
             btn.setButtonText("Refreshing…");
             btn.setDisabled(true);
             try {
-              await this.plugin.triggerRefresh();
+              await this.plugin.regenerateBriefing();
               btn.setButtonText("Done ✓");
             } catch {
               btn.setButtonText("Failed ✗");
@@ -587,7 +733,6 @@ export class MorningOSSettingTab extends PluginSettingTab {
     count("Identity rules", "identityRulesCount");
     count("Short-term goals (shown in bar)", "goalsShortTermCount");
     count("Long-term goals (shown in bar)", "goalsLongTermCount");
-    count("Hobby tasks", "hobbyTasksCount");
     count("Suggestions", "suggestionCount");
   }
 
@@ -656,7 +801,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.advancedAreaFeatures = value;
             await this.plugin.saveData(this.plugin.settings);
-            await this.plugin.refreshView();
+            await this.plugin.refreshView(true);
           })
       );
   }
@@ -682,7 +827,6 @@ export class MorningOSSettingTab extends PluginSettingTab {
     toggle("Tactical rules", "AI picks the most relevant rules for today's tasks.", "modeTacticalRules");
     toggle("Identity rules", "AI picks identity affirmations resonant with today.", "modeIdentityRules");
     toggle("Goals", "AI selects and orders goals based on current tasks.", "modeGoals");
-    toggle("Hobby tasks", "AI picks hobby tasks from your file — no generation.", "modeHobbyTasks");
     toggle("Suggestions", "AI generates new suggestion text (the only field where it writes new content).", "modeSuggestion");
     toggle("Wins", "AI orders recent wins. Off reads the Wins log directly.", "modeWins");
   }
@@ -716,7 +860,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
     const areas = this.plugin.settings.areas;
     const saveDataOnly = async () => {
       await this.plugin.saveData(this.plugin.settings);
-      this.plugin.refreshView();
+      this.plugin.refreshView(true);
     };
     const saveAndSync = async () => {
       await this.plugin.saveData(this.plugin.settings);
