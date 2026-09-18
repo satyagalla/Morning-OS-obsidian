@@ -1,0 +1,919 @@
+diff --git a/src/task-registry.ts b/src/task-registry.ts
+index c10008a..25bfeb6 100644
+--- a/src/task-registry.ts
++++ b/src/task-registry.ts
+@@ -3,6 +3,7 @@ import type { AreaConfig, TabConfig, Task, TaskRegistry, CompletionStatus, Today
+ import { todayStr } from "./utils";
+ import { getStateStore, LEGACY_REGISTRY_PATH, STATE_PATH } from "./data/state-store";
+ import { cloneItemDraft, forceDraftFields, reconcileItemDraft, type DraftConflict, type ItemDraft } from "./data/draft-reconciliation";
++import { recordUndo } from "./undo-manager";
+ 
+ const REGISTRY_PATH = STATE_PATH;
+ const AREAS_RECOVERY_BACKUP_PATH = "_generated/backups/tasks-before-areas-recovery.json";
+@@ -23,8 +24,9 @@ export type DraftSaveResult =
+   | { status: "conflict"; conflicts: DraftConflict[] }
+   | { status: "deleted" };
+ 
+-async function stateUpdate(app: App, operation: string, mutator: (state: import("./data/schemas").MorningState) => void): Promise<void> {
+-  await getStateStore(app).update(mutator, operation);
++async function reversibleUpdate(app: App, label: string, mutator: (state: import("./data/schemas").MorningState) => void): Promise<void> {
++  const result = await getStateStore(app).updateWithStates(mutator, label);
++  recordUndo(app, label, result.before, result.after);
+ }
+ 
+ function generateId(): string {
+@@ -314,7 +316,7 @@ function cloneMetadata<T extends MetadataValue | MetadataValue[] | Record<string
+ }
+ 
+ export async function changeItemKind(app: App, id: string, kind: ItemKind): Promise<void> {
+-  await stateUpdate(app, kind === "note" ? "convert-to-note" : "convert-to-task", state => {
++  await reversibleUpdate(app, kind === "note" ? "convert to note" : "convert to task", state => {
+     const item = state.items.find(candidate => candidate._id === id);
+     if (!item || item.kind === kind) return;
+     if (kind === "note") {
+@@ -330,7 +332,7 @@ export async function changeItemKind(app: App, id: string, kind: ItemKind): Prom
+ }
+ 
+ export async function setNoteStatus(app: App, id: string, status: NoteStatus): Promise<void> {
+-  await stateUpdate(app, status === "archived" ? "archive-note" : "unarchive-note", state => {
++  await reversibleUpdate(app, status === "archived" ? "archive note" : "unarchive note", state => {
+     const item = state.items.find(candidate => candidate._id === id);
+     if (!item || item.kind !== "note" || item.status_note === status) return;
+     item.status_note = status;
+@@ -352,7 +354,7 @@ export function hasOpenChildren(registry: TaskRegistry, parentId: string): boole
+ /** Attach an ungrouped item to a root parent. One nesting level is enforced here,
+  * rather than relying on callers to manipulate parent_id safely. */
+ export async function attachItemToParent(app: App, childId: string, parentId: string): Promise<void> {
+-  await stateUpdate(app, "group-item", state => {
++  await reversibleUpdate(app, "group item", state => {
+     const child = state.items.find(item => item._id === childId);
+     const parent = state.items.find(item => item._id === parentId);
+     if (!child || !parent) throw new Error("item or parent was not found");
+@@ -368,7 +370,7 @@ export async function attachItemToParent(app: App, childId: string, parentId: st
+ 
+ /** Detaching retains all materialized values already stored on the child. */
+ export async function detachItemFromParent(app: App, id: string): Promise<void> {
+-  await stateUpdate(app, "ungroup-item", state => {
++  await reversibleUpdate(app, "ungroup item", state => {
+     const item = state.items.find(candidate => candidate._id === id);
+     if (!item || item.parent_id === null) return;
+     item.parent_id = null;
+@@ -378,7 +380,8 @@ export async function detachItemFromParent(app: App, id: string): Promise<void>
+ 
+ 
+ export async function updateTask(app: App, id: string, patch: Partial<Task>): Promise<void> {
+-  await stateUpdate(app, "edit-item", state => {
++  const label = editLabel(patch);
++  await reversibleUpdate(app, label, state => {
+     const item = state.items.find(task => task._id === id);
+     if (!item) return;
+     const changed = Object.keys(patch).some(field => {
+@@ -390,11 +393,20 @@ export async function updateTask(app: App, id: string, patch: Partial<Task>): Pr
+   });
+ }
+ 
++function editLabel(patch: Partial<Task>): string {
++  const fields = Object.keys(patch);
++  if (fields.length === 1 && fields[0] === "text") return "edit text";
++  if (fields.every(field => field === "notes" || field === "details")) return "edit details";
++  if (fields.length === 1 && fields[0] === "tags") return "edit metadata";
++  if (fields.length === 1 && fields[0] === "areas") return "change areas";
++  return "edit item";
++}
++
+ /** Applies only fields changed by an editor since it opened. Unrelated external
+  * changes remain in place; conflicting fields require an explicit UI choice. */
+ export async function saveItemDraft(app: App, base: ItemDraft, draft: ItemDraft, forceFields: readonly (keyof Task)[] = []): Promise<DraftSaveResult> {
+   let outcome: DraftSaveResult = { status: "saved" };
+-  await getStateStore(app).update(state => {
++  const update = await getStateStore(app).updateWithStates(state => {
+     const item = state.items.find(candidate => candidate._id === base._id);
+     if (!item || item.is_deleted) {
+       outcome = { status: "deleted" };
+@@ -410,13 +422,22 @@ export async function saveItemDraft(app: App, base: ItemDraft, draft: ItemDraft,
+     if (Object.keys(patch).length === 0) return;
+     Object.assign(item, patch, { date_modified: todayStr() });
+   }, "edit item");
++  if (outcome.status === "saved") recordUndo(app, editLabelFromStates(update.before, update.after), update.before, update.after);
+   return outcome;
+ }
+ 
++function editLabelFromStates(before: import("./data/schemas").MorningState, after: import("./data/schemas").MorningState): string {
++  const changed = before.items.flatMap(previous => {
++    const next = after.items.find(item => item._id === previous._id);
++    return next ? Object.keys(next).filter(field => field !== "date_modified" && JSON.stringify(previous[field as keyof Task]) !== JSON.stringify(next[field as keyof Task])) : [];
++  });
++  return editLabel(Object.fromEntries(changed.map(field => [field, true])) as Partial<Task>);
++}
++
+ export { cloneItemDraft };
+ 
+ export async function setTaskStatus(app: App, id: string, status: CompletionStatus): Promise<void> {
+-  await stateUpdate(app, status === "done" ? "complete-task" : "reopen-task", state => {
++  await reversibleUpdate(app, status === "done" ? "complete task" : "reopen task", state => {
+     const item = state.items.find(candidate => candidate._id === id);
+     if (!item || item.kind === "note" || item.status_completion === status) return;
+     item.status_completion = status;
+@@ -426,7 +447,7 @@ export async function setTaskStatus(app: App, id: string, status: CompletionStat
+ }
+ 
+ export async function moveTaskToToday(app: App, id: string, priority: TodayPriority): Promise<void> {
+-  await stateUpdate(app, "add-to-today", state => {
++  await reversibleUpdate(app, "add to Today", state => {
+     const item = state.items.find(candidate => candidate._id === id);
+     if (!item || (item.is_today && item.status_priority === priority)) return;
+     item.is_today = true;
+@@ -436,7 +457,7 @@ export async function moveTaskToToday(app: App, id: string, priority: TodayPrior
+ }
+ 
+ export async function changeTodayPriority(app: App, id: string, priority: TodayPriority): Promise<void> {
+-  await stateUpdate(app, "change-today-priority", state => {
++  await reversibleUpdate(app, "change Today priority", state => {
+     const item = state.items.find(candidate => candidate._id === id);
+     if (!item || !item.is_today || item.status_priority === priority) return;
+     item.status_priority = priority;
+@@ -445,7 +466,7 @@ export async function changeTodayPriority(app: App, id: string, priority: TodayP
+ }
+ 
+ export async function removeTaskFromToday(app: App, id: string): Promise<void> {
+-  await stateUpdate(app, "remove-from-today", state => {
++  await reversibleUpdate(app, "remove from Today", state => {
+     const task = state.items.find(item => item._id === id);
+     if (!task || !task.is_today) return;
+     task.is_today = false;
+@@ -458,7 +479,7 @@ export async function removeTaskFromToday(app: App, id: string): Promise<void> {
+ }
+ 
+ export async function setTaskReminder(app: App, id: string, date: string | null): Promise<void> {
+-  await stateUpdate(app, date === null ? "clear-reminder" : "set-reminder", state => {
++  await reversibleUpdate(app, date === null ? "clear reminder" : "set or change reminder", state => {
+     const task = state.items.find(item => item._id === id);
+     if (!task || task.date_remind === date) return;
+     task.date_remind = date;
+@@ -468,7 +489,7 @@ export async function setTaskReminder(app: App, id: string, date: string | null)
+ }
+ 
+ export async function deleteTask(app: App, id: string): Promise<void> {
+-  await stateUpdate(app, "delete-group", state => {
++  await reversibleUpdate(app, "delete group", state => {
+     const root = state.items.find(task => task._id === id);
+     if (!root || root.is_deleted) return;
+     const batch = generateId();
+@@ -484,7 +505,7 @@ export async function deleteTask(app: App, id: string): Promise<void> {
+ }
+ 
+ export async function restoreTask(app: App, id: string): Promise<void> {
+-  await stateUpdate(app, "restore-group", state => {
++  await reversibleUpdate(app, "restore group", state => {
+     const root = state.items.find(task => task._id === id);
+     if (!root || !root.is_deleted) return;
+     const batch = root.deletion_batch_id;
+diff --git a/src/main.ts b/src/main.ts
+index ced1527..5a58b93 100644
+--- a/src/main.ts
++++ b/src/main.ts
+@@ -6,6 +6,7 @@ import { loadRegistry, saveRegistry, createTask, initializeRegistryState, recove
+ import { parseBulletFile, parseDailyNote, parseSectionFromFile, appendWinToLog } from "./agent/vault-reader";
+ import { todayStr } from "./utils";
+ import { getStateStore, STATE_PATH } from "./data/state-store";
++import { undoLast } from "./undo-manager";
+ import { hasActiveEditingSession } from "./editing-session";
+ 
+ // Undocumented internal API surface used to coordinate with the remotely-save
+@@ -103,6 +104,22 @@ export default class MorningOSPlugin extends Plugin {
+       void this.activateView();
+     });
+ 
++    this.addCommand({
++      id: "undo-last-reversible-change",
++      name: "Undo last reversible Morning OS change (purge/external changes excluded)",
++      /*
++        void undoLast(this.app).then(async result => {
++          if (result.ok) {
++            new Notice(`Morning OS: Undid ${result.label}.`);
++            await this.refreshView();
++          } else {
++            new Notice(`Morning OS: ${result.message}`);
++          }
++        }).catch(error => new Notice(`Morning OS: Undo failed — ${(error as Error).message}`));
++      */
++      callback: () => { void this.undoLastReversibleChange(); },
++    });
++
+     this.registerEvent(this.app.vault.on("modify", file => {
+       if (file instanceof TFile && file.path === STATE_PATH) void this.reconcileExternalState();
+     }));
+@@ -212,6 +229,41 @@ export default class MorningOSPlugin extends Plugin {
+     }
+   }
+ 
++  /** Shared command/button path; results refresh without recreating view toolbars. */
++  async undoLastReversibleChange(): Promise<void> {
++    try {
++      const result = await undoLast(this.app);
++      if (!result.ok) {
++        new Notice(`Morning OS: ${result.message}`);
++        return;
++      }
++      new Notice(`Morning OS: Undid ${result.label}.`);
++      if (hasActiveEditingSession()) return;
++      for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_MORNING)) {
++        await leaf.loadIfDeferred();
++        if (leaf.view instanceof MorningView) await leaf.view.refresh();
++      }
++      for (const type of [VIEW_TYPE_DUMP, VIEW_TYPE_ALL_ITEMS]) {
++        for (const leaf of this.app.workspace.getLeavesOfType(type)) {
++          await leaf.loadIfDeferred();
++          if (leaf.view instanceof DumpView) await leaf.view.refreshForUndo();
++        }
++      }
++      for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_TRASH)) {
++        await leaf.loadIfDeferred();
++        if (leaf.view instanceof TrashView) await leaf.view.refresh();
++      }
++      for (const area of this.settings.areas) {
++        for (const leaf of this.app.workspace.getLeavesOfType(`${VIEW_TYPE_AREA}-${area.key}`)) {
++          await leaf.loadIfDeferred();
++          if (leaf.view instanceof AreaView) await leaf.view.refreshForUndo();
++        }
++      }
++    } catch (error) {
++      new Notice(`Morning OS: Undo failed: ${(error as Error).message}`);
++    }
++  }
++
+   private async reconcileExternalState(): Promise<void> {
+     if (this.externalRefreshQueued) return;
+     this.externalRefreshQueued = true;
+diff --git a/src/view.ts b/src/view.ts
+index 4e935ff..dc54293 100644
+--- a/src/view.ts
++++ b/src/view.ts
+@@ -1,4 +1,4 @@
+-import { ItemView, WorkspaceLeaf, TFile, Modal, App, sanitizeHTMLToDom, MarkdownRenderer, Component, requestUrl, Notice } from "obsidian";
++import { ItemView, WorkspaceLeaf, TFile, Modal, App, sanitizeHTMLToDom, MarkdownRenderer, Component, requestUrl, Notice, setIcon } from "obsidian";
+ import changelogText from "../CHANGELOG.md";
+ import { parseChangelog } from "./agent/parse-changelog";
+ 
+@@ -16,12 +16,31 @@ import { appendWinToLog, readTodayWinsFromLog } from "./agent/vault-reader";
+ import { parseIdentityAnchor } from "./agent/vault-reader";
+ import { attachTaskTextSuggest } from "./task-text-suggest";
+ import { beginEditingSession } from "./editing-session";
++import { isUndoRunning, subscribeToUndo, undoDescription } from "./undo-manager";
+ 
+ export const VIEW_TYPE_AREA = "morning-os-area-view";
+ export const VIEW_TYPE_DUMP = "morning-os-inbox-view";
+ export const VIEW_TYPE_ALL_ITEMS = "morning-os-all-items-view";
+ export const VIEW_TYPE_TRASH = "morning-os-trash-view";
+ 
++/** Shared, session-global Undo control, deliberately separate from search and options. */
++export function mountUndoControl(parent: HTMLElement, app: App, plugin: MorningOSPlugin): () => void {
++  const button = parent.createEl("button", { cls: "mos-undo-button", attr: { type: "button" } });
++  setIcon(button, "undo-2");
++  const render = (): void => {
++    const label = undoDescription(app);
++    const running = isUndoRunning(app);
++    const description = label ? `Undo: ${label}` : "Undo unavailable: nothing to undo";
++    button.disabled = !label || running;
++    button.setAttribute("aria-label", running && label ? `Undoing: ${label}` : description);
++    button.setAttribute("title", running && label ? `Undoing: ${label}` : description);
++  };
++  button.addEventListener("click", () => { void plugin.undoLastReversibleChange(); });
++  const unsubscribe = subscribeToUndo(app, render);
++  render();
++  return unsubscribe;
++}
++
+ function buildNavItems(areas: AreaConfig[]) {
+   return [
+     { id: "home",  label: "🌅 Home",  type: VIEW_TYPE_MORNING },
+@@ -66,6 +85,7 @@ export class MorningView extends ItemView {
+   private floatingHandle: HTMLElement | null = null;
+   private floatingActions: HTMLElement | null = null;
+   private floatingCleanup: (() => void) | null = null;
++  private undoCleanup: (() => void) | null = null;
+   private registry: TaskRegistry = [];
+   private identityLines: string[] = [];
+ 
+@@ -100,6 +120,8 @@ export class MorningView extends ItemView {
+   }
+ 
+   async onClose() {
++    this.undoCleanup?.();
++    this.undoCleanup = null;
+     this.floatingCleanup?.();
+     this.floatingCleanup = null;
+     this.floatingHandle?.remove();
+@@ -252,6 +274,9 @@ export class MorningView extends ItemView {
+ 
+   private renderHeader(parent: HTMLElement) {
+     const header = parent.createDiv({ cls: "morning-os-header" });
++    const controls = header.createDiv({ cls: "mos-view-header-controls" });
++    this.undoCleanup?.();
++    this.undoCleanup = mountUndoControl(controls, this.app, this.plugin);
+     const dateObj = new Date(todayStr() + "T00:00:00");
+     header.createDiv({
+       cls: "morning-os-date-weekday",
+@@ -1584,11 +1609,13 @@ export class AreaView extends ItemView {
+   private sortField: SortField = "date_created";
+   private sortDir: SortDir = "asc";
+   private floatingCleanup: (() => void) | null = null;
++  private undoCleanup: (() => void) | null = null;
+   private viewOptionsCleanup: (() => void) | null = null;
+   private filters: FilterState = {};
+   private activeItemPanel: "tasks" | "notes" = "tasks";
+   private collapsedItemPanel: "tasks" | "notes" | null = null;
+   private groupByStatus: boolean | null = null;
++  private undoResults: (() => void) | null = null;
+ 
+   constructor(leaf: WorkspaceLeaf, settings: MorningOSSettings, plugin: MorningOSPlugin, areaKey: string) {
+     super(leaf);
+@@ -1604,6 +1631,8 @@ export class AreaView extends ItemView {
+   async onOpen() { this.registry = await loadRegistry(this.app); this.render(); }
+   async refresh() { this.registry = await loadRegistry(this.app); this.render(); }
+   async onClose() {
++    this.undoCleanup?.();
++    this.undoCleanup = null;
+     this.floatingCleanup?.();
+     this.floatingCleanup = null;
+     this.viewOptionsCleanup?.();
+@@ -1623,6 +1652,11 @@ export class AreaView extends ItemView {
+     this.app.saveLocalStorage(`mos-group-by-status-area-${this.areaKey}`, next);
+   }
+ 
++  async refreshForUndo(): Promise<void> {
++    this.registry = await loadRegistry(this.app);
++    this.undoResults?.();
++  }
++
+   private render() {
+     const container = this.containerEl.children[1] as HTMLElement;
+     container.empty();
+@@ -1640,6 +1674,8 @@ export class AreaView extends ItemView {
+ 
+     const titleRow = inner.createDiv({ cls: "mos-view-title-row" });
+     titleRow.createEl("h1", { cls: "mos-area-title", text: `${area.icon} ${area.label}` });
++    this.undoCleanup?.();
++    this.undoCleanup = mountUndoControl(titleRow, this.app, this.plugin);
+ 
+     // Area markdown notes section — placeholder created synchronously so order is correct
+     const notesSlot = inner.createDiv({ cls: "mos-area-notes-slot" });
+@@ -1693,6 +1729,7 @@ export class AreaView extends ItemView {
+       tabFields: activeFields,
+     });
+     this.renderResults(results, area, activeTabConfig, activeFields, advancedAreaFeatures);
++    this.undoResults = () => this.renderResults(results, area, activeTabConfig, activeFields, advancedAreaFeatures);
+   }
+ 
+   private renderResults(
+@@ -2080,9 +2117,11 @@ export class DumpView extends ItemView {
+   private sortField: SortField = "date_created";
+   private sortDir: SortDir = "desc";
+   private floatingCleanup: (() => void) | null = null;
++  private undoCleanup: (() => void) | null = null;
+   private viewOptionsCleanup: (() => void) | null = null;
+   private filters: FilterState = {};
+   private groupByStatus: boolean | null = null;
++  private undoResults: (() => void) | null = null;
+ 
+   constructor(leaf: WorkspaceLeaf, settings: MorningOSSettings, plugin: MorningOSPlugin, private readonly allItems = false) {
+     super(leaf);
+@@ -2097,6 +2136,8 @@ export class DumpView extends ItemView {
+   async onOpen() { this.registry = await loadRegistry(this.app); this.render(); }
+   async refresh() { this.registry = await loadRegistry(this.app); this.render(); }
+   async onClose() {
++    this.undoCleanup?.();
++    this.undoCleanup = null;
+     this.floatingCleanup?.();
+     this.floatingCleanup = null;
+     this.viewOptionsCleanup?.();
+@@ -2116,6 +2157,11 @@ export class DumpView extends ItemView {
+     this.app.saveLocalStorage("mos-group-by-status-all-items", next);
+   }
+ 
++  async refreshForUndo(): Promise<void> {
++    this.registry = await loadRegistry(this.app);
++    this.undoResults?.();
++  }
++
+   private render() {
+     const container = this.containerEl.children[1] as HTMLElement;
+     container.empty();
+@@ -2130,6 +2176,8 @@ export class DumpView extends ItemView {
+ 
+     const titleRow = inner.createDiv({ cls: "mos-view-title-row" });
+     titleRow.createEl("h1", { cls: "morning-os-section-heading", text: this.allItems ? "All Items" : "Inbox" });
++    this.undoCleanup?.();
++    this.undoCleanup = mountUndoControl(titleRow, this.app, this.plugin);
+ 
+     renderAddTaskInput(inner, this.app, "Capture a task…", async (text) => {
+       const task = createTask(text);
+@@ -2166,6 +2214,7 @@ export class DumpView extends ItemView {
+       showUrgency: true,
+     });
+     this.renderResults(results);
++    this.undoResults = () => this.renderResults(results);
+   }
+ 
+   private renderResults(parent: HTMLElement) {
+@@ -2462,6 +2511,7 @@ export class TrashView extends ItemView {
+   private plugin: MorningOSPlugin;
+   private registry: TaskRegistry = [];
+   private floatingCleanup: (() => void) | null = null;
++  private undoCleanup: (() => void) | null = null;
+ 
+   constructor(leaf: WorkspaceLeaf, settings: MorningOSSettings, plugin: MorningOSPlugin) {
+     super(leaf);
+@@ -2475,7 +2525,7 @@ export class TrashView extends ItemView {
+ 
+   async onOpen() { this.registry = await loadRegistry(this.app); this.render(); }
+   async refresh() { this.registry = await loadRegistry(this.app); this.render(); }
+-  async onClose() { this.floatingCleanup?.(); this.floatingCleanup = null; }
++  async onClose() { this.floatingCleanup?.(); this.floatingCleanup = null; this.undoCleanup?.(); this.undoCleanup = null; }
+ 
+   private render() {
+     const container = this.containerEl.children[1] as HTMLElement;
+@@ -2488,6 +2538,8 @@ export class TrashView extends ItemView {
+     const inner = wrapper.createDiv({ cls: "morning-os-wrapper" });
+     const titleRow = inner.createDiv({ cls: "mos-view-title-row" });
+     titleRow.createEl("h1", { cls: "morning-os-section-heading", text: "Trash" });
++    this.undoCleanup?.();
++    this.undoCleanup = mountUndoControl(titleRow, this.app, this.plugin);
+ 
+     const deletedRoots = this.registry.filter(task => {
+       if (!task.is_deleted) return false;
+diff --git a/styles/styles.css b/styles/styles.css
+index db369ac..e3c3fa8 100644
+--- a/styles/styles.css
++++ b/styles/styles.css
+@@ -1210,6 +1210,32 @@ h3[data-dirty]::after {
+   flex: 1;
+   margin: 0;
+ }
++.mos-view-header-controls {
++  display: flex;
++  align-items: center;
++  margin-left: auto;
++}
++button.mos-undo-button {
++  display: inline-flex;
++  align-items: center;
++  justify-content: center;
++  width: 36px;
++  min-width: 36px;
++  height: 36px;
++  padding: 6px;
++  border: 0;
++  border-radius: var(--mos-radius-sm);
++  color: var(--text-muted);
++  background: transparent;
++}
++button.mos-undo-button:hover:not(:disabled) {
++  color: var(--text-normal);
++  background: var(--background-modifier-hover);
++}
++button.mos-undo-button:disabled {
++  opacity: 0.45;
++}
++
+ /* ── Area view title ── */
+ .mos-area-title {
+   font-size: 1.8em;
+diff --git a/tests/ui.test.ts b/tests/ui.test.ts
+index 94d235d..681e33b 100644
+--- a/tests/ui.test.ts
++++ b/tests/ui.test.ts
+@@ -3,8 +3,9 @@ import { readFileSync } from "node:fs";
+ import test, { type TestContext } from "node:test";
+ import { Window } from "happy-dom";
+ import { App, Component, WorkspaceLeaf } from "obsidian";
+-import { applyFilters, AreaView, DumpView, getChildOnlySearchMatches, renderFilterSelects, renderTaskRowShared, sortItemsByStatus, attachInlineTextEdit } from "../src/view";
++import { applyFilters, AreaView, DumpView, getChildOnlySearchMatches, renderFilterSelects, renderTaskRowShared, sortItemsByStatus, attachInlineTextEdit, mountUndoControl } from "../src/view";
+ import type { Task } from "../src/types";
++import { recordUndo, undoDescription } from "../src/undo-manager";
+ 
+ type CreateOptions = { cls?: string; text?: string; type?: string; value?: string; placeholder?: string; attr?: Record<string, string> };
+ 
+@@ -91,6 +92,39 @@ function openViewOptions(root: HTMLElement): HTMLElement {
+   return root.querySelector<HTMLElement>(".mos-view-options-panel")!;
+ }
+ 
++test("shared Undo buttons expose the next action, icon, and synchronized state", t => {
++  const window = installDom();
++  closeDom(t, window);
++  const app = {} as App;
++  let calls = 0;
++  const plugin = { undoLastReversibleChange: async () => { calls++; } } as never;
++  const first = window.document.body.createDiv();
++  const second = window.document.body.createDiv();
++  const cleanFirst = mountUndoControl(first, app, plugin);
++  const cleanSecond = mountUndoControl(second, app, plugin);
++  const firstButton = first.querySelector<HTMLButtonElement>(".mos-undo-button")!;
++  const secondButton = second.querySelector<HTMLButtonElement>(".mos-undo-button")!;
++  assert.equal(firstButton.disabled, true);
++  assert.equal(firstButton.getAttribute("data-icon"), "undo-2");
++
++  const before = { schemaVersion: 1 as const, revision: 0, writtenAt: "x", items: [item("undo")] };
++  const after = { ...before, revision: 1, items: [{ ...before.items[0], text: "Changed" }] };
++  recordUndo(app, "edit text", before, after);
++  assert.equal(firstButton.getAttribute("aria-label"), "Undo: edit text");
++  assert.equal(secondButton.getAttribute("title"), "Undo: edit text");
++  assert.equal(secondButton.disabled, false);
++  firstButton.click();
++  assert.equal(calls, 1);
++  cleanFirst();
++  cleanSecond();
++  assert.equal(undoDescription(app), "edit text");
++});
++
++test("the command delegates to the same Undo implementation used by buttons", () => {
++  const source = readFileSync("src/main.ts", "utf8");
++  assert.match(source, /callback:\s*\(\)\s*=>\s*\{\s*void this\.undoLastReversibleChange\(\);\s*\}/);
++});
++
+ test("continuous search preserves raw text, focus, selection, and child-match context", t => {
+   const window = installDom();
+   closeDom(t, window);
+@@ -768,5 +802,6 @@ test("inline editing keeps the live draft through an external replacement and sh
+   const saved = JSON.parse(files.get("_generated/data/state.json")!) as { items: Task[] };
+   assert.equal(saved.items[0].text, "My local draft");
+   assert.equal(saved.items[0].notes, "Unrelated external details");
++  assert.equal(undoDescription(app), "edit text");
+   assert.equal(refreshed, 1);
+ });
+diff --git a/tests/state-store.test.ts b/tests/state-store.test.ts
+index 5a6dcbc..ba8b618 100644
+--- a/tests/state-store.test.ts
++++ b/tests/state-store.test.ts
+@@ -1,10 +1,11 @@
+ import assert from "node:assert/strict";
+ import test from "node:test";
+-import { STATE_PATH, StateStore } from "../src/data/state-store";
++import { getStateStore, STATE_PATH, StateStore } from "../src/data/state-store";
+ import { StateValidationError, validateState } from "../src/data/schemas";
+ import type { Task } from "../src/types";
+-import { changeItemKind, createChildItem, setNoteStatus, setTaskStatus, cloneItemDraft, saveItemDraft, updateTask } from "../src/task-registry";
++import { changeItemKind, createChildItem, setNoteStatus, setTaskStatus, cloneItemDraft, saveItemDraft, updateTask, purgeTask } from "../src/task-registry";
+ import { deleteTask, restoreTask } from "../src/task-registry";
++import { undoDescription, undoLast } from "../src/undo-manager";
+ import { reconcileItemDraft } from "../src/data/draft-reconciliation";
+ 
+ const LEGACY_PATH = "_generated/tasks.json";
+@@ -325,7 +326,96 @@ test("a draft for an externally deleted item is retained as a rejected save, nev
+   assert.equal(stored.text, "Keep this text");
+ });
+ 
+-test("group restore keeps an independently deleted child deleted", async () => {
++test("session Undo changes only its affected fields and rejects intervening changes", async () => {
++  const adapter = new MemoryAdapter();
++  const root = task("root");
++  const child = task("child");
++  child.parent_id = root._id;
++  adapter.files.set(STATE_PATH, state([root, child]));
++  const app = createApp(adapter) as never;
++
++  await deleteTask(app, root._id);
++  let undone = await undoLast(app);
++  assert.equal(undone.ok, true);
++  let items = (JSON.parse(await adapter.read(STATE_PATH)) as { items: Task[] }).items;
++  assert.equal(items.every(item => !item.is_deleted), true);
++
++  await deleteTask(app, root._id);
++  await restoreTask(app, root._id);
++  // The latest Undo is restore. An external lifecycle edit on the root makes
++  // that inverse unsafe while retaining independently changed child state.
++  const external = JSON.parse(await adapter.read(STATE_PATH)) as { items: Task[] };
++  external.items[0].is_deleted = true;
++  adapter.files.set(STATE_PATH, JSON.stringify(external));
++  undone = await undoLast(app);
++  assert.equal(undone.ok, false);
++  assert.match(undone.message, /Cannot safely undo/);
++});
++
++test("Undo checks queued changes inside the serialized mutation and retains conflicting history", async () => {
++  const adapter = new MemoryAdapter();
++  const original = task("queued", "Original");
++  adapter.files.set(STATE_PATH, state([original]));
++  const app = createApp(adapter) as never;
++  await updateTask(app, original._id, { text: "Undo target" });
++  const store = getStateStore(app);
++  const later = store.update(candidate => { candidate.items[0].text = "Queued later edit"; }, "later-edit");
++  const undone = undoLast(app);
++  await later;
++  const result = await undone;
++  assert.equal(result.ok, false);
++  assert.equal(undoDescription(app), "edit text");
++  assert.equal((JSON.parse(await adapter.read(STATE_PATH)) as { items: Task[] }).items[0].text, "Queued later edit");
++});
++
++test("overlapping Undo calls share one in-flight reversal and retain history after a failed commit", async () => {
++  const adapter = new MemoryAdapter();
++  const original = task("rapid", "Original");
++  adapter.files.set(STATE_PATH, state([original]));
++  const app = createApp(adapter) as never;
++  await updateTask(app, original._id, { text: "Changed" });
++  const [first, second] = await Promise.all([undoLast(app), undoLast(app)]);
++  assert.deepEqual(first, second);
++  assert.equal((JSON.parse(await adapter.read(STATE_PATH)) as { items: Task[] }).items[0].text, "Original");
++
++  await updateTask(app, original._id, { text: "Changed again" });
++  adapter.beforeWrite = path => { if (path === STATE_PATH) throw new Error("undo write failed"); };
++  await assert.rejects(() => undoLast(app), /undo write failed/);
++  assert.equal(undoDescription(app), "edit text");
++  assert.equal((JSON.parse(await adapter.read(STATE_PATH)) as { items: Task[] }).items[0].text, "Changed again");
++});
++
++test("Undo preserves unrelated later edits, is bounded, and excludes no-op and irreversible changes", async () => {
++  const adapter = new MemoryAdapter();
++  const original = task("bounded", "Original");
++  adapter.files.set(STATE_PATH, state([original]));
++  const app = createApp(adapter) as never;
++  await updateTask(app, original._id, { text: "Changed" });
++  await updateTask(app, original._id, { notes: "Later details" });
++  await undoLast(app);
++  let stored = (JSON.parse(await adapter.read(STATE_PATH)) as { items: Task[] }).items[0];
++  assert.equal(stored.text, "Changed");
++  assert.equal(stored.notes, "");
++  await undoLast(app);
++  stored = (JSON.parse(await adapter.read(STATE_PATH)) as { items: Task[] }).items[0];
++  assert.equal(stored.text, "Original");
++
++  await setTaskStatus(app, original._id, "open");
++  await updateTask(app, "missing", { text: "No-op" });
++  assert.equal(undoDescription(app), null);
++  await purgeTask(app, original._id);
++  assert.equal(undoDescription(app), null);
++
++  // Forty-one reversible edits retain only the latest forty session entries.
++  const replacement = task("replacement", "0");
++  await new StateStore(app).update(candidate => { candidate.items.push(replacement); }, "creation-outside-undo");
++  for (let index = 1; index <= 41; index++) await updateTask(app, replacement._id, { text: String(index) });
++  for (let index = 0; index < 40; index++) assert.equal((await undoLast(app)).ok, true);
++  assert.equal((JSON.parse(await adapter.read(STATE_PATH)) as { items: Task[] }).items.find(item => item._id === replacement._id)?.text, "1");
++  assert.equal(undoDescription(app), null);
++});
++
++test("group restore and Undo keep an independently deleted child deleted", async () => {
+   const adapter = new MemoryAdapter();
+   const root = task("group-root");
+   const live = task("group-live");
+@@ -343,6 +433,12 @@ test("group restore keeps an independently deleted child deleted", async () => {
+   assert.equal(afterRestore.find(item => item._id === live._id)?.is_deleted, false);
+   assert.equal(afterRestore.find(item => item._id === independentlyDeleted._id)?.is_deleted, true);
+ 
++  const undone = await undoLast(app);
++  assert.equal(undone.ok, true);
++  const afterUndo = (JSON.parse(await adapter.read(STATE_PATH)) as { items: Task[] }).items;
++  assert.equal(afterUndo.find(item => item._id === root._id)?.is_deleted, true);
++  assert.equal(afterUndo.find(item => item._id === live._id)?.is_deleted, true);
++  assert.equal(afterUndo.find(item => item._id === independentlyDeleted._id)?.is_deleted, true);
+ });
+ 
+ test("a new child copies parent placement/custom metadata without sharing later edits", () => {
+diff --git a/tests/obsidian-test-stub.ts b/tests/obsidian-test-stub.ts
+index 7a109b2..b8b6034 100644
+--- a/tests/obsidian-test-stub.ts
++++ b/tests/obsidian-test-stub.ts
+@@ -48,6 +48,9 @@ export const MarkdownRenderer = {
+     element.textContent = text;
+   },
+ };
++export function setIcon(element: HTMLElement, icon: string): void {
++  element.setAttribute("data-icon", icon);
++}
+ export function sanitizeHTMLToDom(html: string): DocumentFragment {
+   const fragment = globalThis.document?.createDocumentFragment();
+   if (!fragment) return {} as DocumentFragment;
+diff --git a/plans/data-safety-scheduling-plan.md b/plans/data-safety-scheduling-plan.md
+index a47aaae..03b8005 100644
+--- a/plans/data-safety-scheduling-plan.md
++++ b/plans/data-safety-scheduling-plan.md
+@@ -18,9 +18,10 @@ whole plan is complete.
+   panel interactions. This also includes status grouping, persistent View options,
+   filter chips, and responsive popover/sheet behavior across simulated Area
+   card/table, All Items, and Inbox DOM interactions (31 current tests), plus
+-  draft conflicts and migration/recovery regressions below. Application-level
+-  Undo is deferred; the inactive implementation is preserved separately for
+-  possible future work.
++  draft conflicts, session Undo, and migration/recovery regressions below. Undo
++  now has a shared accessible header control, in-mutation conflict detection,
++  concurrent-request coalescing, bounded session history, and direct-save
++  inline-edit coverage (36 current tests).
+ - **Manually verified:** none for these focused UI changes. Desktop Obsidian and real
+   mobile validation remain required before acceptance.
+ - **Still pending:** real Obsidian desktop/mobile validation, the broader recovery UI,
+@@ -30,26 +31,31 @@ whole plan is complete.
+ 
+ ### Remaining-work acceptance checklist (2026-09-16)
+ 
+-### Application-level Undo status (2026-09-16)
+-
+-- **Deferred and inactive:** no Undo control, command-palette command, session
+-  history, or recording hooks are active in Morning OS. Native Ctrl+Z inside text
+-  inputs remains browser/Obsidian behavior.
+-- **Preserved artifact:** `artifacts/session-undo-deferred-2026-09-16/restore.patch`
+-  and the adjacent restoration note contain the shelved, unfinished implementation.
+-  Apply only after reviewing it against the then-current tree.
+-- **Known unresolved issues:** the shelved design still needs a definitive resolution
+-  for history selection/removal racing queued edits, and for result refresh behavior
+-  while a draft is active. It must not be treated as ready to re-enable.
+-- **Manual status:** prior View options toolbar verification history is unchanged.
+-  The removed Undo UI was never manually verified in desktop Obsidian or a mobile
+-  WebView.
++### Undo implementation status (2026-09-16)
++
++- **Implemented:** a session-global, bounded (40-entry) Undo history and a compact
++  Obsidian-icon control in Home, Inbox, All Items, Areas, and Trash. Buttons and
++  the command palette share the same action. Reversal checks and field restoration
++  execute within the serialized StateStore mutation; failures and conflicts retain
++  history. Covered actions are Task/Note conversion, Task completion/reopen,
++  Note archive/unarchive, text/Details/metadata edits, Today membership/priority,
++  reminder and occurrence state, grouping/ungrouping, and trash/restore.
++- **Automated-tested:** mounted-control synchronization and descriptions, shared
++  command path, queued/conflicting changes, concurrent requests, failed commits,
++  bounded/excluded history, unrelated fields, group restore, and conflict-aware
++  direct inline saves.
++- **Manual status:** the existing View options toolbar verification remains
++  unchanged. The new Undo UI has not been manually verified in desktop Obsidian
++  or a mobile WebView.
++- **Intentionally excluded:** creation, permanent purge, external/sync changes,
++  settings, migration, snapshot restore, automatic reminder promotion, and briefing
++  generation.
+ 
+ | Criterion | Implemented | Automated-tested | Manually verified | Still pending |
+ |---|---|---|---|---|
+ | Draft-safe inline and Details/modal saves; valid external refresh | Yes | Yes (field reconciliation and rendered inline conflict flow) | No | Desktop/mobile Obsidian behavior |
+ | Same-field choice and externally deleted draft recovery | Yes | Yes | No | Desktop/mobile copy/recovery affordance |
+-| Application-level Undo | Deferred | No active coverage | No | Shelved artifact needs race and active-draft refresh work before reconsideration |
++| Session-local Undo through validated mutations | Yes — edit, lifecycle, Today, reminder, grouping, delete/restore | Yes | No | Command-palette discovery in Obsidian; creation and permanent purge remain unsupported |
+ | Migration preservation and source-change staging guard | Yes for the versioned legacy-registry migration | Yes | No | Disposable populated-vault upgrade |
+ | Snapshot/restore and interrupted-write safeguards | Yes | Yes | No | Real adapter interruption/recovery exercise; recovery UI preview/export remains broader phase work |
+ | Full plan/release acceptance | No | Partial | No | Remaining Phase 0 storage-placement decision, recovery UI/documentation, performance/release checks, and desktop/mobile walkthrough |
+@@ -339,9 +345,8 @@ Priority default: an explicitly selected root owns the placement of its displaye
+ - Flush pending edits before dependent actions such as moving, changing kind, or deleting that item.
+ - Never silently discard a failed save; retain the draft and show a useful error.
+ - Provide modest bulk actions for organization, kind conversion, Today membership, and Trash operations.
+-- Defer application-level Undo; do not build a permanent event log. The shelved
+-  implementation must resolve queued-mutation and active-draft refresh behavior
+-  before it is reconsidered.
++- Provide session-local Undo for reversible actions where safe; do not build a permanent event log.
++- Validate Undo against current state and warn rather than overwriting intervening changes.
+ 
+ ### 3.2 Floating panel and action discoverability
+ 
+@@ -598,7 +603,7 @@ Restore:
+ 9. Preserve drafts; refresh views and report result.
+ 10. On failure, preserve recoverable pre-restore data.
+ 
+-Warn users to coordinate syncing and other devices during migration/restore. Do not claim restoration is a distributed operation. Offer Trash first for small mistakes; JSON export is the first export format.
++Warn users to coordinate syncing and other devices during migration/restore. Do not claim restoration is a distributed operation. Offer Trash/Undo first for small mistakes; JSON export is the first export format.
+ 
+ ## 8. Validation, testing, and engineering discipline
+ 
+@@ -692,7 +697,7 @@ Exit: fixtures migrate losslessly; all runtime writes share the same authority;
+ - Implement kind conversion, group operations, copy-on-create metadata, lifecycle, and bulk actions.
+ - Build true Inbox and All Items.
+ - Add Task/Note panels, retain tracker tables, and keep inactive items visible in Areas.
+-- Implement stable inline editing and draft protection. Application-level Undo is deferred.
++- Implement stable inline editing, draft protection, and safe Undo.
+ 
+ Exit: capture/organize/work/complete workflows pass without scroll resets or group/data loss.
+ 
+diff --git a/src/undo-manager.ts b/src/undo-manager.ts
+new file mode 100644
+index 0000000..cca08aa
+--- /dev/null
++++ b/src/undo-manager.ts
+@@ -0,0 +1,132 @@
++import type { App } from "obsidian";
++import type { MorningState } from "./data/schemas";
++import { getStateStore } from "./data/state-store";
++import type { Task } from "./types";
++
++interface FieldChange {
++  id: string;
++  field: keyof Task;
++  before: unknown;
++  after: unknown;
++}
++
++interface UndoEntry {
++  label: string;
++  changes: FieldChange[];
++}
++
++export type UndoResult = { ok: true; label: string } | { ok: false; message: string };
++
++const histories = new WeakMap<App, UndoEntry[]>();
++const listeners = new WeakMap<App, Set<() => void>>();
++const runningUndos = new WeakMap<App, Promise<UndoResult>>();
++
++function same(left: unknown, right: unknown): boolean {
++  return JSON.stringify(left) === JSON.stringify(right);
++}
++
++function history(app: App): UndoEntry[] {
++  let entries = histories.get(app);
++  if (!entries) {
++    entries = [];
++    histories.set(app, entries);
++  }
++  return entries;
++}
++
++function notify(app: App): void {
++  for (const listener of listeners.get(app) ?? []) listener();
++}
++
++/** Subscribe mounted controls without making the session history persistent. */
++export function subscribeToUndo(app: App, listener: () => void): () => void {
++  let appListeners = listeners.get(app);
++  if (!appListeners) {
++    appListeners = new Set();
++    listeners.set(app, appListeners);
++  }
++  appListeners.add(listener);
++  return () => appListeners?.delete(listener);
++}
++
++/** Record only changed fields. Undo never reactivates a stale complete registry. */
++export function recordUndo(app: App, label: string, before: MorningState, after: MorningState): void {
++  const beforeItems = new Map(before.items.map(item => [item._id, item]));
++  const afterItems = new Map(after.items.map(item => [item._id, item]));
++  const changes: FieldChange[] = [];
++  for (const [id, next] of afterItems) {
++    const previous = beforeItems.get(id);
++    if (!previous) continue; // Creation is intentionally not yet undoable.
++    for (const field of Object.keys(next) as (keyof Task)[]) {
++      if (field === "date_modified" || same(previous[field], next[field])) continue;
++      changes.push({ id, field, before: clone(previous[field]), after: clone(next[field]) });
++    }
++  }
++  if (!changes.length) return;
++  const entries = history(app);
++  entries.push({ label, changes });
++  // Session-local and bounded; it is neither persisted nor a user-operation log.
++  if (entries.length > 40) entries.shift();
++  notify(app);
++}
++
++export function undoDescription(app: App): string | null {
++  return history(app).at(-1)?.label ?? null;
++}
++
++export function isUndoRunning(app: App): boolean {
++  return runningUndos.has(app);
++}
++
++export async function undoLast(app: App): Promise<UndoResult> {
++  // A command and a button click that overlap refer to one operation, rather
++  // than consuming the first and second entries in rapid succession.
++  const existing = runningUndos.get(app);
++  if (existing) return existing;
++  const request = undoLatest(app);
++  runningUndos.set(app, request);
++  notify(app);
++  try {
++    return await request;
++  } finally {
++    runningUndos.delete(app);
++    notify(app);
++  }
++}
++
++async function undoLatest(app: App): Promise<UndoResult> {
++  const entries = history(app);
++  const entry = entries.at(-1);
++  if (!entry) return { ok: false, message: "Nothing to undo. Permanent purge and external changes are not undoable." };
++  let conflict = false;
++  await getStateStore(app).update(state => {
++    // This must run inside StateStore's serialized mutation. Checking before
++    // entering its queue could otherwise approve stale data and overwrite a
++    // queued local operation.
++    const incompatible = entry.changes.find(change => {
++      const item = state.items.find(candidate => candidate._id === change.id);
++      return !item || !same(item[change.field], change.after);
++    });
++    if (incompatible) {
++      conflict = true;
++      return;
++    }
++    for (const change of entry.changes) {
++      const item = state.items.find(candidate => candidate._id === change.id);
++      if (!item) throw new Error("item changed while applying Undo");
++      item[change.field] = clone(change.before) as never;
++    }
++  }, `undo-${entry.label}`);
++  if (conflict) {
++    return { ok: false, message: `Cannot safely undo ${entry.label}: a later change affects this item.` };
++  }
++  // Do not remove an entry until the verified StateStore commit succeeded.
++  entries.pop();
++  notify(app);
++  return { ok: true, label: entry.label };
++}
++
++function clone<T>(value: T): T {
++  if (value === undefined) return value;
++  return JSON.parse(JSON.stringify(value)) as T;
++}
