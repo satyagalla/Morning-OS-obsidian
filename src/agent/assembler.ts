@@ -2,13 +2,12 @@ import type { MorningOSSettings } from "../settings";
 import type { DailyBrief, SuggestionSource } from "../types";
 import type { ParsedGoals } from "./vault-reader";
 
-const VALID_SOURCES = new Set<string>(["tasks", "goals", "technical_backlog", "carried_tasks", "wins"]);
+const VALID_SOURCES = new Set<string>(["tasks", "goals", "technical_backlog", "wins"]);
 
 export interface LLMOutput {
   tactical_rules?: string[];
   identity_rules?: string[];
   suggestions?: { text: string; source: string }[];
-  hobby_tasks?: string[];
   goals?: { short_term?: string[]; long_term?: string[] };
   wins?: string[];
 }
@@ -18,7 +17,6 @@ export function assembleBrief(
   parsedGoals: ParsedGoals,
   allTacticalRules: string[],
   allEmotionalRules: string[],
-  allHobbyTasks: string[],
   yesterdayWins: string[],
   llmOutput: LLMOutput | null,
   settings: MorningOSSettings
@@ -40,11 +38,6 @@ export function assembleBrief(
           long_term: llmOutput.goals.long_term ?? parsedGoals.long_term,
         }
       : parsedGoals;
-
-  const hobbyTasks =
-    settings.modeHobbyTasks && llmOutput?.hobby_tasks
-      ? llmOutput.hobby_tasks
-      : allHobbyTasks.slice(0, settings.hobbyTasksCount);
 
   const suggestions =
     settings.modeSuggestion && llmOutput?.suggestions
@@ -70,7 +63,6 @@ export function assembleBrief(
     identity: { rules: identityRules },
     goals,
     tactical_rules: tacticalRules,
-    hobby_tasks: hobbyTasks,
     suggestions,
     wins,
   };

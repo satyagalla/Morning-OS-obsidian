@@ -124,7 +124,6 @@ async function scaffoldVault(plugin: MorningOSPlugin, rootPath: string): Promise
   plugin.settings.sourceEmotionalRules = `${rootPath}/Areas/Health.md`;
   plugin.settings.sourceGoals          = `${rootPath}/Areas/Career.md`;
   plugin.settings.sourceTechnicalTasks = `${rootPath}/Areas/Career.md`;
-  plugin.settings.sourceHobbyTasks     = `${rootPath}/Areas/Interests.md`;
   plugin.settings.onboarded = true;
   await plugin.saveData(plugin.settings);
 

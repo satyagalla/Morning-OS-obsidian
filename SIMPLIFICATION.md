@@ -4,6 +4,10 @@ Morning OS should have a small, dependable core: tasks and wins, with identity a
 
 This document records the product changes discussed during the simplification review. It separates committed work from ideas that still need a product decision.
 
+## Next-session reminder
+
+- [ ] Resume the simplification work and define the Git stash workflow.
+
 ## Product principles
 
 - Keep storage broad and daily attention narrow.
@@ -26,7 +30,7 @@ This document records the product changes discussed during the simplification re
 ## Next candidates
 
 - [x] Make the Identity Anchor optional on Home.
-- [ ] Replace the separate Refresh brief and Run agent actions with one user-facing action: Regenerate briefing. Morning OS should decide internally whether an AI call is required.
+- [x] Replace the separate Refresh brief and Run agent actions with one user-facing action: Regenerate briefing. Morning OS decides internally whether an AI call is required.
 - [ ] Make new Areas opt-in. Start with Inbox and Today, then let users create Areas or explicitly choose a few generic examples.
 - [ ] Remove creator-specific Areas, labels, and assumptions from defaults.
 - [ ] Rewrite onboarding and documentation around one canonical workflow: review what matters, choose today's tasks, act, and record wins.

@@ -2,9 +2,7 @@ import { App } from "obsidian";
 import type { MorningOSSettings } from "../settings";
 import type { DailyBrief, TaskRegistry } from "../types";
 import { parseAllAreaSections, parseWinsFromLog } from "./vault-reader";
-import { loadRegistry, clearNextDayTasks } from "../task-registry";
-import { detectCarries } from "./carry-detector";
-import { computeFeedback } from "./feedback";
+import { loadRegistry } from "../task-registry";
 import { callLLM } from "./llm";
 import { assembleBrief, LLMOutput } from "./assembler";
 import { INTELLIGENCE_SYSTEM, formatUserPrompt } from "./prompts";
@@ -40,6 +38,11 @@ function getTodayTasksForPrompt(registry: TaskRegistry) {
   };
 }
 
+function mayIncludeItemInAIContext(item: TaskRegistry[number], settings: MorningOSSettings): boolean {
+  if (!item.areas.length) return false;
+  return item.areas.every(areaKey => settings.areas.find(area => area.key === areaKey)?.feedToLLM === true);
+}
+
 async function readMappedAreaSections(
   app: App,
   settings: MorningOSSettings,
@@ -67,8 +70,6 @@ async function readMappedAreaSections(
 export async function runAgent(app: App, settings: MorningOSSettings): Promise<AgentResult> {
   const dateStr = todayStr();
 
-  // Writes yesterday's history snapshot and clears done tasks from is_today
-  await clearNextDayTasks(app);
   const registry = await loadRegistry(app);
 
   const d = new Date(dateStr + "T12:00:00");
@@ -86,25 +87,17 @@ export async function runAgent(app: App, settings: MorningOSSettings): Promise<A
   ]);
   const goals = { short_term: directSections.goalsShort, long_term: directSections.goalsLong };
 
-  const technicalTasks = registry
+  const permittedRegistry = registry.filter(item => mayIncludeItemInAIContext(item, settings));
+  const technicalTasks = permittedRegistry
     .filter(t => !t.is_deleted && !t.is_today && t.areas.includes("career") && t.status_completion === "open")
     .slice(0, TECHNICAL_CONTEXT_LIMIT)
     .map(t => t.text);
 
-  const hobbyTasksRaw = registry
-    .filter(t => !t.is_deleted && !t.is_today && t.areas.includes("interests") && t.status_completion === "open")
-    .slice(0, settings.hobbyTasksCount * 3)
-    .map(t => t.text);
-
-  const todayForCarry = getTodayTasksForPrompt(registry);
-  const carriedTasks = await detectCarries(todayForCarry, dateStr, app, settings);
-
-  await computeFeedback(todayForCarry, dateStr, app, settings);
+  const todayTasks = getTodayTasksForPrompt(permittedRegistry);
 
   const needsLLM = settings.aiEnabled && (
     settings.modeTacticalRules || settings.modeIdentityRules || settings.modeGoals ||
-    settings.modeHobbyTasks || settings.modeSuggestion ||
-    settings.modeWins
+    settings.modeSuggestion || settings.modeWins
   );
 
   let llmOutput: LLMOutput | null = null;
@@ -121,30 +114,22 @@ export async function runAgent(app: App, settings: MorningOSSettings): Promise<A
     }
   } else if (needsLLM) {
     const llmSections = await readMappedAreaSections(app, settings, true);
-    const carried = [...carriedTasks.red_alert, ...carriedTasks.regular]
-      .filter(t => t.carried_from)
-      .map(t => `- ${t.text} (carried since ${t.carried_from})`);
-
     const userPrompt = formatUserPrompt({
-      redAlertTasks:   carriedTasks.red_alert.map(t => `- ${t.text}`).join("\n") || "None",
-      regularTasks:    carriedTasks.regular.map(t => `- ${t.text}`).join("\n") || "None",
-      carriedSummary:  carried.length ? carried.join("\n") : "None",
+      redAlertTasks:   todayTasks.red_alert.map(t => `- ${t.text}`).join("\n") || "None",
+      regularTasks:    todayTasks.regular.map(t => `- ${t.text}`).join("\n") || "None",
       tacticalRules:   llmSections.tacticalRules.map(r => `- ${r}`).join("\n") || "None",
       emotionalRules:  llmSections.emotionalRules.map(r => `- ${r}`).join("\n") || "None",
       shortTermGoals:  llmSections.goalsShort.map(g => `- ${g}`).join("\n") || "None",
       longTermGoals:   llmSections.goalsLong.map(g => `- ${g}`).join("\n") || "None",
       technicalTasks:  technicalTasks.map(t => `- ${t}`).join("\n") || "None",
-      hobbyTasks:      hobbyTasksRaw.map(t => `- ${t}`).join("\n") || "None",
       yesterdayWins:   yesterdayWins.map(w => `- ${w}`).join("\n") || "None",
       yesterdayCompleted: yesterdayCompleted.map(t => `- ${t}`).join("\n") || "None",
       tacticalRulesCount:   settings.tacticalRulesCount,
       identityRulesCount:   settings.identityRulesCount,
       suggestionCount:      settings.suggestionCount,
-      hobbyTasksCount:      settings.hobbyTasksCount,
       modeTacticalRules:    settings.modeTacticalRules,
       modeIdentityRules:    settings.modeIdentityRules,
       modeGoals:            settings.modeGoals,
-      modeHobbyTasks:       settings.modeHobbyTasks,
       modeSuggestion:       settings.modeSuggestion,
       modeWins:             settings.modeWins,
     });
@@ -166,7 +151,7 @@ export async function runAgent(app: App, settings: MorningOSSettings): Promise<A
 
   const brief = assembleBrief(
     dateStr, goals, directSections.tacticalRules, directSections.emotionalRules,
-    hobbyTasksRaw, yesterdayWins, llmOutput, settings
+    yesterdayWins, llmOutput, settings
   );
   await app.vault.adapter.mkdir(settings.briefsDir);
   await app.vault.adapter.write(`${settings.briefsDir}/${dateStr}.json`, JSON.stringify(brief, null, 2));
@@ -187,25 +172,18 @@ export async function refreshBrief(app: App, settings: MorningOSSettings): Promi
   if (settings.aiEnabled && settings.modeTacticalRules) cachedLLM.tactical_rules = existingBrief.tactical_rules;
   if (settings.aiEnabled && settings.modeIdentityRules) cachedLLM.identity_rules = existingBrief.identity?.rules;
   if (settings.aiEnabled && settings.modeSuggestion) cachedLLM.suggestions = existingBrief.suggestions;
-  if (settings.aiEnabled && settings.modeHobbyTasks) cachedLLM.hobby_tasks = existingBrief.hobby_tasks;
   if (settings.aiEnabled && settings.modeGoals) cachedLLM.goals = existingBrief.goals;
   if (settings.aiEnabled && settings.modeWins) cachedLLM.wins = existingBrief.wins;
 
-  const registry = await loadRegistry(app);
   const [directSections, yesterdayWins] = await Promise.all([
     readMappedAreaSections(app, settings),
     parseWinsFromLog(dateStr, app, settings),
   ]);
   const goals = { short_term: directSections.goalsShort, long_term: directSections.goalsLong };
 
-  const hobbyTasksRaw = registry
-    .filter(t => !t.is_deleted && !t.is_today && t.areas.includes("interests") && t.status_completion === "open")
-    .slice(0, settings.hobbyTasksCount * 3)
-    .map(t => t.text);
-
   const brief = assembleBrief(
     dateStr, goals, directSections.tacticalRules, directSections.emotionalRules,
-    hobbyTasksRaw, yesterdayWins, cachedLLM, settings
+    yesterdayWins, cachedLLM, settings
   );
   await app.vault.adapter.write(briefPath, JSON.stringify(brief, null, 2));
 }

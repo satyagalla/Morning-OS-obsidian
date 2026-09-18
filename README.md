@@ -26,10 +26,9 @@ Morning OS does that reading for you. Open the panel, your day is already laid o
 | **Identity strip** | Your own rules about who you're trying to be — before you see a single task |
 | **Goals bar** | Top short and long-term goals, so the daily grind stays connected to the bigger picture |
 | **Red alert tasks** | Urgent tasks from today's note, with a badge showing how many days each has been carried |
-| **Regular tasks** | Normal tasks, same carry tracking — chronic avoidance becomes visible |
+| **Regular tasks** | Normal persistent Today tasks — they remain selected until you act on them |
 | **Rules for today** | The AI picks the rules from your rules file most relevant to today's tasks |
 | **Suggestions** | A short nudge based on your patterns and what's been sitting undone |
-| **Hobby tasks** | Non-work items in their own section so they don't get buried |
 | **Wins** | A prompt at the end of the day — what you write here goes straight into your daily note |
 
 The AI picks which of your items to surface. It never rewrites or edits your vault. The only new text it generates is the suggestion.
@@ -76,7 +75,7 @@ Yes. Without a key, it renders your tasks, goals, and rules directly from your v
 Yes — iOS and Android, with no extra setup beyond vault sync.
 
 **What if my daily note doesn't exist yet?**
-Morning OS creates it automatically when you open the panel, carrying forward any incomplete tasks from your most recent note.
+Morning OS keeps unfinished Today selections until you complete, dismiss, delete, or explicitly remove them.
 
 **How do I give feedback or report a bug?**
 Use the feedback button inside the plugin dashboard — it takes 30 seconds and goes directly to the developer.
@@ -96,7 +95,6 @@ Essential/
     Long-term and Short-term.md
   Pending Tasks/
     Technical Tasks.md
-    Hobby Tasks.md
 _generated/                        ← plugin writes here
   briefs/
   feedback/
@@ -124,7 +122,7 @@ Heading names are fully configurable.
 
 1. Reads today's daily note and your source files
 2. Fuzzy-matches incomplete tasks against previous briefs to detect carries (looks back up to 7 days across skipped days)
-3. Single LLM call picks relevant rules, goals, hobby tasks, and writes a suggestion
+3. Single LLM call picks relevant rules and goals, and writes a suggestion
 4. Brief saved to `_generated/briefs/YYYY-MM-DD.json`
 5. Dashboard renders from the brief
 
@@ -137,7 +135,7 @@ Suggestion reactions (👍/👎) are stored per-day and feed into the next run.
 
 **Settings → Morning OS:**
 
-- **Briefing agent** — carry lookback days, manual trigger
+- **Briefing agent** — one explicit Regenerate briefing action
 - **AI provider** — provider, model, credentials
 - **Vault paths** — all source and output paths
 - **Section headings** — heading names in your daily note and goals file
