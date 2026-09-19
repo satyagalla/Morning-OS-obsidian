@@ -2,11 +2,13 @@ import { Plugin, WorkspaceLeaf, Notice, TFile } from "obsidian";
 import { MorningView, VIEW_TYPE_MORNING, AreaView, DumpView, TrashView, VIEW_TYPE_AREA, VIEW_TYPE_DUMP, VIEW_TYPE_ALL_ITEMS, VIEW_TYPE_TRASH } from "./view";
 import { MorningOSSettings, DEFAULT_SETTINGS, MorningOSSettingTab } from "./settings";
 import { runAgent } from "./agent/run";
-import { loadRegistry, saveRegistry, createTask, initializeRegistryState, recoverRegistryAreas } from "./task-registry";
-import { parseBulletFile, parseDailyNote, parseSectionFromFile, appendWinToLog } from "./agent/vault-reader";
+import { loadRegistry, saveRegistry, createTask, initializeRegistryState, recoverRegistryAreas, promoteDueReminders } from "./task-registry";
+import { parseBulletFile, parseDailyNote, parseSectionFromFile, appendWinToLog, parseIdentityAnchor } from "./agent/vault-reader";
 import { todayStr } from "./utils";
 import { getStateStore, STATE_PATH } from "./data/state-store";
 import { hasActiveEditingSession, onEditingSessionsSettled } from "./editing-session";
+import { canonicalWidgetDestination, WidgetDestinationError, WidgetNoteWriter, renderWidgetNote, selectWidgetContent, validateWidgetDestination } from "./widgets";
+import type { DailyBrief } from "./types";
 
 // Undocumented internal API surface used to coordinate with the remotely-save
 // community plugin (if installed) so large archive batches don't race its sync.
@@ -27,6 +29,12 @@ export default class MorningOSPlugin extends Plugin {
   private externalEditNoticeShown = false;
   private refreshDeferredByEditor = false;
   private refreshDeferredLayout = false;
+  private widgetWriter: WidgetNoteWriter | null = null;
+  private widgetRefreshQueue: Promise<void> = Promise.resolve();
+  private widgetRefreshTimer: number | null = null;
+  private widgetLastCheckedDate = todayStr();
+  widgetLastSuccess = "";
+  widgetLastError = "";
 
   async onload() {
     const savedSettings = (await this.loadData() ?? {}) as Record<string, unknown>;
@@ -36,6 +44,15 @@ export default class MorningOSPlugin extends Plugin {
     delete savedSettings.modeHobbyTasks;
     delete savedSettings.hobbyTasksCount;
     this.settings = Object.assign({}, DEFAULT_SETTINGS, savedSettings) as MorningOSSettings;
+    const widgetSources = new Set(["identity", "goals-short", "goals-long", "today-tasks", "inbox-tasks", "all-tasks"]);
+    this.settings.widgetNotes = Array.isArray(this.settings.widgetNotes)
+      ? this.settings.widgetNotes.filter((widgetExport): widgetExport is MorningOSSettings["widgetNotes"][number] =>
+        typeof widgetExport === "object" && widgetExport !== null &&
+        typeof widgetExport.id === "string" && typeof widgetExport.enabled === "boolean" &&
+        typeof widgetExport.destination === "string" && typeof widgetExport.source === "string" &&
+        widgetSources.has(widgetExport.source) && Number.isInteger(widgetExport.limit) && widgetExport.limit > 0
+      )
+      : [];
 
     // Migrate feedToLLM onto existing area configs that predate the field
     for (const area of this.settings.areas) {
@@ -106,11 +123,21 @@ export default class MorningOSPlugin extends Plugin {
     });
 
     this.registerEvent(this.app.vault.on("modify", file => {
-      if (file instanceof TFile && file.path === STATE_PATH) void this.reconcileExternalState();
+      if (!(file instanceof TFile)) return;
+      if (file.path === STATE_PATH) {
+        void this.reconcileExternalState();
+        return;
+      }
+      if (file.path === this.settings.sourceIdentity || file.path === `${this.settings.briefsDir}/${todayStr()}.json`) {
+        this.queueWidgetRefresh();
+      }
     }));
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => {
       void this.reconcileExternalState();
     }));
+    this.registerDomEvent(window, "focus", () => { void this.refreshDateSensitiveWidgets(); });
+    this.registerInterval(window.setInterval(() => { void this.refreshDateSensitiveWidgets(); }, 60_000));
+    this.register(getStateStore(this.app).onCommitted(() => this.queueWidgetRefresh()));
     this.register(onEditingSessionsSettled(() => {
       if (this.refreshDeferredByEditor) {
         const layout = this.refreshDeferredLayout;
@@ -123,6 +150,100 @@ export default class MorningOSPlugin extends Plugin {
 
     this.settingTab = new MorningOSSettingTab(this.app, this);
     this.addSettingTab(this.settingTab);
+    this.addCommand({
+      id: "refresh-widget-notes",
+      name: "Refresh widget notes",
+      callback: () => { void this.refreshWidgetNotes(true); },
+    });
+    await this.refreshDateSensitiveWidgets();
+  }
+
+  async saveWidgetNotes(): Promise<void> {
+    await this.saveData(this.settings);
+    await this.refreshWidgetNotes();
+  }
+
+  queueWidgetRefresh(): void {
+    if (this.widgetRefreshTimer !== null) return;
+    this.widgetRefreshTimer = window.setTimeout(() => {
+      this.widgetRefreshTimer = null;
+      void this.refreshWidgetNotes();
+    }, 75);
+  }
+
+  async refreshWidgetNotes(showResult = false): Promise<void> {
+    const operation = async (): Promise<void> => {
+      const exports = this.settings.widgetNotes.filter(widgetExport => widgetExport.enabled);
+      if (!exports.length) {
+        this.widgetLastError = "";
+        if (showResult) new Notice("Morning OS: no widget-note exports are enabled.");
+        return;
+      }
+      try {
+        const destinations = new Set<string>();
+        for (const widgetExport of exports) {
+          const destination = validateWidgetDestination(widgetExport.destination);
+          const key = canonicalWidgetDestination(destination);
+          if (destinations.has(key)) throw new WidgetDestinationError(`Widget destination is duplicated: ${destination}`);
+          destinations.add(key);
+          if (!Number.isInteger(widgetExport.limit) || widgetExport.limit <= 0) {
+            throw new WidgetDestinationError(`Widget item limit must be positive: ${widgetExport.destination}`);
+          }
+        }
+        const [registry, identityLines, brief] = await Promise.all([
+          loadRegistry(this.app),
+          parseIdentityAnchor(this.app, this.settings),
+          this.loadCurrentBriefForWidgets(),
+        ]);
+        const writer = this.widgetWriter ??= new WidgetNoteWriter(this.app.vault);
+        const updatedAt = this.widgetTimestamp();
+        let changed = 0;
+        for (const widgetExport of exports) {
+          const selection = selectWidgetContent({ registry, identityLines, brief, source: widgetExport.source, limit: widgetExport.limit });
+          const result = await writer.write(widgetExport, renderWidgetNote({ export: widgetExport, selection, updatedAt }));
+          if (result.changed) changed++;
+        }
+        this.widgetLastSuccess = this.widgetTimestamp();
+        this.widgetLastError = "";
+        if (showResult) new Notice(`Morning OS: widget notes refreshed${changed ? ` (${changed} updated)` : " (already current)"}.`);
+      } catch (error) {
+        this.widgetLastError = (error as Error).message;
+        console.error("Morning OS widget-note refresh failed:", error);
+        if (showResult) new Notice(`Morning OS: widget notes were not refreshed — ${this.widgetLastError}`);
+      }
+    };
+    const queued = this.widgetRefreshQueue.then(operation, operation);
+    this.widgetRefreshQueue = queued.then(() => undefined, () => undefined);
+    await queued;
+  }
+
+  private async loadCurrentBriefForWidgets(): Promise<DailyBrief | null> {
+    const file = this.app.vault.getAbstractFileByPath(`${this.settings.briefsDir}/${todayStr()}.json`);
+    if (!(file instanceof TFile)) return null;
+    try {
+      return JSON.parse(await this.app.vault.read(file)) as DailyBrief;
+    } catch (error) {
+      throw new Error(`current briefing could not be read: ${(error as Error).message}`);
+    }
+  }
+
+  private widgetTimestamp(): string {
+    const now = new Date();
+    return `${todayStr()} ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+  }
+
+  private async refreshDateSensitiveWidgets(): Promise<void> {
+    const today = todayStr();
+    const dateChanged = today !== this.widgetLastCheckedDate;
+    this.widgetLastCheckedDate = today;
+    try {
+      await promoteDueReminders(this.app);
+      if (dateChanged) this.queueWidgetRefresh();
+      else await this.refreshWidgetNotes();
+    } catch (error) {
+      console.error("Morning OS due reminder promotion failed:", error);
+      this.widgetLastError = `Due reminder promotion failed: ${(error as Error).message}`;
+    }
   }
 
   async activateView() {
@@ -161,6 +282,7 @@ export default class MorningOSPlugin extends Plugin {
         new Notice("Morning OS: brief ready ✓");
       }
       this.settingTab.clearDirty();
+      await this.refreshWidgetNotes();
       await this.refreshView();
     } catch (err) {
       const msg = (err as Error).message;
@@ -237,6 +359,8 @@ export default class MorningOSPlugin extends Plugin {
           // Validation is intentionally performed before any view adopts bytes
           // supplied by a provider or another Obsidian process.
           await getStateStore(this.app).read();
+          await promoteDueReminders(this.app);
+          await this.refreshWidgetNotes();
           if (hasActiveEditingSession()) {
             this.refreshDeferredByEditor = true;
             if (!this.externalEditNoticeShown) {

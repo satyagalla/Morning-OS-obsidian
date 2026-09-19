@@ -4,7 +4,7 @@ import { TFile } from "obsidian";
 import { STATE_PATH, StateStore } from "../src/data/state-store";
 import { StateValidationError, validateState } from "../src/data/schemas";
 import type { Task } from "../src/types";
-import { changeItemKind, createChildItem, setNoteStatus, setTaskStatus, cloneItemDraft, promoteDueReminders, saveItemDraft, updateTask } from "../src/task-registry";
+import { changeItemKind, createChildItem, enrollCalendarReminder, setNoteStatus, setTaskStatus, cloneItemDraft, promoteDueReminders, saveItemDraft, updateTask } from "../src/task-registry";
 import { deleteTask, restoreTask } from "../src/task-registry";
 import { reconcileItemDraft } from "../src/data/draft-reconciliation";
 import { beginEditingSession } from "../src/editing-session";
@@ -101,7 +101,7 @@ test("schema validation rejects unsupported versions, malformed records, and cyc
   const malformed = task("one");
   malformed.kind = "note";
   assert.throws(
-    () => validateState({ schemaVersion: 1, revision: 0, writtenAt: "x", items: [malformed] }),
+    () => validateState({ schemaVersion: 2, revision: 0, writtenAt: "x", items: [malformed] }),
     /no lifecycle/,
   );
 
@@ -110,7 +110,7 @@ test("schema validation rejects unsupported versions, malformed records, and cyc
   first.parent_id = "second";
   second.parent_id = "first";
   assert.throws(
-    () => validateState({ schemaVersion: 1, revision: 0, writtenAt: "x", items: [first, second] }),
+    () => validateState({ schemaVersion: 2, revision: 0, writtenAt: "x", items: [first, second] }),
     StateValidationError,
   );
 });
@@ -180,6 +180,36 @@ test("legacy migration preserves IDs, content, metadata, groups, lifecycle, Toda
   assert.deepEqual(migrated.items[0].reminder_occurrence, parent.reminder_occurrence);
   assert.equal(migrated.items[1].parent_id, "parent");
   assert.equal((migrated.items[0] as Task & { unknown_legacy_value: string }).unknown_legacy_value, "retain me");
+});
+
+test("schema 1 state is snapshotted before migration and calendar history requires explicit enrollment", async () => {
+  const adapter = new MemoryAdapter();
+  const reminder = task("calendar-item", "Initial title");
+  reminder.date_remind = "2030-09-20";
+  const original = state([reminder]);
+  adapter.files.set(STATE_PATH, original);
+  const app = createApp(adapter) as never;
+  const store = new StateStore(app);
+
+  assert.deepEqual(await store.initialize(), { migrated: true, itemCount: 1 });
+  let current = (JSON.parse(await adapter.read(STATE_PATH)) as { schemaVersion: number; items: Task[] });
+  assert.equal(current.schemaVersion, 2);
+  assert.equal(current.items[0].calendar_reminder, undefined);
+  assert.ok([...adapter.files.values()].some(bytes => {
+    try { return (JSON.parse(bytes) as { raw?: string }).raw === original; }
+    catch { return false; }
+  }));
+
+  await enrollCalendarReminder(app, reminder._id, "09:00", "America/New_York");
+  await updateTask(app, reminder._id, { text: "Updated title" });
+  await setTaskStatus(app, reminder._id, "done");
+  current = JSON.parse(await adapter.read(STATE_PATH)) as { items: Task[] };
+  const mutations = current.items[0].calendar_reminder?.mutations ?? [];
+  assert.equal(mutations.length, 3);
+  assert.equal(mutations[0].predecessorId, null);
+  assert.equal(mutations[1].predecessorId, mutations[0].id);
+  assert.equal(mutations[2].active, false);
+  assert.equal(mutations[2].predecessorId, mutations[1].id);
 });
 
 test("malformed active state blocks all mutations instead of replacing it", async () => {

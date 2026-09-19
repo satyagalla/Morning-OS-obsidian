@@ -22,7 +22,7 @@ export interface DraftReconciliation {
 
 const NON_EDITABLE_FIELDS: ReadonlySet<keyof Task> = new Set([
   "_id", "date_created", "date_modified", "date_completed", "is_deleted",
-  "deletion_batch_id", "deleted_member_ids", "reminder_occurrence",
+  "deletion_batch_id", "deleted_member_ids", "reminder_occurrence", "calendar_reminder",
 ]);
 
 function same(left: unknown, right: unknown): boolean {

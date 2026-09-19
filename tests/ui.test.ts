@@ -9,6 +9,7 @@ import type { Task } from "../src/types";
 import { DEFAULT_SETTINGS, MorningOSSettingTab } from "../src/settings";
 import { STATE_PATH, StateStore } from "../src/data/state-store";
 import type { StateSnapshot } from "../src/data/state-store";
+import { todayStr } from "../src/utils";
 
 type CreateOptions = { cls?: string; text?: string; type?: string; value?: string; placeholder?: string; attr?: Record<string, string> };
 
@@ -1299,11 +1300,11 @@ test("Today renders selected-root children without assigning them Today state an
   const doneToday = item("done-today");
   doneToday.parent_id = root._id;
   doneToday.status_completion = "done";
-  doneToday.date_completed = "2026-09-17";
+  doneToday.date_completed = todayStr();
   const oldDone = item("old-done");
   oldDone.parent_id = root._id;
   oldDone.status_completion = "done";
-  oldDone.date_completed = "2026-09-16";
+  oldDone.date_completed = "2000-01-01";
   const note = item("supporting-note", "note");
   note.parent_id = root._id;
   const archived = item("archived-note", "note");

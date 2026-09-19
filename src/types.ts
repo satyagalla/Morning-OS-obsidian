@@ -13,6 +13,28 @@ export interface ReminderOccurrence {
   dismissedToken?: string;
 }
 
+/**
+ * A durable desired calendar transition. These records are vault state, never
+ * credentials: they let a publisher replay A -> B -> C after an interrupted
+ * request without guessing which device wrote most recently.
+ */
+export interface CalendarReminderMutation {
+  id: string;
+  predecessorId: string | null;
+  active: boolean;
+  title: string;
+  date: string | null;
+  time: string;
+  timeZone: string;
+}
+
+export interface CalendarReminderHistory {
+  /** The protocol version is deliberately separate from the state version. */
+  version: 1;
+  /** Mutations are ordered by explicit predecessor links, never wall time. */
+  mutations: CalendarReminderMutation[];
+}
+
 export interface FieldDef {
   key: string;
   label: string;
@@ -66,6 +88,8 @@ export interface Task {
   /** Details is the new name for legacy `notes`; both are retained for compatibility. */
   details?: string;
   reminder_occurrence?: ReminderOccurrence | null;
+  /** Syncable calendar intent and causal history. It contains no credentials. */
+  calendar_reminder?: CalendarReminderHistory | null;
   deletion_batch_id?: string | null;
   deleted_member_ids?: string[];
   /** Preserves legacy and future fields that this version does not interpret. */

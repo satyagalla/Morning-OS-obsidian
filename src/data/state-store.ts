@@ -31,6 +31,8 @@ export interface RestoreResult {
   recoveryPath?: string;
 }
 
+export type StateCommitListener = (before: MorningState, after: MorningState) => void;
+
 interface StoredSnapshot extends Omit<StateSnapshot, "path" | "valid" | "status" | "error"> {
   version: 1;
   checksum: string;
@@ -95,6 +97,31 @@ function parseState(raw: string, path: string): MorningState {
   }
 }
 
+function migratePersistedState(raw: string, path: string): MorningState | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed) || (parsed as { schemaVersion?: unknown }).schemaVersion !== 1) {
+    return null;
+  }
+  const candidate = JSON.parse(JSON.stringify(parsed)) as MorningState;
+  candidate.schemaVersion = STATE_SCHEMA_VERSION;
+  if (Array.isArray(candidate.items)) {
+    for (const item of candidate.items) {
+      if (typeof item === "object" && item !== null && "calendar_reminder" in item) {
+        // Version 1 never wrote this field. Reject an impossible mixed-version
+        // state instead of guessing an ordering history.
+        throw new StateValidationError(`invalid ${path}: calendar reminder history requires schema version 2`);
+      }
+    }
+  }
+  validateState(candidate);
+  return candidate;
+}
+
 function normalizeLegacyTask(value: unknown): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     throw new StateValidationError("legacy registry contains a non-object item");
@@ -150,12 +177,23 @@ function stateFromLegacy(raw: string): MorningState {
 export class StateStore {
   private writeQueue: Promise<void> = Promise.resolve();
   private restoreRequested = false;
+  private readonly commitListeners = new Set<StateCommitListener>();
 
   constructor(private readonly app: App) {}
 
   async initialize(): Promise<{ migrated: boolean; itemCount: number }> {
     if (await this.app.vault.adapter.exists(STATE_PATH)) {
-      const state = await this.read();
+      const raw = await readText(this.app, STATE_PATH);
+      const migrated = migratePersistedState(raw, STATE_PATH);
+      if (migrated) {
+        await this.writeSnapshot(raw, "pre-migration", STATE_PATH, migrated.items.length);
+        if (await readText(this.app, STATE_PATH) !== raw) {
+          throw new StateValidationError("state changed while preparing migration; source and snapshot were preserved");
+        }
+        await this.commit(migrated, "schema-migration");
+        return { migrated: true, itemCount: migrated.items.length };
+      }
+      const state = parseState(raw, STATE_PATH);
       return { migrated: false, itemCount: state.items.length };
     }
     await this.assertNoInterruptedActivation();
@@ -182,7 +220,8 @@ export class StateStore {
       // Compatibility reads are in-memory only. They never activate a migration.
       return stateFromLegacy(await readText(this.app, LEGACY_REGISTRY_PATH));
     }
-    return parseState(await readText(this.app, STATE_PATH), STATE_PATH);
+    const raw = await readText(this.app, STATE_PATH);
+    return migratePersistedState(raw, STATE_PATH) ?? parseState(raw, STATE_PATH);
   }
 
   async update(mutator: (candidate: MorningState) => void, reason = "update"): Promise<MorningState> {
@@ -206,8 +245,24 @@ export class StateStore {
       }
       await this.maybeAutomaticSnapshot(current);
       await this.commit(candidate, reason, expectedActive);
+      this.notifyCommitted(current, candidate);
       return { before: current, after: candidate };
     });
+  }
+
+  onCommitted(listener: StateCommitListener): () => void {
+    this.commitListeners.add(listener);
+    return () => this.commitListeners.delete(listener);
+  }
+
+  private notifyCommitted(before: MorningState, after: MorningState): void {
+    for (const listener of this.commitListeners) {
+      try {
+        listener(before, after);
+      } catch (error) {
+        console.error("Morning OS state commit listener failed:", error);
+      }
+    }
   }
 
   async replaceItems(items: TaskRegistry, reason = "replace-items"): Promise<void> {
@@ -274,7 +329,7 @@ export class StateStore {
     }
     const snapshot = this.parseSnapshot(await readText(this.app, path), path);
     const legacySnapshot = snapshot.sourcePath === LEGACY_REGISTRY_PATH;
-    const restored = legacySnapshot ? stateFromLegacy(snapshot.raw) : parseState(snapshot.raw, path);
+    const restored = legacySnapshot ? stateFromLegacy(snapshot.raw) : (migratePersistedState(snapshot.raw, path) ?? parseState(snapshot.raw, path));
     const activeBefore = await this.readActiveBytes();
     let currentState: RestoreResult["currentState"] = "missing";
     let recoveryPath: string | undefined;
@@ -282,7 +337,7 @@ export class StateStore {
 
     if (activeBefore.exists) {
       try {
-        const current = parseState(activeBefore.raw!, STATE_PATH);
+        const current = migratePersistedState(activeBefore.raw!, STATE_PATH) ?? parseState(activeBefore.raw!, STATE_PATH);
         currentState = "valid";
         currentRevision = current.revision;
         await this.writeSnapshot(activeBefore.raw!, "pre-restore", STATE_PATH, current.items.length);
@@ -343,7 +398,7 @@ export class StateStore {
       throw new StateValidationError(`invalid snapshot ${path}: unsupported snapshot fields`);
     }
     if (checksum(value.raw) !== value.checksum) throw new StateValidationError(`invalid snapshot ${path}: checksum mismatch`);
-    if (value.sourcePath === STATE_PATH) parseState(value.raw, path);
+    if (value.sourcePath === STATE_PATH) migratePersistedState(value.raw, path) ?? parseState(value.raw, path);
     else if (value.sourcePath === LEGACY_REGISTRY_PATH) stateFromLegacy(value.raw);
     else throw new StateValidationError(`invalid snapshot ${path}: unsupported backup source ${value.sourcePath}`);
     return {

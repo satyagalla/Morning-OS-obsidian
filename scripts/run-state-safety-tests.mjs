@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 
 const directory = await mkdtemp(join(tmpdir(), "morning-os-tests-"));
-const entries = ["tests/state-store.test.ts", "tests/ui.test.ts"];
+const entries = ["tests/state-store.test.ts", "tests/ui.test.ts", "tests/widgets.test.ts", "tests/calendar.test.ts", "tests/calendar-auth.test.ts", "tests/calendar-secret-store.test.ts"];
 const obsidianStub = fileURLToPath(new URL("../tests/obsidian-test-stub.ts", import.meta.url));
 
 try {

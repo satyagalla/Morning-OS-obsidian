@@ -1,6 +1,6 @@
-import type { Task, TaskRegistry } from "../types";
+import type { CalendarReminderHistory, CalendarReminderMutation, Task, TaskRegistry } from "../types";
 
-export const STATE_SCHEMA_VERSION = 1;
+export const STATE_SCHEMA_VERSION = 2;
 
 export interface StateMigrationProvenance {
   source: "legacy-tasks" | "state";
@@ -42,6 +42,45 @@ function isMetadataValue(value: unknown): boolean {
   return isRecord(value) && Object.values(value).every(isMetadataValue);
 }
 
+function isTime(value: unknown): value is string {
+  if (typeof value !== "string" || !/^\d{2}:\d{2}$/.test(value)) return false;
+  const [hour, minute] = value.split(":").map(Number);
+  return hour <= 23 && minute <= 59;
+}
+
+function isTimeZone(value: unknown): value is string {
+  if (typeof value !== "string" || !value) return false;
+  try {
+    new Intl.DateTimeFormat("en", { timeZone: value });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function validateCalendarReminder(value: unknown, taskId: string): asserts value is CalendarReminderHistory {
+  if (value === null || value === undefined) return;
+  if (!isRecord(value) || value.version !== 1 || !Array.isArray(value.mutations) || value.mutations.length === 0) {
+    throw new StateValidationError(`item ${taskId} has invalid calendar reminder history`);
+  }
+  const mutations = value.mutations as CalendarReminderMutation[];
+  const ids = new Set<string>();
+  let predecessor: string | null = null;
+  for (const mutation of mutations) {
+    if (!isRecord(mutation) || typeof mutation.id !== "string" || !mutation.id || ids.has(mutation.id) ||
+      mutation.predecessorId !== predecessor || typeof mutation.active !== "boolean" ||
+      typeof mutation.title !== "string" || !mutation.title.trim() ||
+      (mutation.date !== null && !isDate(mutation.date)) || !isTime(mutation.time) || !isTimeZone(mutation.timeZone)) {
+      throw new StateValidationError(`item ${taskId} has invalid calendar reminder mutation`);
+    }
+    if (mutation.active !== (mutation.date !== null)) {
+      throw new StateValidationError(`item ${taskId} has calendar reminder activity/date mismatch`);
+    }
+    ids.add(mutation.id);
+    predecessor = mutation.id;
+  }
+}
+
 function validateTask(task: unknown, ids: Set<string>): asserts task is Task {
   if (!isRecord(task)) throw new StateValidationError("an item is not an object");
   if (typeof task._id !== "string" || !task._id) throw new StateValidationError("an item has no stable ID");
@@ -74,6 +113,7 @@ function validateTask(task: unknown, ids: Set<string>): asserts task is Task {
       throw new StateValidationError(`item ${task._id} has invalid reminder occurrence`);
     }
   }
+  validateCalendarReminder(task.calendar_reminder, task._id);
   if (task.deletion_batch_id !== undefined && task.deletion_batch_id !== null && typeof task.deletion_batch_id !== "string") {
     throw new StateValidationError(`item ${task._id} has invalid deletion batch`);
   }

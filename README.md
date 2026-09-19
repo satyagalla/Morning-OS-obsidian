@@ -43,6 +43,21 @@ The only requirement is that your vault syncs across devices.
 
 > **Recommended:** [Remotely Save](https://github.com/remotely-save/remotely-save) with Dropbox. Make sure your sync settings include folders starting with `_` — that's where Morning OS writes its briefs.
 
+### Home Screen widget notes and sync
+
+Morning OS can export Identity, goals, Today, Inbox, or All tasks to an owned Markdown note for Obsidian's iPhone/iPad Home Screen **View Note** widget. Add and enable an export in **Settings → Morning OS → Widget notes**, then point the widget at that note. These notes are display-only; changing their Markdown or checkboxes does not change a task. See [widget setup](docs/widgets.md) for test-vault installation, iOS requirements, and limitations.
+
+Remotely Save transfers vault files through the remote and include/exclude rules you configure. It can transfer `_generated/data/state.json` (the authoritative tasks, notes, Today membership, date reminders, and occurrence acknowledgements), briefing JSON, configured source notes, and widget Markdown notes, but only when your configuration includes those paths. It does not deliver calendar events or run Morning OS while Obsidian is closed.
+
+| Vault data | Purpose and sync consideration |
+|---|---|
+| `_generated/data/state.json` | Authoritative item state. Sync it if tasks must move between devices. |
+| `_generated/briefs/`, configured identity/goals/wins notes, and widget destinations | Source and display content. Widget notes are regenerated representations, not task authority. |
+| `_generated/snapshots/`, `_generated/recovery/`, feedback, legacy files, pending transaction artifacts | Recovery, feedback, or compatibility data. Whether they sync depends on your include/exclude rules; transaction artifacts are neither locks nor device-local storage. |
+| `.obsidian/plugins/morning-os/` | Morning OS settings live here. Transfer depends on whether your sync service includes hidden/plugin configuration folders. |
+
+Check your provider's configured include/exclude rules and hidden-file options rather than assuming every eligible path syncs. Calendar publishing is not available yet: a safe mobile adapter needs provider-enforced idempotency and stale-device conflict handling before it can be enabled.
+
 [![Morning OS — mobile view](images/mobile.png)](images/mobile.png)
 
 ---

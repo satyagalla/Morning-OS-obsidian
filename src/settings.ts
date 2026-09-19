@@ -4,6 +4,7 @@ import type { AreaConfig, FieldDef, LLMSectionMapping } from "./types";
 import { getStateStore } from "./data/state-store";
 import type { StateSnapshot } from "./data/state-store";
 import { hasActiveEditingSession } from "./editing-session";
+import type { WidgetNoteExport, WidgetSource } from "./widgets";
 
 type NumericSettingsKey = { [K in keyof MorningOSSettings]: MorningOSSettings[K] extends number ? K : never }[keyof MorningOSSettings];
 
@@ -95,6 +96,9 @@ export interface MorningOSSettings {
 
   // Notes
   showNotesIndicator: boolean;
+
+  // Read-only Markdown exports for Obsidian Home Screen widgets.
+  widgetNotes: WidgetNoteExport[];
 }
 
 export const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
@@ -197,6 +201,8 @@ export const DEFAULT_SETTINGS: MorningOSSettings = {
   requireSubtasksComplete: false,
 
   showNotesIndicator: true,
+
+  widgetNotes: [],
 };
 
 const PROVIDERS = {
@@ -298,6 +304,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
         this.renderAISection(content);
         this.renderHomeSection(content);
         this.renderTaskBehaviorSection(content);
+        this.renderWidgetNotesSection(content);
         this.renderAreasSection(content);
         break;
       case "advanced":
@@ -666,7 +673,10 @@ export class MorningOSSettingTab extends PluginSettingTab {
         text
           .setPlaceholder("_generated/briefs")
           .setValue(this.plugin.settings.briefsDir)
-          .onChange(async (value) => { await this.save({ briefsDir: value }, "Vault paths"); })
+          .onChange(async (value) => {
+            await this.save({ briefsDir: value }, "Vault paths");
+            this.plugin.queueWidgetRefresh();
+          })
       );
 
     new Setting(containerEl)
@@ -685,7 +695,10 @@ export class MorningOSSettingTab extends PluginSettingTab {
       .addText((text) =>
         text
           .setValue(this.plugin.settings.sourceIdentity)
-          .onChange(async (value) => { await this.save({ sourceIdentity: value }, "Vault paths"); })
+          .onChange(async (value) => {
+            await this.save({ sourceIdentity: value }, "Vault paths");
+            this.plugin.queueWidgetRefresh();
+          })
       );
 
     new Setting(containerEl)
@@ -734,6 +747,89 @@ export class MorningOSSettingTab extends PluginSettingTab {
     count("Short-term goals (shown in bar)", "goalsShortTermCount");
     count("Long-term goals (shown in bar)", "goalsLongTermCount");
     count("Suggestions", "suggestionCount");
+  }
+
+  private renderWidgetNotesSection(containerEl: HTMLElement): void {
+    this.sectionHeading(containerEl, "Widget notes");
+    containerEl.createEl("p", {
+      cls: "setting-item-description",
+      text: "Export read-only Markdown notes for Obsidian's Home Screen View Note widget. Morning OS replaces only notes it owns.",
+    });
+    const sources: Record<WidgetSource, string> = {
+      identity: "Identity",
+      "goals-short": "Short-term goals",
+      "goals-long": "Long-term goals",
+      "today-tasks": "Today's tasks",
+      "inbox-tasks": "Inbox tasks",
+      "all-tasks": "All tasks",
+    };
+    const update = async (id: string, patch: Partial<WidgetNoteExport>): Promise<void> => {
+      this.plugin.settings.widgetNotes = this.plugin.settings.widgetNotes.map(widgetExport =>
+        widgetExport.id === id ? { ...widgetExport, ...patch } : widgetExport
+      );
+      await this.plugin.saveWidgetNotes();
+    };
+    for (const widgetExport of this.plugin.settings.widgetNotes) {
+      new Setting(containerEl)
+        .setName(widgetExport.destination || "Widget note")
+        .setDesc("The generated note is replaced when Morning OS refreshes it.")
+        .addToggle(toggle => toggle.setValue(widgetExport.enabled).onChange(async enabled => {
+          await update(widgetExport.id, { enabled });
+          this.rerender();
+        }))
+        .addButton(button => button.setButtonText("Remove").onClick(async () => {
+          this.plugin.settings.widgetNotes = this.plugin.settings.widgetNotes.filter(item => item.id !== widgetExport.id);
+          await this.plugin.saveWidgetNotes();
+          this.rerender();
+        }));
+      new Setting(containerEl)
+        .setName("Source")
+        .addDropdown(dropdown => dropdown.addOptions(sources).setValue(widgetExport.source).onChange(async source => {
+          await update(widgetExport.id, { source: source as WidgetSource });
+          this.rerender();
+        }));
+      new Setting(containerEl)
+        .setName("Destination")
+        .setDesc("Vault-relative Markdown path. Default folder: _generated/widgets/.")
+        .addText(text => text.setValue(widgetExport.destination).onChange(async destination => {
+          await update(widgetExport.id, { destination });
+          this.rerender();
+        }));
+      new Setting(containerEl)
+        .setName("Item limit")
+        .addText(text => {
+          text.inputEl.type = "number";
+          text.inputEl.min = "1";
+          text.inputEl.addClass("mos-number-input-sm");
+          text.setValue(String(widgetExport.limit)).onChange(async value => {
+            const limit = Number.parseInt(value, 10);
+            if (Number.isInteger(limit) && limit > 0) await update(widgetExport.id, { limit });
+          });
+        });
+    }
+    new Setting(containerEl)
+      .setName("Add widget note")
+      .setDesc("New exports are disabled until you enable them.")
+      .addButton(button => button.setButtonText("Add").onClick(async () => {
+        const id = `widget-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+        this.plugin.settings.widgetNotes = [...this.plugin.settings.widgetNotes, {
+          id,
+          enabled: false,
+          source: "today-tasks",
+          destination: `_generated/widgets/${id}.md`,
+          limit: 10,
+        }];
+        await this.plugin.saveWidgetNotes();
+        this.rerender();
+      }));
+    if (this.plugin.widgetLastSuccess || this.plugin.widgetLastError) {
+      containerEl.createEl("p", {
+        cls: "setting-item-description",
+        text: this.plugin.widgetLastError
+          ? `Last widget refresh failed: ${this.plugin.widgetLastError}`
+          : `Last widget refresh: ${this.plugin.widgetLastSuccess}`,
+      });
+    }
   }
 
   private renderHomeSection(containerEl: HTMLElement) {

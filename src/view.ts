@@ -17,6 +17,7 @@ import { parseIdentityAnchor } from "./agent/vault-reader";
 import { attachTaskTextSuggest } from "./task-text-suggest";
 import { beginEditingSession, disposeEditorsIn, hasActiveEditingSession, onEditingSessionsSettled, registerEditorCleanup } from "./editing-session";
 import type { DraftConflictChoice } from "./data/draft-reconciliation";
+import { sortItems } from "./item-order";
 
 export const VIEW_TYPE_AREA = "morning-os-area-view";
 export const VIEW_TYPE_DUMP = "morning-os-inbox-view";
@@ -1238,15 +1239,7 @@ export function renderViewToolbar(parent: HTMLElement, options: ViewToolbarOptio
 type SortField = "date_created" | "date_modified" | "date_completed" | "name";
 type SortDir = "asc" | "desc";
 
-function sortTasks(tasks: Task[], field: SortField, dir: SortDir): Task[] {
-  return [...tasks].sort((a, b) => {
-    const va = field === "name" ? a.text : (a[field] ?? "");
-    const vb = field === "name" ? b.text : (b[field] ?? "");
-    if (va < vb) return dir === "asc" ? -1 : 1;
-    if (va > vb) return dir === "asc" ? 1 : -1;
-    return 0;
-  });
-}
+const sortTasks = sortItems;
 
 const URGENCY_DOT: Record<string, string> = { low: "#3fb950", med: "#c9a84c", high: "#e5534b", none: "transparent" };
 const URGENCY_LABEL: Record<string, string> = { low: "L", med: "M", high: "H", none: "" };
