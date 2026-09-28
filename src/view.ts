@@ -422,53 +422,13 @@ export class MorningView extends ItemView {
   }
 
   private openTodayTaskMenu(task: Task, row: HTMLElement, moreBtn: HTMLElement, ensureChildList: () => HTMLElement) {
-    const menuItems: MenuAction[] = [];
-    if (task.parent_id === null) {
-      menuItems.push({
-        label: "＋ Add subtask",
-        action: () => {
-          const list = ensureChildList();
-          collapsedTasks.delete(task._id);
-          list.removeClass("is-collapsed");
-          row.querySelector<HTMLButtonElement>(".mos-subtask-toggle")?.setText("▾");
-          renderAddTaskInput(list, this.app, "Add subtask…", async (text) => {
-            const child = createChildItem(text, task);
-            const reg = await loadRegistry(this.app);
-            reg.push(child);
-            await saveRegistry(this.app, reg);
-            this.plugin.refreshView();
-          });
-          list.querySelector<HTMLInputElement>(".morning-os-wins-input-row:last-child input")?.focus();
-        },
-      });
-    }
-    menuItems.push(
-      ...buildTodayMembershipActions(this.app, task, this.plugin, () => this.plugin.refreshView()),
-      {
-        label: task.kind === "note" ? (task.status_note === "archived" ? "Unarchive" : "Archive") : "",
-        action: () => {
-          if (task.kind === "note") void setNoteStatus(this.app, task._id, task.status_note === "archived" ? "active" : "archived").then(() => this.plugin.refreshView());
-        },
+    openContextMenu(moreBtn, buildItemMenuActions(this.app, task, this.plugin, () => undefined, {
+      addSubtask: () => {
+        const list = ensureChildList();
+        expandSubtasks(task._id, row, list);
+        return list;
       },
-      {
-        label: task.kind === "note" ? "Convert to task" : "Convert to note",
-        action: () => void changeItemKind(this.app, task._id, task.kind === "note" ? "task" : "note").then(() => this.plugin.refreshView()),
-      },
-      {
-        label: "✎ Edit metadata",
-        action: () => {
-          new TaskEditModal(this.app, task, () => {
-            this.plugin.refreshView();
-          }, false, this.plugin.settings.areas, this.plugin.settings.advancedAreaFeatures).open();
-        },
-      },
-      {
-        label: "🗑 Delete",
-        danger: true,
-        action: () => void deleteTask(this.app, task._id).then(() => this.plugin.refreshView()),
-      },
-    );
-    openContextMenu(moreBtn, menuItems.filter(item => item.label));
+    }));
   }
 
   private renderRegistryTaskList(parent: HTMLElement, tasks: Task[]) {
@@ -482,22 +442,13 @@ export class MorningView extends ItemView {
         if (!childListEl) {
           childListEl = parent.createDiv({ cls: "mos-subtask-list" });
           row.after(childListEl);
-          if (collapsedTasks.has(task._id)) childListEl.addClass("is-collapsed");
+          if (!expandedTasks.has(task._id)) childListEl.addClass("is-collapsed");
         }
         return childListEl;
       };
 
       if (children.length > 0) {
-        const toggleBtn = row.createEl("button", {
-          cls: "mos-subtask-toggle",
-          text: collapsedTasks.has(task._id) ? "▸" : "▾",
-        });
-        toggleBtn.addEventListener("click", () => {
-          const collapsed = collapsedTasks.has(task._id);
-          if (collapsed) collapsedTasks.delete(task._id); else collapsedTasks.add(task._id);
-          toggleBtn.setText(collapsed ? "▾" : "▸");
-          ensureChildList().toggleClass("is-collapsed", !collapsed);
-        });
+        renderSubtaskToggle(row, task._id, ensureChildList);
       }
 
       const isNote = task.kind === "note";
@@ -548,22 +499,14 @@ export class MorningView extends ItemView {
       const ensureChildList = (): HTMLElement => {
         if (!childListEl) {
           childListEl = parent.createDiv({ cls: "mos-subtask-list" });
-          if (collapsedTasks.has(task._id)) childListEl.addClass("is-collapsed");
+          row.after(childListEl);
+          if (!expandedTasks.has(task._id)) childListEl.addClass("is-collapsed");
         }
         return childListEl;
       };
 
       if (children.length > 0) {
-        const toggleBtn = row.createEl("button", {
-          cls: "mos-subtask-toggle",
-          text: collapsedTasks.has(task._id) ? "▸" : "▾",
-        });
-        toggleBtn.addEventListener("click", () => {
-          const collapsed = collapsedTasks.has(task._id);
-          if (collapsed) collapsedTasks.delete(task._id); else collapsedTasks.add(task._id);
-          toggleBtn.setText(collapsed ? "▾" : "▸");
-          ensureChildList().toggleClass("is-collapsed", !collapsed);
-        });
+        renderSubtaskToggle(row, task._id, ensureChildList);
       }
 
       const checkbox = task.kind === "task" ? row.createEl("input", { type: "checkbox" }) : null;
@@ -1275,6 +1218,63 @@ function buildTodayMembershipActions(
   ];
 }
 
+/** All live item views share these actions; placement and kind determine availability. */
+function buildItemMenuActions(
+  app: App,
+  task: Task,
+  plugin: MorningOSPlugin | undefined,
+  onRefresh: () => void,
+  options: { addSubtask?: () => HTMLElement; showUrgency?: boolean; todayContext?: TodayMembershipContext } = {},
+): MenuAction[] {
+  const refresh = (): void => {
+    if (plugin) void plugin.refreshView();
+    onRefresh();
+  };
+  const run = (operation: () => Promise<void>): void => {
+    void operation().then(refresh).catch(error => {
+      new Notice(`Morning OS: could not update item — ${(error as Error).message}`);
+    });
+  };
+  const actions: MenuAction[] = [];
+  const addSubtask = options.addSubtask;
+  if (task.parent_id === null && addSubtask) {
+    actions.push({
+      label: "＋ Add subtask",
+      action: () => {
+        const list = addSubtask();
+        renderAddTaskInput(list, app, "Add subtask…", async text => {
+          const child = createChildItem(text, task);
+          const registry = await loadRegistry(app);
+          await saveRegistry(app, [...registry, child]);
+          refresh();
+        });
+        list.querySelector<HTMLInputElement>(".morning-os-wins-input-row:last-child input")?.focus();
+      },
+    });
+  }
+  actions.push(...buildTodayMembershipActions(app, task, plugin, onRefresh, options.todayContext));
+  actions.push({
+    label: task.kind === "note" ? "Convert to task" : "Convert to note",
+    action: () => run(() => changeItemKind(app, task._id, task.kind === "note" ? "task" : "note")),
+  });
+  if (task.kind === "note") {
+    const archived = task.status_note === "archived";
+    actions.push({
+      label: archived ? "Unarchive" : "Archive",
+      action: () => run(() => setNoteStatus(app, task._id, archived ? "active" : "archived")),
+    });
+  }
+  actions.push(
+    {
+      label: "✎ Edit metadata",
+      action: () => new TaskEditModal(app, task, refresh, options.showUrgency ?? false,
+        plugin?.settings.areas ?? [], plugin?.settings.advancedAreaFeatures ?? false).open(),
+    },
+    { label: "🗑 Delete", danger: true, action: () => run(() => deleteTask(app, task._id)) },
+  );
+  return actions;
+}
+
 function openContextMenu(anchor: HTMLElement, items: MenuAction[]) {
   const ownerDocument = anchor.ownerDocument;
   ownerDocument.querySelector(".mos-ctx-menu")?.remove();
@@ -1433,9 +1433,34 @@ export function attachInlineTextEdit(app: App, textSpan: HTMLElement, task: Task
   });
 }
 
-// Tracks which parent tasks have their subtask list collapsed. Module-level so the
-// collapsed/expanded state survives the full re-render every refresh triggers.
-const collapsedTasks = new Set<string>();
+// New groups start collapsed. Explicit expansions survive refreshes across views
+// for this session; child-only search results reveal matches without changing it.
+const expandedTasks = new Set<string>();
+
+function expandSubtasks(id: string, row: HTMLElement, list: HTMLElement): void {
+  expandedTasks.add(id);
+  list.removeClass("is-collapsed");
+  const toggle = row.querySelector<HTMLButtonElement>(".mos-subtask-toggle");
+  toggle?.setText("▾");
+  toggle?.setAttribute("aria-expanded", "true");
+}
+
+function renderSubtaskToggle(parent: HTMLElement, id: string, ensureList: () => HTMLElement, searchExpanded = false): void {
+  const collapsed = !searchExpanded && !expandedTasks.has(id);
+  const toggle = parent.createEl("button", {
+    cls: "mos-subtask-toggle",
+    text: collapsed ? "▸" : "▾",
+    attr: { "aria-label": "Toggle subtasks", "aria-expanded": String(!collapsed) },
+  });
+  toggle.addEventListener("click", () => {
+    const list = ensureList();
+    const wasCollapsed = list.classList.contains("is-collapsed");
+    if (wasCollapsed) expandedTasks.add(id); else expandedTasks.delete(id);
+    list.toggleClass("is-collapsed", !wasCollapsed);
+    toggle.setText(wasCollapsed ? "▾" : "▸");
+    toggle.setAttribute("aria-expanded", String(wasCollapsed));
+  });
+}
 
 export function renderTaskRowShared(
   parent: HTMLElement,
@@ -1461,16 +1486,7 @@ export function renderTaskRowShared(
   const row = parent.createDiv({ cls: "morning-os-task-row" + (isDone ? " morning-os-task-done" : "") + (isArchivedNote ? " mos-note-archived" : "") + (isChild ? " mos-task-row-child" : "") });
 
   if (hasChildren) {
-    const toggleBtn = row.createEl("button", {
-      cls: "mos-subtask-toggle",
-      text: !searchExpandedChildren && collapsedTasks.has(task._id) ? "▸" : "▾",
-    });
-    toggleBtn.addEventListener("click", () => {
-      const collapsed = collapsedTasks.has(task._id);
-      if (collapsed) collapsedTasks.delete(task._id); else collapsedTasks.add(task._id);
-      toggleBtn.setText(collapsed ? "▾" : "▸");
-      ensureChildList().toggleClass("is-collapsed", !collapsed);
-    });
+    renderSubtaskToggle(row, task._id, () => ensureChildList(), searchExpandedChildren);
   }
 
   let checkbox: HTMLInputElement | null = null;
@@ -1536,76 +1552,22 @@ export function renderTaskRowShared(
     if (!childListEl) {
       childListEl = parent.createDiv({ cls: "mos-subtask-list" });
       row.after(childListEl);
-      if (!searchExpandedChildren && collapsedTasks.has(task._id)) childListEl.addClass("is-collapsed");
+      if (!searchExpandedChildren && !expandedTasks.has(task._id)) childListEl.addClass("is-collapsed");
     }
     return childListEl;
   };
 
   const moreBtn = actions.createEl("button", { cls: "mos-action-btn", attr: { title: "More actions" }, text: "⋯" });
   moreBtn.addEventListener("click", () => {
-    const menuItems: MenuAction[] = [];
-    if (!isChild) {
-      menuItems.push({
-        label: "＋ Add subtask",
-        action: () => {
-          const list = ensureChildList();
-          collapsedTasks.delete(task._id);
-          list.removeClass("is-collapsed");
-          row.querySelector<HTMLButtonElement>(".mos-subtask-toggle")?.setText("▾");
-          renderAddTaskInput(list, app, "Add subtask…", async (text) => {
-            const child = createChildItem(text, task);
-            const reg = await loadRegistry(app);
-            reg.push(child);
-            await saveRegistry(app, reg);
-            if (plugin) plugin.refreshView();
-            onRefresh();
-          });
-          list.querySelector<HTMLInputElement>(".morning-os-wins-input-row:last-child input")?.focus();
-        },
-      });
-    }
-    menuItems.push(...buildTodayMembershipActions(app, task, plugin, onRefresh, todayContext));
-    menuItems.push(
-      {
-        label: task.kind === "note" ? "Convert to task" : "Convert to note",
-        action: () => {
-          void changeItemKind(app, task._id, task.kind === "note" ? "task" : "note").then(() => {
-            if (plugin) void plugin.refreshView();
-            onRefresh();
-          });
-        },
-      },
-      {
-        label: task.kind === "note" ? (isArchivedNote ? "Unarchive" : "Archive") : "",
-        action: () => {
-          if (task.kind !== "note") return;
-          void setNoteStatus(app, task._id, isArchivedNote ? "active" : "archived").then(() => {
-            if (plugin) plugin.refreshView();
-            onRefresh();
-          });
-        },
-      },
-      {
-        label: "✎ Edit metadata",
-        action: () => {
-          new TaskEditModal(app, task, () => {
-            if (plugin) plugin.refreshView();
-            onRefresh();
-          }, showUrgency, plugin?.settings.areas ?? [], plugin?.settings.advancedAreaFeatures ?? false).open();
-        },
-      },
-      {
-        label: "🗑 Delete",
-        danger: true,
-        action: () => {
-          void deleteTask(app, task._id).then(() => {
-            if (plugin) plugin.refreshView();
-            onRefresh();
-          });
-        },
-      },
-    );
-    openContextMenu(moreBtn, menuItems.filter(item => item.label));
+    openContextMenu(moreBtn, buildItemMenuActions(app, task, plugin, onRefresh, {
+      showUrgency,
+      todayContext,
+      addSubtask: !isChild ? () => {
+        const list = ensureChildList();
+        expandSubtasks(task._id, row, list);
+        return list;
+      } : undefined,
+    }));
   });
 
   checkbox?.addEventListener("change", () => {
@@ -1972,6 +1934,25 @@ export class AreaView extends ItemView {
     for (const task of items) {
       const isArchivedNote = task.kind === "note" && task.status_note === "archived";
       const tr = tbody.createEl("tr", { cls: "mos-table-row" + (task.kind === "task" && task.status_completion === "done" ? " mos-table-row-done" : "") + (isArchivedNote ? " mos-note-archived" : "") });
+      const childOnlyMatches = getChildOnlySearchMatches(task, this.filters, this.registry);
+      const children = sortItemsByStatus(childOnlyMatches ?? getChildren(this.registry, task._id), this.registry,
+        this.sortField, this.sortDir, this.getGroupByStatus());
+      let childRow: HTMLElement | null = null;
+      let childContent: HTMLElement | null = null;
+      const ensureChildList = (): HTMLElement => {
+        if (!childRow) {
+          childRow = tbody.createEl("tr", { cls: "mos-subtask-list mos-table-subtasks-row" });
+          tr.after(childRow);
+          if (!childOnlyMatches && !expandedTasks.has(task._id)) childRow.addClass("is-collapsed");
+          const cell = childRow.createEl("td", {
+            cls: "mos-table-td mos-table-context-child-cell",
+            attr: { colspan: String(fields.length + 3) },
+          });
+          childContent = cell.createDiv();
+          if (childOnlyMatches) childContent.before(cell.createSpan({ cls: "mos-table-context-child-label", text: "Matching child" }));
+        }
+        return childRow;
+      };
 
       // Checkbox cell
       const checkTd = tr.createEl("td", { cls: "mos-table-td mos-table-check" });
@@ -1997,6 +1978,7 @@ export class AreaView extends ItemView {
 
       // Name cell (editable on click)
       const nameTd = tr.createEl("td", { cls: "mos-table-td mos-table-name" });
+      if (children.length > 0) renderSubtaskToggle(nameTd, task._id, ensureChildList, childOnlyMatches !== undefined);
       const nameSpan = renderMdContent(this.app, this, nameTd, "span", "", task.text);
       if (task.notes?.trim() && this.plugin.settings.showNotesIndicator) {
         nameTd.createSpan({ cls: "mos-notes-badge", attr: { title: "Has notes" }, text: "📝" });
@@ -2076,44 +2058,19 @@ export class AreaView extends ItemView {
 
       const tableMoreBtn = actBar.createEl("button", { cls: "mos-action-btn", attr: { title: "More actions" }, text: "⋯" });
       tableMoreBtn.addEventListener("click", () => {
-        openContextMenu(tableMoreBtn, [
-          {
-            label: task.kind === "note" ? (isArchivedNote ? "Unarchive" : "Archive") : "",
-            action: () => {
-              if (task.kind === "note") void setNoteStatus(this.app, task._id, isArchivedNote ? "active" : "archived").then(() => this.refresh());
-            },
+        openContextMenu(tableMoreBtn, buildItemMenuActions(this.app, task, this.plugin, () => void this.refresh(), {
+          addSubtask: () => {
+            const list = ensureChildList();
+            expandSubtasks(task._id, tr, list);
+            return childContent!;
           },
-          {
-            label: task.kind === "note" ? "Convert to task" : "Convert to note",
-            action: () => void changeItemKind(this.app, task._id, task.kind === "note" ? "task" : "note").then(() => this.refresh()),
-          },
-          {
-            label: "✎ Edit metadata",
-            action: () => {
-              new TaskEditModal(this.app, task, () => {
-                if (this.plugin) this.plugin.refreshView();
-                void this.refresh();
-              }, false, this.plugin?.settings.areas ?? [], this.plugin?.settings.advancedAreaFeatures ?? false).open();
-            },
-          },
-          {
-            label: "🗑 Delete",
-            danger: true,
-            action: () => { void deleteTask(this.app, task._id).then(() => { if (this.plugin) this.plugin.refreshView(); }); },
-          },
-        ].filter(item => item.label));
+        }));
       });
 
-      const childOnlyMatches = getChildOnlySearchMatches(task, this.filters, this.registry);
-      if (childOnlyMatches) {
-        for (const child of childOnlyMatches) {
-          const matchRow = tbody.createEl("tr", { cls: "mos-table-row mos-table-context-child" });
-          const matchCell = matchRow.createEl("td", {
-            cls: "mos-table-td mos-table-context-child-cell",
-            attr: { colspan: String(fields.length + 3) },
-          });
-          matchCell.createSpan({ cls: "mos-table-context-child-label", text: "Matching child" });
-          renderTaskRowShared(matchCell, child, this.app, this, () => void this.refresh(), this.plugin, false, fields, this.registry, true);
+      if (children.length > 0) {
+        ensureChildList();
+        for (const child of children) {
+          renderTaskRowShared(childContent!, child, this.app, this, () => void this.refresh(), this.plugin, false, fields, this.registry, true);
         }
       }
     }

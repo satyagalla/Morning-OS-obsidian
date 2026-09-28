@@ -5,7 +5,7 @@ import { Window } from "happy-dom";
 import { App, Component, TFile, WorkspaceLeaf } from "obsidian";
 import { applyFilters, AreaView, DumpView, getChildOnlySearchMatches, MorningView, renderFilterSelects, renderTaskRowShared, sortItemsByStatus, attachInlineTextEdit, TaskEditModal } from "../src/view";
 import { beginEditingSession, disposeEditorsIn, hasActiveEditingSession, registerEditorCleanup } from "../src/editing-session";
-import type { Task } from "../src/types";
+import type { AreaConfig, Task, TabConfig } from "../src/types";
 import { DEFAULT_SETTINGS, MorningOSSettingTab } from "../src/settings";
 import { STATE_PATH, StateStore } from "../src/data/state-store";
 import type { StateSnapshot } from "../src/data/state-store";
@@ -652,6 +652,9 @@ test("search ignores deleted children and renders only live child-only matches w
 
   const normal = window.document.body.createDiv();
   renderTaskRowShared(normal, parent, new App(), new Component(), () => undefined, undefined, false, undefined, registry);
+  assert.ok(normal.querySelector(".mos-subtask-list.is-collapsed"), "new groups start collapsed");
+  normal.querySelector<HTMLButtonElement>(".mos-subtask-toggle")!.click();
+  assert.equal(normal.querySelector(".mos-subtask-list")?.classList.contains("is-collapsed"), false);
   normal.querySelector<HTMLButtonElement>(".mos-subtask-toggle")!.click();
   assert.ok(normal.querySelector(".mos-subtask-list.is-collapsed"));
 
@@ -789,6 +792,9 @@ test("Area, table, and All Items status toggles preserve view state and preferen
   assert.match(cards[0].textContent ?? "", /B parent[\s\S]*A inactive/);
   const childList = shell.querySelector<HTMLElement>(".mos-area-item-panel-tasks .mos-subtask-list")!;
   assert.match(childList.textContent ?? "", /Z active child[\s\S]*A done child/);
+  assert.ok(childList.classList.contains("is-collapsed"));
+  shell.querySelector<HTMLButtonElement>(".mos-area-item-panel-tasks .mos-subtask-toggle")!.click();
+  assert.equal(childList.classList.contains("is-collapsed"), false);
   shell.querySelector<HTMLButtonElement>(".mos-area-item-panel-tasks .mos-subtask-toggle")!.click();
   assert.ok(childList.classList.contains("is-collapsed"));
 
@@ -934,7 +940,6 @@ test("Area view keeps search state, reveals child-only results, and handles desk
   internals.containerEl = shell;
   internals.render();
 
-  shell.querySelector<HTMLButtonElement>(".mos-area-item-panel-tasks .mos-subtask-toggle")!.click();
   assert.ok(shell.querySelector(".mos-area-item-panel-tasks .mos-subtask-list.is-collapsed"));
 
   const search = shell.querySelector<HTMLInputElement>('input[type="search"]')!;
@@ -1330,6 +1335,7 @@ test("Today renders selected-root children without assigning them Today state an
   assert.match(rendered.textContent ?? "", /Missing or deleted parent/);
   assert.match(rendered.querySelector(".mos-today-supporting-notes summary")!.textContent ?? "", /Supporting notes \(1\)/);
   assert.equal(rendered.querySelector<HTMLDetailsElement>(".mos-today-supporting-notes")!.open, false);
+  assert.ok(rendered.querySelector(".mos-subtask-list.is-collapsed"), "Today roots also start with subtasks collapsed");
   assert.ok(rendered.querySelector(".mos-today-parent-details"));
   assert.equal(JSON.stringify(registry), before, "Today projection must not mutate child state");
   assert.equal(rendered.querySelectorAll(".morning-os-task-row").length, 6, "root, eligible root children, one supporting note, and two selected contextual children render once each");
@@ -1580,6 +1586,206 @@ test("task and note rows render distinct lifecycle controls and direct menu acti
   assert.equal(archivedParent.querySelector(".morning-os-task-done"), null);
   archivedParent.querySelector<HTMLButtonElement>('[title="More actions"]')!.click();
   assert.match(window.document.body.textContent ?? "", /Unarchive/);
+});
+
+test("table groups start collapsed, retain expansion, reveal searches, and create actionable children", async t => {
+  const window = installDom();
+  closeDom(t, window);
+  const tab: TabConfig = { key: "tracker", label: "Tracker", fields: [{ key: "stage", label: "Stage", type: "text" }], view_mode: "table" };
+  const area: AreaConfig = { key: "subtask-table", label: "Table", icon: "T", feedToLLM: false, tabs: [tab] };
+  const root = item("table-subtask-root");
+  root.areas = [area.key];
+  root.tags = { [area.key]: tab.key, stage: "Research" };
+  const child = item("table-subtask-child");
+  child.parent_id = root._id;
+  const deleted = item("table-subtask-deleted");
+  deleted.parent_id = root._id;
+  deleted.is_deleted = true;
+  const emptyParent = item("table-empty-parent");
+  emptyParent.areas = [...root.areas];
+  emptyParent.tags = { ...root.tags };
+  const files = new Map([[STATE_PATH, stateBytes([root, child, deleted, emptyParent])]]);
+  const adapter = {
+    exists: async (path: string) => files.has(path) || path.startsWith("_generated"),
+    read: async (path: string) => files.get(path) ?? "",
+    write: async (path: string, value: string) => { files.set(path, value); },
+    mkdir: async () => undefined,
+    list: async () => ({ files: [], folders: [] as string[] }),
+  };
+  const app = Object.assign(new App(), {
+    vault: { adapter, getAbstractFileByPath: (path: string) => new TFile(path) },
+    fileManager: { trashFile: async (file: TFile) => { files.delete(file.path); } },
+  }) as never as App;
+  const plugin = viewPlugin({ ...DEFAULT_SETTINGS, areas: [area], advancedAreaFeatures: true });
+  const view = new AreaView(new WorkspaceLeaf(), plugin.settings as never, plugin as never, area.key);
+  const internals = view as unknown as {
+    app: App; registry: Task[]; filters: { query?: string }; refresh: () => Promise<void>;
+    renderTableView: (parent: HTMLElement, tab: TabConfig, area: AreaConfig) => void;
+  };
+  internals.app = app;
+  internals.registry = [root, child, deleted, emptyParent];
+  const container = window.document.body.createDiv();
+  const render = () => { container.empty(); internals.renderTableView(container, tab, area); };
+  let settled = deferred<void>();
+  internals.refresh = async () => {
+    internals.registry = (JSON.parse(files.get(STATE_PATH)!) as { items: Task[] }).items;
+    render();
+    settled.resolve();
+  };
+  const group = () => container.querySelector<HTMLElement>(".mos-table-subtasks-row")!;
+  const toggle = () => container.querySelector<HTMLButtonElement>(".mos-table-name .mos-subtask-toggle")!;
+  const choose = (row: HTMLElement, label: RegExp) => {
+    row.querySelector<HTMLButtonElement>('[title="More actions"]')!.click();
+    const action = [...window.document.querySelectorAll<HTMLButtonElement>(".mos-ctx-item")].find(button => label.test(button.textContent ?? ""));
+    assert.ok(action, `expected action ${label}`);
+    action.click();
+  };
+  render();
+  assert.ok(group().classList.contains("is-collapsed"));
+  assert.equal(window.getComputedStyle(group()).display, "none");
+  assert.equal(toggle().getAttribute("aria-expanded"), "false");
+  assert.match(group().textContent ?? "", /table-subtask-child/);
+  assert.doesNotMatch(group().textContent ?? "", /table-subtask-deleted/);
+  assert.equal(group().querySelector("td")?.getAttribute("colspan"), "4");
+  toggle().click();
+  assert.equal(group().classList.contains("is-collapsed"), false);
+  render();
+  assert.equal(toggle().getAttribute("aria-expanded"), "true", "expansion survives refresh");
+  toggle().click();
+  internals.filters = { query: child.text };
+  render();
+  assert.equal(group().classList.contains("is-collapsed"), false, "child-only search reveals the match");
+  toggle().click();
+  assert.ok(group().classList.contains("is-collapsed"), "search results can still be collapsed");
+  internals.filters = {};
+  render();
+  assert.ok(group().classList.contains("is-collapsed"));
+
+  choose(container.querySelector<HTMLElement>(".mos-table-row")!, /Add subtask/);
+  assert.equal(group().classList.contains("is-collapsed"), false, "adding reveals the input");
+  const input = group().querySelector<HTMLInputElement>(".morning-os-wins-input")!;
+  input.value = "New table child";
+  input.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter" }));
+  await settled.promise;
+  const created = internals.registry.find(task => task.text === "New table child")!;
+  assert.ok(created);
+  assert.equal(created.parent_id, root._id);
+  assert.deepEqual(created.areas, root.areas);
+  assert.deepEqual(created.tags, root.tags);
+  assert.equal(created.is_today, false);
+  assert.equal(group().classList.contains("is-collapsed"), false);
+  const createdRow = [...group().querySelectorAll<HTMLElement>(".morning-os-task-row")]
+    .find(row => row.querySelector(".morning-os-task-text")?.textContent === created.text)!;
+  createdRow.querySelector<HTMLButtonElement>('[title="More actions"]')!.click();
+  assert.equal([...window.document.querySelectorAll(".mos-ctx-item")].some(button => /Add subtask/.test(button.textContent ?? "")), false, "children cannot create grandchildren");
+  settled = deferred<void>();
+  choose(createdRow, /Convert to note/);
+  await settled.promise;
+  assert.equal(internals.registry.find(task => task._id === created._id)?.kind, "note");
+  assert.deepEqual(internals.registry.find(task => task._id === root._id), JSON.parse(JSON.stringify(root)));
+
+  const home = Object.create(MorningView.prototype) as unknown as {
+    app: App; registry: Task[]; plugin: typeof plugin; renderTasks: (parent: HTMLElement) => void;
+  };
+  home.app = app;
+  home.registry = internals.registry.map(task => task._id === root._id ? { ...task, is_today: true } : task);
+  home.plugin = plugin;
+  const today = window.document.body.createDiv();
+  home.renderTasks(today);
+  assert.match(today.textContent ?? "", /table-subtask-child/);
+  assert.match(today.querySelector(".mos-today-supporting-notes")?.textContent ?? "", /New table child/);
+
+  const emptyRow = [...container.querySelectorAll<HTMLElement>(".mos-table-row")]
+    .find(row => row.querySelector(".mos-table-name")?.textContent === emptyParent.text)!;
+  assert.equal(emptyRow.querySelector(".mos-subtask-toggle"), null);
+  settled = deferred<void>();
+  choose(emptyRow, /Add subtask/);
+  const firstChildInput = emptyRow.nextElementSibling!.querySelector<HTMLInputElement>(".morning-os-wins-input")!;
+  firstChildInput.value = "First child";
+  firstChildInput.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter" }));
+  await settled.promise;
+  assert.equal(internals.registry.find(task => task.text === "First child")?.parent_id, emptyParent._id);
+  const updatedRow = [...container.querySelectorAll<HTMLElement>(".mos-table-row")]
+    .find(row => row.querySelector(".mos-table-name")?.textContent?.includes(emptyParent.text))!;
+  assert.equal(updatedRow.querySelector(".mos-subtask-toggle")?.getAttribute("aria-expanded"), "true");
+});
+
+test("Inbox, All Items, and open or completed Today groups default to collapsed", t => {
+  const window = installDom();
+  closeDom(t, window);
+  const app = new App();
+  const plugin = viewPlugin({ ...DEFAULT_SETTINGS });
+  for (const allItems of [false, true]) {
+    const root = item(`default-${allItems ? "all" : "inbox"}`);
+    const child = item(`${root._id}-child`);
+    child.parent_id = root._id;
+    const view = new DumpView(new WorkspaceLeaf(), plugin.settings as never, plugin as never, allItems);
+    const internals = view as unknown as { app: App; registry: Task[]; renderResults: (parent: HTMLElement) => void };
+    internals.app = app;
+    internals.registry = [root, child];
+    const rendered = window.document.body.createDiv();
+    internals.renderResults(rendered);
+    assert.ok(rendered.querySelector(".mos-subtask-list.is-collapsed"));
+    rendered.querySelector<HTMLButtonElement>(".mos-subtask-toggle")!.click();
+    assert.equal(rendered.querySelector(".mos-subtask-list")?.classList.contains("is-collapsed"), false);
+  }
+  const roots = [item("default-today-open"), item("default-today-completed")];
+  roots.forEach(root => { root.is_today = true; });
+  roots[1].status_completion = "done";
+  roots[1].date_completed = todayStr();
+  const children = roots.map(root => ({ ...item(`${root._id}-child`), parent_id: root._id }));
+  const home = Object.create(MorningView.prototype) as unknown as {
+    app: App; registry: Task[]; plugin: typeof plugin; renderTasks: (parent: HTMLElement) => void;
+  };
+  Object.assign(home, { app, registry: [...roots, ...children], plugin });
+  const today = window.document.body.createDiv();
+  home.renderTasks(today);
+  assert.equal(today.querySelectorAll(".mos-subtask-list.is-collapsed").length, 2);
+  for (const toggle of today.querySelectorAll<HTMLButtonElement>(".mos-subtask-toggle")) {
+    assert.equal(toggle.getAttribute("aria-expanded"), "false");
+    toggle.click();
+  }
+  assert.equal(today.querySelectorAll(".mos-subtask-list.is-collapsed").length, 0);
+});
+
+test("Today, cards, and table parent menus agree for tasks and active or archived notes", t => {
+  const window = installDom();
+  closeDom(t, window);
+  const app = new App();
+  const tab: TabConfig = { key: "tracker", label: "Tracker", fields: [], view_mode: "table" };
+  const area: AreaConfig = { key: "menu-parity", label: "Menus", icon: "M", feedToLLM: false, tabs: [tab] };
+  const plugin = viewPlugin({ ...DEFAULT_SETTINGS, areas: [area], advancedAreaFeatures: true });
+  const table = new AreaView(new WorkspaceLeaf(), plugin.settings as never, plugin as never, area.key);
+  const tableInternals = table as unknown as {
+    app: App; registry: Task[]; renderTableView: (parent: HTMLElement, tab: TabConfig, area: AreaConfig) => void;
+  };
+  tableInternals.app = app;
+  const home = Object.create(MorningView.prototype) as unknown as {
+    app: App; plugin: typeof plugin;
+    openTodayTaskMenu: (task: Task, row: HTMLElement, button: HTMLElement, ensureList: () => HTMLElement) => void;
+  };
+  Object.assign(home, { app, plugin });
+  const labels = () => [...window.document.querySelectorAll(".mos-ctx-item")].map(button => button.textContent);
+  for (const kind of ["task", "note", "archived"] as const) {
+    const task = item(`parity-${kind}`, kind === "task" ? "task" : "note");
+    task.is_today = true;
+    task.areas = [area.key];
+    task.tags = { [area.key]: tab.key };
+    if (kind === "archived") task.status_note = "archived";
+    const cards = window.document.body.createDiv();
+    const row = renderTaskRowShared(cards, task, app, new Component(), () => undefined, plugin as never);
+    row.querySelector<HTMLButtonElement>('[title="More actions"]')!.click();
+    const expected = labels();
+    assert.ok(expected.some(label => /Add subtask/.test(label ?? "")));
+    assert.ok(expected.some(label => /Remove from Today/.test(label ?? "")));
+    const body = window.document.body.createDiv();
+    tableInternals.registry = [task];
+    tableInternals.renderTableView(body, tab, area);
+    body.querySelector<HTMLButtonElement>('[title="More actions"]')!.click();
+    assert.deepEqual(labels(), expected, `table ${kind} menu matches cards`);
+    home.openTodayTaskMenu(task, row, row.querySelector<HTMLButtonElement>('[title="More actions"]')!, () => cards.createDiv());
+    assert.deepEqual(labels(), expected, `Today ${kind} menu matches cards`);
+  }
 });
 
 test("desktop minimized panels reclaim the grid while mobile restores both panels", t => {

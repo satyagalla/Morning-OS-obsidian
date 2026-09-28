@@ -1417,6 +1417,14 @@ h3[data-dirty]::after {
   font-weight: 600;
   text-transform: uppercase;
 }
+.mos-table-subtasks-row {
+  margin-left: 0;
+  padding-left: 0;
+  border-left: none;
+}
+.mos-table-name .mos-subtask-toggle {
+  margin-right: 8px;
+}
 .mos-mobile-item-switch {
   display: none;
 }
