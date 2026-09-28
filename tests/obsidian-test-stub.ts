@@ -25,6 +25,17 @@ export class Component {
   register(cleanup: () => void): void { this.cleanups.push(cleanup); }
   unload(): void { for (const cleanup of this.cleanups.splice(0)) cleanup(); }
 }
+export class Plugin extends Component {
+  app = new App();
+  readonly factories = new Map<string, unknown>();
+  data: unknown;
+  async loadData(): Promise<unknown> { return this.data; }
+  async saveData(value: unknown): Promise<void> { this.data = value; }
+  registerView(key: string, factory: unknown): void {
+    if (this.factories.has(key)) throw new Error(`duplicate view ${key}`);
+    this.factories.set(key, factory);
+  }
+}
 export class WorkspaceLeaf {}
 export class ItemView extends Component {
   app = new App();

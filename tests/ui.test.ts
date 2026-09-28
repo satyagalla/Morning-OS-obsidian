@@ -190,7 +190,7 @@ test("compact recovery list renders every backup with action states, confirmatio
   }));
   snapshots[0] = { ...realSnapshot, path: snapshotPath, status: "valid", valid: true };
   let refreshes = 0;
-  const plugin = { settings: { ...DEFAULT_SETTINGS }, saveData: async () => undefined, refreshView: async () => { refreshes++; } };
+  const plugin = { settings: { ...DEFAULT_SETTINGS }, sharedSettingsBaseline: () => JSON.parse(JSON.stringify(DEFAULT_SETTINGS)), saveData: async () => undefined, refreshView: async () => { refreshes++; } };
   const tab = new MorningOSSettingTab(app as never, plugin as never);
   tab.containerEl = window.document.body;
   const privateTab = tab as unknown as { activeSettingsTab: string; recoverySnapshots: StateSnapshot[]; renderDataSafetySection: (parent: HTMLElement) => void };

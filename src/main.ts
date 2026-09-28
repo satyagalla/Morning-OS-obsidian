@@ -6,6 +6,8 @@ import { loadRegistry, saveRegistry, createTask, initializeRegistryState, recove
 import { parseBulletFile, parseDailyNote, parseSectionFromFile, appendWinToLog, parseIdentityAnchor } from "./agent/vault-reader";
 import { todayStr } from "./utils";
 import { getStateStore, STATE_PATH } from "./data/state-store";
+import { SharedSettingsStore, SHARED_SETTINGS_PATH, SHARED_SETTINGS_KEYS, cloneSettings } from "./data/shared-settings";
+import type { SharedSettings } from "./data/shared-settings";
 import { hasActiveEditingSession, onEditingSessionsSettled } from "./editing-session";
 import { canonicalWidgetDestination, WidgetDestinationError, WidgetNoteWriter, renderWidgetNote, selectWidgetContent, validateWidgetDestination } from "./widgets";
 import type { DailyBrief } from "./types";
@@ -26,6 +28,17 @@ export default class MorningOSPlugin extends Plugin {
   settingTab: MorningOSSettingTab;
   private agentRunning = false;
   private externalRefreshQueued = false;
+  private externalRefreshRunning = false;
+  private sharedSettingsStore: SharedSettingsStore;
+  private registeredAreaKeys = new Set<string>();
+  private viewsReady = false;
+  private areaLayoutPending = false;
+  private lastStateBytes: string | null = null;
+  private lastSettingsError = "";
+  private lastStateError = "";
+  private settingsWriteQueue: Promise<unknown> = Promise.resolve();
+  private settingsWriteSequence = 0;
+  private localSettingsWrites: { sequence: number; before: SharedSettings; after: SharedSettings; keys: string[] }[] = [];
   private externalEditNoticeShown = false;
   private refreshDeferredByEditor = false;
   private refreshDeferredLayout = false;
@@ -43,7 +56,7 @@ export default class MorningOSPlugin extends Plugin {
     delete savedSettings.sourceHobbyTasks;
     delete savedSettings.modeHobbyTasks;
     delete savedSettings.hobbyTasksCount;
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, savedSettings) as MorningOSSettings;
+    this.settings = Object.assign(cloneSettings(DEFAULT_SETTINGS), savedSettings) as MorningOSSettings;
     const widgetSources = new Set(["identity", "goals-short", "goals-long", "today-tasks", "inbox-tasks", "all-tasks"]);
     this.settings.widgetNotes = Array.isArray(this.settings.widgetNotes)
       ? this.settings.widgetNotes.filter((widgetExport): widgetExport is MorningOSSettings["widgetNotes"][number] =>
@@ -59,6 +72,10 @@ export default class MorningOSPlugin extends Plugin {
       if (area.feedToLLM === undefined) {
         area.feedToLLM = !["family", "relationship"].includes(area.key);
       }
+      for (const tab of area.tabs) {
+        if (tab.view_mode === undefined) tab.view_mode = "cards";
+        if (tab.fields === undefined) tab.fields = [];
+      }
     }
 
     // Migrate llmSectionMappings if missing
@@ -71,13 +88,21 @@ export default class MorningOSPlugin extends Plugin {
       this.settings.sourceWins = DEFAULT_SETTINGS.sourceWins;
     }
 
+    this.sharedSettingsStore = new SharedSettingsStore({
+      adapter: this.app.vault.adapter,
+      loadLocal: key => this.app.loadLocalStorage(key),
+      saveLocal: (key, value) => this.app.saveLocalStorage(key, value),
+    }, this.settings, DEFAULT_SETTINGS);
+    try { await this.sharedSettingsStore.reconcile(); }
+    catch (error) { new Notice(`Morning OS: shared settings were not adopted — ${(error as Error).message}`); }
+
     if (hobbySettingsRemoved) {
-      await this.saveData(this.settings);
+      await this.persistLocalSettings();
     }
 
     if (!this.settings.onboarded && this.settings.agentLastRunDate) {
       this.settings.onboarded = true;
-      await this.saveData(this.settings);
+      await this.updateSettings({ onboarded: true });
     }
 
     // Preserve exact legacy bytes before activating the new versioned state.
@@ -92,9 +117,10 @@ export default class MorningOSPlugin extends Plugin {
     }
 
     // Compatibility repair is inert after the versioned state takes ownership.
-    const areasRecovery = await recoverRegistryAreas(this.app, this.settings.areas);
-    if (areasRecovery.settingsChanged) {
-      await this.saveData(this.settings);
+    const recoveryAreas = cloneSettings(this.settings.areas);
+    const areasRecovery = await recoverRegistryAreas(this.app, recoveryAreas);
+    if (areasRecovery.settingsChanged && !this.sharedSettingsStore.isAdopted()) {
+      await this.updateSettings({ areas: recoveryAreas });
     }
     if (areasRecovery.error) {
       console.error("Morning OS area recovery failed:", areasRecovery.error);
@@ -116,7 +142,10 @@ export default class MorningOSPlugin extends Plugin {
     for (const area of this.settings.areas) {
       const key = area.key;
       this.registerView(`${VIEW_TYPE_AREA}-${key}`, (leaf) => new AreaView(leaf, this.settings, this, key));
+      this.registeredAreaKeys.add(key);
     }
+
+    this.viewsReady = true;
 
     this.addRibbonIcon("sun", "Morning OS", () => {
       void this.activateView();
@@ -124,7 +153,7 @@ export default class MorningOSPlugin extends Plugin {
 
     this.registerEvent(this.app.vault.on("modify", file => {
       if (!(file instanceof TFile)) return;
-      if (file.path === STATE_PATH) {
+      if (file.path === STATE_PATH || file.path === SHARED_SETTINGS_PATH) {
         void this.reconcileExternalState();
         return;
       }
@@ -132,20 +161,29 @@ export default class MorningOSPlugin extends Plugin {
         this.queueWidgetRefresh();
       }
     }));
+    for (const event of ["create", "delete"] as const) {
+      const changed = (file: { path: string }) => {
+        if (file.path === STATE_PATH || file.path === SHARED_SETTINGS_PATH) void this.reconcileExternalState();
+      };
+      this.registerEvent(event === "create" ? this.app.vault.on("create", changed) : this.app.vault.on("delete", changed));
+    }
+    this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
+      if ([STATE_PATH, SHARED_SETTINGS_PATH].includes(file.path) || [STATE_PATH, SHARED_SETTINGS_PATH].includes(oldPath)) void this.reconcileExternalState();
+    }));
     this.registerEvent(this.app.workspace.on("active-leaf-change", () => {
       void this.reconcileExternalState();
     }));
-    this.registerDomEvent(window, "focus", () => { void this.refreshDateSensitiveWidgets(); });
+    this.registerDomEvent(window, "focus", () => { void this.reconcileExternalState(); void this.refreshDateSensitiveWidgets(); });
+    this.registerDomEvent(document, "visibilitychange", () => {
+      if (!document.hidden) void this.reconcileExternalState();
+    });
+    this.registerInterval(window.setInterval(() => {
+      if (!document.hidden) void this.reconcileExternalState();
+    }, 15_000));
     this.registerInterval(window.setInterval(() => { void this.refreshDateSensitiveWidgets(); }, 60_000));
     this.register(getStateStore(this.app).onCommitted(() => this.queueWidgetRefresh()));
     this.register(onEditingSessionsSettled(() => {
-      if (this.refreshDeferredByEditor) {
-        const layout = this.refreshDeferredLayout;
-        this.refreshDeferredByEditor = false;
-        this.refreshDeferredLayout = false;
-        if (layout) void this.refreshView(true);
-        else void this.reconcileExternalState();
-      }
+      void this.settleDeferredRefresh();
     }));
 
     this.settingTab = new MorningOSSettingTab(this.app, this);
@@ -158,8 +196,72 @@ export default class MorningOSPlugin extends Plugin {
     await this.refreshDateSensitiveWidgets();
   }
 
+  sharedSettingsStatus(): { adopted: boolean; error: string } {
+    return { adopted: this.sharedSettingsStore.isAdopted(), error: this.sharedSettingsStore.error };
+  }
+
+  private async settleDeferredRefresh(): Promise<void> {
+    if (this.areaLayoutPending) await this.reregisterAreaViews();
+    if (this.refreshDeferredByEditor) {
+      const layout = this.refreshDeferredLayout;
+      this.refreshDeferredByEditor = false;
+      this.refreshDeferredLayout = false;
+      await this.refreshView(layout);
+      await this.reconcileExternalState();
+    }
+  }
+
+  sharedSettingsBaseline(): SharedSettings { return this.sharedSettingsStore.snapshot(); }
+
+  private async persistLocalSettings(): Promise<void> {
+    const local = cloneSettings(this.settings) as unknown as Record<string, unknown>;
+    if (this.sharedSettingsStore.isAdopted()) for (const key of SHARED_SETTINGS_KEYS) delete local[key];
+    await this.saveData(local);
+  }
+
+  async initializeSharedSettings(): Promise<void> {
+    await this.sharedSettingsStore.initialize();
+    await this.persistLocalSettings();
+    new Notice("Morning OS: shared settings initialized from this device. Sync settings.json before adopting it on your other device.");
+    await this.reregisterAreaViews();
+  }
+
+  updateSettings(patch: Partial<MorningOSSettings>, baseline?: SharedSettings): Promise<void> {
+    const intent = cloneSettings(patch);
+    const base = cloneSettings(baseline ?? this.sharedSettingsStore.snapshot());
+    const enqueuedAt = this.settingsWriteSequence;
+    const result = this.settingsWriteQueue.then(async () => {
+      // Rapid text callbacks may queue cumulative edits against the same baseline.
+      // Follow only this device's successful writes committed AFTER enqueue, not
+      // arbitrary old drafts or externally adopted changes.
+      for (const committed of this.localSettingsWrites) {
+        if (committed.sequence <= enqueuedAt) continue;
+        for (const key of SHARED_SETTINGS_KEYS) {
+          if (committed.keys.includes(key) && JSON.stringify(base[key]) === JSON.stringify(committed.before[key])) {
+            Object.assign(base, { [key]: cloneSettings(committed.after[key]) });
+          }
+        }
+      }
+      await this.sharedSettingsStore.update(intent, base);
+      this.settingsWriteSequence++;
+      this.localSettingsWrites.push({ sequence: this.settingsWriteSequence, before: base,
+        after: this.sharedSettingsStore.snapshot(), keys: SHARED_SETTINGS_KEYS.filter(key => key in intent) });
+      if (this.localSettingsWrites.length > 100) this.localSettingsWrites.shift();
+      const sharedKeys = new Set<string>(SHARED_SETTINGS_KEYS);
+      for (const [key, value] of Object.entries(intent)) {
+        if (!sharedKeys.has(key)) Object.assign(this.settings, { [key]: value });
+      }
+      await this.persistLocalSettings();
+      if (this.viewsReady && SHARED_SETTINGS_KEYS.some(key => key in intent)) await this.reregisterAreaViews();
+    });
+    this.settingsWriteQueue = result.catch(error => {
+      new Notice(`Morning OS: settings were not saved — ${(error as Error).message}`);
+    });
+    return result;
+  }
+
   async saveWidgetNotes(): Promise<void> {
-    await this.saveData(this.settings);
+    await this.updateSettings({ widgetNotes: this.settings.widgetNotes });
     await this.refreshWidgetNotes();
   }
 
@@ -275,7 +377,7 @@ export default class MorningOSPlugin extends Plugin {
       const result = await runAgent(this.app, this.settings);
       this.settings.agentLastRunDate = todayStr();
       this.settings.settingsChangedSinceRun = false;
-      await this.saveData(this.settings);
+      await this.updateSettings({ agentLastRunDate: this.settings.agentLastRunDate, settingsChangedSinceRun: false });
       if (result.mode === "direct-no-keys") {
         new Notice("Morning OS: brief ready (direct mode — no API key configured)");
       } else {
@@ -341,6 +443,10 @@ export default class MorningOSPlugin extends Plugin {
       await leaf.loadIfDeferred();
       if (leaf.view instanceof TrashView) await leaf.view.refresh();
     }
+    if (!Array.isArray(this.settings.areas) || this.settings.areas.some(area => typeof area !== "object" || area === null || !Array.isArray(area.tabs))) {
+      new Notice("Morning OS: invalid legacy Areas configuration; defaults are shown. Review local data.json before initializing shared settings.");
+      this.settings.areas = cloneSettings(DEFAULT_SETTINGS.areas);
+    }
     for (const area of this.settings.areas) {
       for (const leaf of this.app.workspace.getLeavesOfType(`${VIEW_TYPE_AREA}-${area.key}`)) {
         await leaf.loadIfDeferred();
@@ -350,16 +456,33 @@ export default class MorningOSPlugin extends Plugin {
   }
 
   private async reconcileExternalState(): Promise<void> {
-    if (this.externalRefreshQueued) return;
     this.externalRefreshQueued = true;
-    window.setTimeout(() => {
-      void (async () => {
+    if (this.externalRefreshRunning) return;
+    this.externalRefreshRunning = true;
+    try {
+      do {
         this.externalRefreshQueued = false;
+        // Settings and item validation are independent: one invalid file must not
+        // prevent the other valid authority from being adopted.
         try {
-          // Validation is intentionally performed before any view adopts bytes
-          // supplied by a provider or another Obsidian process.
+          if (await this.sharedSettingsStore.reconcile()) await this.reregisterAreaViews();
+          this.lastSettingsError = "";
+        } catch (error) {
+          console.error("Morning OS external settings refresh rejected:", error);
+          const message = (error as Error).message;
+          if (message !== this.lastSettingsError) new Notice(`Morning OS: shared settings were not adopted — ${message}`);
+          this.lastSettingsError = message;
+        }
+        try {
+          const bytes = await this.app.vault.adapter.exists(STATE_PATH)
+            ? await this.app.vault.adapter.read(STATE_PATH) : null;
+          if (bytes === this.lastStateBytes) continue;
+          if (bytes === null) throw new Error("Item state is missing; restore/sync it before editing.");
           await getStateStore(this.app).read();
+          this.lastStateError = "";
+          if (await this.app.vault.adapter.read(STATE_PATH) !== bytes) { this.externalRefreshQueued = true; continue; }
           await promoteDueReminders(this.app);
+          this.lastStateBytes = bytes;
           await this.refreshWidgetNotes();
           if (hasActiveEditingSession()) {
             this.refreshDeferredByEditor = true;
@@ -367,28 +490,40 @@ export default class MorningOSPlugin extends Plugin {
               this.externalEditNoticeShown = true;
               new Notice("Morning OS: item data changed elsewhere. Your open draft is preserved; saving will show any conflicting fields.");
             }
-            return;
+            continue;
           }
           this.externalEditNoticeShown = false;
           await this.refreshView();
         } catch (error) {
           console.error("Morning OS external state refresh rejected:", error);
-          new Notice(`Morning OS: external item data was not adopted — ${(error as Error).message}`);
+          const message = (error as Error).message;
+          if (message !== this.lastStateError) new Notice(`Morning OS: external item data was not adopted — ${message}`);
+          this.lastStateError = message;
         }
-      })();
-    }, 50);
+      } while (this.externalRefreshQueued);
+    } finally { this.externalRefreshRunning = false; }
   }
 
   async reregisterAreaViews() {
-    for (const area of this.settings.areas) {
-      this.app.workspace.getLeavesOfType(`${VIEW_TYPE_AREA}-${area.key}`)
-        .forEach(l => l.detach());
+    if (hasActiveEditingSession()) {
+      this.areaLayoutPending = true;
+      this.refreshDeferredByEditor = true;
+      this.refreshDeferredLayout = true;
+      return;
+    }
+    this.areaLayoutPending = false;
+    const active = new Set(this.settings.areas.map(area => area.key));
+    for (const key of this.registeredAreaKeys) {
+      if (!active.has(key)) this.app.workspace.getLeavesOfType(`${VIEW_TYPE_AREA}-${key}`).forEach(leaf => leaf.detach());
     }
     for (const area of this.settings.areas) {
       const key = area.key;
-      this.registerView(`${VIEW_TYPE_AREA}-${key}`, (leaf) => new AreaView(leaf, this.settings, this, key));
+      if (!this.registeredAreaKeys.has(key)) {
+        this.registerView(`${VIEW_TYPE_AREA}-${key}`, (leaf) => new AreaView(leaf, this.settings, this, key));
+        this.registeredAreaKeys.add(key);
+      }
     }
-    await this.refreshView();
+    await this.refreshView(true);
   }
 
   async activateDump() {
@@ -711,7 +846,7 @@ export default class MorningOSPlugin extends Plugin {
     }
 
     this.settings.migrationComplete = true;
-    await this.saveData(this.settings);
+    await this.updateSettings({ migrationComplete: true });
     this.refreshView();
 
     if (results.length === 0) {

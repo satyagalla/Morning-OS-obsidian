@@ -793,7 +793,7 @@ export class MorningView extends ItemView {
     dismissBtn.addEventListener("click", () => {
       void (async () => {
         this.settings.lastSeenVersion = manifest.version;
-        await this.plugin.saveData(this.plugin.settings);
+        await this.plugin.updateSettings({ lastSeenVersion: this.plugin.settings.lastSeenVersion });
         banner.remove();
       })();
     });

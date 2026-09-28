@@ -5,6 +5,8 @@ import { getStateStore } from "./data/state-store";
 import type { StateSnapshot } from "./data/state-store";
 import { hasActiveEditingSession } from "./editing-session";
 import type { WidgetNoteExport, WidgetSource } from "./widgets";
+import { cloneSettings, SHARED_SETTINGS_KEYS } from "./data/shared-settings";
+import type { SharedSettings } from "./data/shared-settings";
 
 type NumericSettingsKey = { [K in keyof MorningOSSettings]: MorningOSSettings[K] extends number ? K : never }[keyof MorningOSSettings];
 
@@ -215,16 +217,21 @@ const PROVIDERS = {
 export class MorningOSSettingTab extends PluginSettingTab {
   plugin: MorningOSPlugin;
   private dirtySections = new Set<string>();
+  private renderedBaseline: SharedSettings | null = null;
 
   constructor(app: App, plugin: MorningOSPlugin) {
     super(app, plugin);
     this.plugin = plugin;
   }
 
-  private async save(update: Partial<MorningOSSettings>, section?: string) {
-    Object.assign(this.plugin.settings, update);
-    this.plugin.settings.settingsChangedSinceRun = true;
-    await this.plugin.saveData(this.plugin.settings);
+  private async save(update: Partial<MorningOSSettings>, section?: string, baseline?: SharedSettings) {
+    await this.plugin.updateSettings({ ...update, settingsChangedSinceRun: true }, baseline ?? this.renderedBaseline ?? undefined);
+    if (this.renderedBaseline) {
+      const committed = this.plugin.sharedSettingsBaseline();
+      for (const key of SHARED_SETTINGS_KEYS) {
+        if (key in update) Object.assign(this.renderedBaseline, { [key]: cloneSettings(committed[key]) });
+      }
+    }
     if (section) {
       this.dirtySections.add(section);
       this.markSectionDirty(section);
@@ -294,6 +301,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
   }
 
   display(): void {
+    this.renderedBaseline = this.plugin.sharedSettingsBaseline();
     const { containerEl } = this;
     containerEl.empty();
     this.renderTabBar(containerEl);
@@ -301,6 +309,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
     const content = containerEl.createDiv({ cls: "mos-settings-content" });
     switch (this.activeSettingsTab) {
       case "general":
+        this.renderSharedSettingsSection(content);
         this.renderAISection(content);
         this.renderHomeSection(content);
         this.renderTaskBehaviorSection(content);
@@ -319,6 +328,24 @@ export class MorningOSSettingTab extends PluginSettingTab {
         this.renderAreaBriefingSourcesSection(content);
         break;
     }
+  }
+
+  private renderSharedSettingsSection(containerEl: HTMLElement): void {
+    const status = this.plugin.sharedSettingsStatus();
+    new Setting(containerEl)
+      .setName("Shared vault settings")
+      .setDesc(status.error || (status.adopted
+        ? "Areas, tabs and shared preferences use _generated/data/settings.json. Credentials and widget exports remain local."
+        : "Not initialized. Choose the device whose current configuration should become the baseline, then sync before editing on another device."))
+      .addButton(button => button.setButtonText(status.adopted ? "Shared settings active" : "Initialize from this device")
+        .setDisabled(status.adopted)
+        .onClick(async () => {
+          if (!window.confirm("Use this device's Areas, tabs and shared preferences as the initial shared configuration? A credential-free backup will be preserved. Sync other devices first; existing shared files are never intentionally overwritten.")) return;
+          button.setDisabled(true);
+          try { await this.plugin.initializeSharedSettings(); }
+          catch (error) { new Notice(`Morning OS: settings initialization failed — ${(error as Error).message}`); }
+          this.rerender();
+        }));
   }
 
   private renderDataSafetySection(containerEl: HTMLElement): void {
@@ -843,8 +870,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
           t
             .setValue(this.plugin.settings[key])
             .onChange(async (value) => {
-              this.plugin.settings[key] = value;
-              await this.plugin.saveData(this.plugin.settings);
+              await this.save({ [key]: value });
               await this.plugin.refreshView();
             })
         );
@@ -865,8 +891,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
         toggle
           .setValue(this.plugin.settings.requireSubtasksComplete)
           .onChange(async (value) => {
-            this.plugin.settings.requireSubtasksComplete = value;
-            await this.plugin.saveData(this.plugin.settings);
+            await this.save({ requireSubtasksComplete: value });
             await this.plugin.refreshView();
           })
       );
@@ -878,8 +903,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
         toggle
           .setValue(this.plugin.settings.showNotesIndicator)
           .onChange(async (value) => {
-            this.plugin.settings.showNotesIndicator = value;
-            await this.plugin.saveData(this.plugin.settings);
+            await this.save({ showNotesIndicator: value });
             await this.plugin.refreshView();
           })
       );
@@ -895,8 +919,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
         toggle
           .setValue(this.plugin.settings.advancedAreaFeatures)
           .onChange(async (value) => {
-            this.plugin.settings.advancedAreaFeatures = value;
-            await this.plugin.saveData(this.plugin.settings);
+            await this.save({ advancedAreaFeatures: value });
             await this.plugin.refreshView(true);
           })
       );
@@ -934,7 +957,9 @@ export class MorningOSSettingTab extends PluginSettingTab {
       text: "Choose which Areas may contribute Markdown sections to AI-generated briefings.",
     });
 
-    for (const area of this.plugin.settings.areas) {
+    const areas = cloneSettings(this.plugin.settings.areas);
+    let baseline = this.plugin.sharedSettingsBaseline();
+    for (const area of areas) {
       new Setting(containerEl)
         .setName(`${area.icon} ${area.label}`)
         .addToggle((toggle) =>
@@ -942,7 +967,8 @@ export class MorningOSSettingTab extends PluginSettingTab {
             .setValue(area.feedToLLM ?? true)
             .onChange(async (value) => {
               area.feedToLLM = value;
-              await this.save({ areas: [...this.plugin.settings.areas] }, "Area briefing sources");
+              await this.save({ areas }, "Area briefing sources", baseline);
+              baseline = this.plugin.sharedSettingsBaseline();
             })
         );
     }
@@ -953,15 +979,13 @@ export class MorningOSSettingTab extends PluginSettingTab {
 
   private renderAreasSection(containerEl: HTMLElement) {
     this.sectionHeading(containerEl, "Areas");
-    const areas = this.plugin.settings.areas;
+    const areas = cloneSettings(this.plugin.settings.areas);
+    let baseline = this.plugin.sharedSettingsBaseline();
     const saveDataOnly = async () => {
-      await this.plugin.saveData(this.plugin.settings);
-      this.plugin.refreshView(true);
+      await this.save({ areas }, undefined, baseline);
+      baseline = this.plugin.sharedSettingsBaseline();
     };
-    const saveAndSync = async () => {
-      await this.plugin.saveData(this.plugin.settings);
-      await this.plugin.reregisterAreaViews();
-    };
+    const saveAndSync = saveDataOnly;
 
     if (this.selectedAreaKey && !areas.find(p => p.key === this.selectedAreaKey)) {
       this.selectedAreaKey = null; this.selectedTabKey = null;
