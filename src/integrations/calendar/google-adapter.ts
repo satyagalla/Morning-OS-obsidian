@@ -1,4 +1,5 @@
 import type { CalendarHttp } from "./oauth-token";
+import { CalendarPublishError } from "./contracts";
 
 /** Phase 0 spike: not connected to plugin lifecycle or account setup. */
 export interface CalendarIntent {
@@ -125,7 +126,10 @@ export class GoogleCalendarAdapter {
         return await this.http({ url: endpoint, method, headers: {
           Authorization: `Bearer ${token}`, "Content-Type": "application/json", ...(etag ? { "If-Match": etag } : {}),
         }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-      } catch { throw new Error("Calendar request failed; retry after checking connection"); }
+      } catch (error) {
+        if (error instanceof CalendarPublishError) throw error;
+        throw new CalendarPublishError("unknown", "Calendar request outcome is unknown");
+      }
     };
     const confirm = async (value: unknown): Promise<CalendarResult | null> => {
       if (!record(value) || value.id !== eventId || typeof value.etag !== "string" || !value.etag ||
@@ -140,8 +144,10 @@ export class GoogleCalendarAdapter {
     if (remote.status === 404) {
       if (intent.active && intent.predecessorId !== null) return { status: "conflict", reason: "Previous event is missing; publication paused" };
       if (intent.active && Date.parse(intent.start) <= this.now()) return { status: "missed", reason: "Received too late" };
-      if (intent.active && !await this.creationGuard?.(intent)) return { status: "conflict", reason: "No durable first-publication permit; automatic creation paused" };
-      // A clear may safely establish a non-alerting fence even when A was never sent.
+      // Every first POST, including a non-alerting fence, consumes durable
+      // attempt evidence. A missing provider event after any prior attempt is a
+      // conflict, never permission to recreate history that may have been deleted.
+      if (!await this.creationGuard?.(intent)) return { status: "conflict", reason: "No durable first-publication permit; automatic creation paused" };
       const created = await request("POST", url, { id: eventId, ...desired, extendedProperties: { private: properties } });
       if (created.status === 409) {
         remote = await request("GET", `${url}/${eventId}`);

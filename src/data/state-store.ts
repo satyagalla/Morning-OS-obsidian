@@ -104,17 +104,28 @@ function migratePersistedState(raw: string, path: string): MorningState | null {
   } catch {
     return null;
   }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed) || (parsed as { schemaVersion?: unknown }).schemaVersion !== 1) {
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     return null;
   }
+  const sourceVersion = (parsed as { schemaVersion?: unknown }).schemaVersion;
+  if (sourceVersion !== 1 && sourceVersion !== 2) return null;
   const candidate = JSON.parse(JSON.stringify(parsed)) as MorningState;
   candidate.schemaVersion = STATE_SCHEMA_VERSION;
   if (Array.isArray(candidate.items)) {
     for (const item of candidate.items) {
-      if (typeof item === "object" && item !== null && "calendar_reminder" in item) {
+      if (sourceVersion === 1 && typeof item === "object" && item !== null && "calendar_reminder" in item) {
         // Version 1 never wrote this field. Reject an impossible mixed-version
         // state instead of guessing an ordering history.
         throw new StateValidationError(`invalid ${path}: calendar reminder history requires schema version 2`);
+      }
+      if (sourceVersion === 2 && typeof item === "object" && item !== null) {
+        const history = (item as { calendar_reminder?: unknown }).calendar_reminder;
+        if (typeof history === "object" && history !== null && !Array.isArray(history) &&
+          !("providerAttempted" in history)) {
+          // Schema 2 never wired provider dispatch, so no provider POST could
+          // have been issued by Morning OS production lifecycle.
+          (history as { providerAttempted: boolean }).providerAttempted = false;
+        }
       }
     }
   }
@@ -240,7 +251,9 @@ export class StateStore {
       candidate.revision = current.revision + 1;
       candidate.writtenAt = timestamp();
       validateState(candidate);
-      if (JSON.stringify(current.items) === JSON.stringify(candidate.items) && JSON.stringify(current.definitions) === JSON.stringify(candidate.definitions)) {
+      if (JSON.stringify(current.items) === JSON.stringify(candidate.items) &&
+        JSON.stringify(current.definitions) === JSON.stringify(candidate.definitions) &&
+        JSON.stringify(current.calendar) === JSON.stringify(candidate.calendar)) {
         return { before: current, after: current };
       }
       await this.maybeAutomaticSnapshot(current);
@@ -266,7 +279,45 @@ export class StateStore {
   }
 
   async replaceItems(items: TaskRegistry, reason = "replace-items"): Promise<void> {
-    await this.update(state => { state.items = JSON.parse(JSON.stringify(items)) as TaskRegistry; }, reason);
+    await this.update(state => {
+      const incoming = JSON.parse(JSON.stringify(items)) as TaskRegistry;
+      const currentById = new Map(state.items.map(item => [item._id, item]));
+      const incomingIds = new Set(incoming.map(item => item._id));
+      for (const item of incoming) {
+        const current = currentById.get(item._id);
+        if (!current?.calendar_reminder) continue;
+        if (!item.calendar_reminder) {
+          item.calendar_reminder = JSON.parse(JSON.stringify(current.calendar_reminder)) as typeof current.calendar_reminder;
+          continue;
+        }
+        const currentIds = current.calendar_reminder.mutations.map(mutation => mutation.id);
+        const incomingMutationIds = item.calendar_reminder.mutations.map(mutation => mutation.id);
+        if (currentIds.some((id, index) => incomingMutationIds[index] !== id)) {
+          throw new StateValidationError("stale registry replacement would overwrite calendar ordering history");
+        }
+        item.calendar_reminder.providerAttempted ||= current.calendar_reminder.providerAttempted;
+        const deliveryById = new Map(current.calendar_reminder.mutations.map(mutation => [mutation.id, mutation.delivery]));
+        for (const mutation of item.calendar_reminder.mutations) {
+          const delivery = deliveryById.get(mutation.id);
+          if (delivery && (!mutation.delivery || delivery.attempts >= mutation.delivery.attempts)) {
+            mutation.delivery = JSON.parse(JSON.stringify(delivery)) as typeof delivery;
+          }
+        }
+      }
+      // Whole-registry UI saves are never deletion operations. Preserve items
+      // committed after the caller's read instead of erasing them.
+      for (const current of state.items) {
+        if (!incomingIds.has(current._id)) incoming.push(current);
+      }
+      state.items = incoming;
+    }, reason);
+  }
+
+  async addItem(item: TaskRegistry[number], reason = "add-item"): Promise<void> {
+    await this.update(state => {
+      if (state.items.some(candidate => candidate._id === item._id)) throw new StateValidationError("item ID already exists");
+      state.items.push(JSON.parse(JSON.stringify(item)) as TaskRegistry[number]);
+    }, reason);
   }
 
   async backupNow(): Promise<string> {

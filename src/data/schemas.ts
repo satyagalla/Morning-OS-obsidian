@@ -1,6 +1,6 @@
-import type { CalendarReminderHistory, CalendarReminderMutation, Task, TaskRegistry } from "../types";
+import type { CalendarIntegrationState, CalendarReminderHistory, CalendarReminderMutation, Task, TaskRegistry } from "../types";
 
-export const STATE_SCHEMA_VERSION = 2;
+export const STATE_SCHEMA_VERSION = 3;
 
 export interface StateMigrationProvenance {
   source: "legacy-tasks" | "state";
@@ -16,6 +16,8 @@ export interface MorningState {
   items: TaskRegistry;
   /** Structural configuration is introduced gradually; unknown data remains intact. */
   definitions?: Record<string, unknown>;
+  /** Syncable protocol policy/evidence only. Credentials remain device-local. */
+  calendar?: CalendarIntegrationState;
 }
 
 export class StateValidationError extends Error {
@@ -60,7 +62,8 @@ function isTimeZone(value: unknown): value is string {
 
 function validateCalendarReminder(value: unknown, taskId: string): asserts value is CalendarReminderHistory {
   if (value === null || value === undefined) return;
-  if (!isRecord(value) || value.version !== 1 || !Array.isArray(value.mutations) || value.mutations.length === 0) {
+  if (!isRecord(value) || value.version !== 1 || typeof value.providerAttempted !== "boolean" ||
+    !Array.isArray(value.mutations) || value.mutations.length === 0) {
     throw new StateValidationError(`item ${taskId} has invalid calendar reminder history`);
   }
   const mutations = value.mutations as CalendarReminderMutation[];
@@ -73,11 +76,51 @@ function validateCalendarReminder(value: unknown, taskId: string): asserts value
       (mutation.date !== null && !isDate(mutation.date)) || !isTime(mutation.time) || !isTimeZone(mutation.timeZone)) {
       throw new StateValidationError(`item ${taskId} has invalid calendar reminder mutation`);
     }
+    if (mutation.delivery !== undefined) {
+      const delivery = mutation.delivery;
+      const statuses = ["dispatching", "confirmed", "conflict", "missed", "retryable", "unknown", "auth-required", "permission-denied"];
+      if (!isRecord(delivery) || !statuses.includes(delivery.status as string) ||
+        !Number.isInteger(delivery.attempts) || (delivery.attempts as number) < 1 ||
+        typeof delivery.updatedAt !== "string" || !delivery.updatedAt ||
+        (delivery.reason !== undefined && typeof delivery.reason !== "string") ||
+        (delivery.eventId !== undefined && typeof delivery.eventId !== "string") ||
+        (delivery.etag !== undefined && typeof delivery.etag !== "string") ||
+        (delivery.retryAt !== undefined && typeof delivery.retryAt !== "string")) {
+        throw new StateValidationError(`item ${taskId} has invalid calendar delivery evidence`);
+      }
+    }
     if (mutation.active !== (mutation.date !== null)) {
       throw new StateValidationError(`item ${taskId} has calendar reminder activity/date mismatch`);
     }
     ids.add(mutation.id);
     predecessor = mutation.id;
+  }
+}
+
+function validateCalendarIntegration(value: unknown): asserts value is CalendarIntegrationState {
+  if (value === undefined) return;
+  if (!isRecord(value) || value.version !== 1 || value.protocolVersion !== 1 || value.provider !== "google" ||
+    typeof value.integrationId !== "string" || !value.integrationId ||
+    typeof value.ownershipToken !== "string" || !value.ownershipToken ||
+    typeof value.publisherDeviceId !== "string" || !value.publisherDeviceId ||
+    typeof value.enabled !== "boolean" || !isTime(value.defaultTime) || !isTimeZone(value.timeZone) ||
+    !isRecord(value.calendar)) {
+    throw new StateValidationError("state has invalid calendar integration policy");
+  }
+  const calendar = value.calendar;
+  if (!["unconfigured", "creating", "unknown", "ready", "conflict"].includes(calendar.status as string) ||
+    typeof calendar.confirmed !== "boolean" ||
+    (calendar.attemptId !== undefined && typeof calendar.attemptId !== "string") ||
+    (calendar.id !== undefined && typeof calendar.id !== "string") ||
+    (calendar.summary !== undefined && typeof calendar.summary !== "string") ||
+    (calendar.reason !== undefined && typeof calendar.reason !== "string")) {
+    throw new StateValidationError("state has invalid calendar enrollment evidence");
+  }
+  if (calendar.status === "ready" && (!calendar.confirmed || !calendar.id || calendar.id === "primary")) {
+    throw new StateValidationError("state calendar is not a confirmed dedicated calendar");
+  }
+  if (calendar.confirmed && calendar.status !== "ready") {
+    throw new StateValidationError("state calendar confirmation is inconsistent");
   }
 }
 
@@ -95,6 +138,12 @@ function validateTask(task: unknown, ids: Set<string>): asserts task is Task {
   if (!isDate(task.date_created) || !isDate(task.date_modified)) throw new StateValidationError(`item ${task._id} has invalid dates`);
   if (task.date_completed !== null && !isDate(task.date_completed)) throw new StateValidationError(`item ${task._id} has invalid completion date`);
   if (task.date_remind !== null && !isDate(task.date_remind)) throw new StateValidationError(`item ${task._id} has invalid reminder date`);
+  if (task.reminder_time !== undefined && task.reminder_time !== null && !isTime(task.reminder_time)) {
+    throw new StateValidationError(`item ${task._id} has invalid reminder time`);
+  }
+  if (task.reminder_time_zone !== undefined && task.reminder_time_zone !== null && !isTimeZone(task.reminder_time_zone)) {
+    throw new StateValidationError(`item ${task._id} has invalid reminder time zone`);
+  }
   if (task.parent_id !== null && typeof task.parent_id !== "string") throw new StateValidationError(`item ${task._id} has invalid parent`);
   if (task.kind !== "task" && task.kind !== "note") throw new StateValidationError(`item ${task._id} has invalid kind`);
   if (task.status_note !== undefined && task.status_note !== "active" && task.status_note !== "archived") throw new StateValidationError(`item ${task._id} has invalid note lifecycle`);
@@ -114,6 +163,15 @@ function validateTask(task: unknown, ids: Set<string>): asserts task is Task {
     }
   }
   validateCalendarReminder(task.calendar_reminder, task._id);
+  if (task.calendar_reminder) {
+    const latest = task.calendar_reminder.mutations[task.calendar_reminder.mutations.length - 1];
+    const active = !task.is_deleted && task.date_remind !== null && task.status_completion === "open" &&
+      (task.kind !== "note" || task.status_note === "active");
+    if ((!active && latest.active) || latest.title !== task.text ||
+      (latest.active && latest.date !== task.date_remind) || (!latest.active && latest.date !== null)) {
+      throw new StateValidationError(`item ${task._id} calendar history does not match authoritative state`);
+    }
+  }
   if (task.deletion_batch_id !== undefined && task.deletion_batch_id !== null && typeof task.deletion_batch_id !== "string") {
     throw new StateValidationError(`item ${task._id} has invalid deletion batch`);
   }
@@ -150,6 +208,7 @@ export function validateState(value: unknown): asserts value is MorningState {
   if (typeof value.writtenAt !== "string" || !value.writtenAt) throw new StateValidationError("state has no write timestamp");
   if (!Array.isArray(value.items)) throw new StateValidationError("state items is not an array");
   if (value.definitions !== undefined && !isRecord(value.definitions)) throw new StateValidationError("state definitions are not an object");
+  validateCalendarIntegration(value.calendar);
   const ids = new Set<string>();
   value.items.forEach(item => validateTask(item, ids));
   validateRelationships(value.items as TaskRegistry);

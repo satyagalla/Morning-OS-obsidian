@@ -107,7 +107,7 @@ test("clear that loses an insert race conditionally cancels its predecessor", as
       return { status: 404, body: {} };
     }
     return provider.http(request);
-  }, async () => "token", () => 0);
+  }, async () => "token", () => 0, async () => true);
   assert.equal((await adapter.reconcile(successor("clear", "A", { active: false }))).status, "cancelled");
   assert.deepEqual(provider.event?.reminders, { useDefault: false, overrides: [] });
   assert.equal(provider.writes.at(-1)?.method, "PATCH");
@@ -126,11 +126,11 @@ test("deleted initial event or lost creation evidence cannot automatically recre
 test("timeout after creation or replacement recovers without duplicate writes", async () => {
   const provider = new Provider();
   provider.timeout = true;
-  await assert.rejects(provider.adapter().reconcile(initial), /Calendar request failed/);
+  await assert.rejects(provider.adapter().reconcile(initial), /outcome is unknown/);
   assert.equal((await provider.adapter().reconcile(initial)).status, "published");
   provider.timeout = true;
   const b = successor("B", "A");
-  await assert.rejects(provider.adapter().reconcile(b), /Calendar request failed/);
+  await assert.rejects(provider.adapter().reconcile(b), /outcome is unknown/);
   assert.equal((await provider.adapter().reconcile(b)).status, "published");
   assert.equal(provider.writes.length, 2);
 });

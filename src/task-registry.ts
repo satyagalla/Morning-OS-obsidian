@@ -325,7 +325,7 @@ export async function changeItemKind(app: App, id: string, kind: ItemKind): Prom
       item.status_note = undefined;
     }
     item.kind = kind;
-    if (!calendarReminderActive(item)) appendCalendarMutation(item);
+    if (!calendarReminderActive(item)) appendCalendarMutation(item, state);
     item.date_modified = todayStr();
   });
 }
@@ -338,7 +338,7 @@ export async function setNoteStatus(app: App, id: string, status: NoteStatus): P
     // Keep the legacy status field coherent for existing projections and exports.
     item.status_completion = status === "archived" ? "done" : "open";
     item.date_completed = status === "archived" ? todayStr() : null;
-    if (status === "archived") appendCalendarMutation(item);
+    if (status === "archived") appendCalendarMutation(item, state);
     item.date_modified = todayStr();
   });
 }
@@ -390,19 +390,23 @@ function calendarReminderActive(item: Task): boolean {
     (item.kind !== "note" || item.status_note === "active");
 }
 
-function appendCalendarMutation(item: Task): void {
-  const history = item.calendar_reminder;
-  if (!history) return;
+function appendCalendarMutation(item: Task, state: import("./data/schemas").MorningState, allowEnroll = false, forceInactive = false): void {
+  let history = item.calendar_reminder;
+  if (!history) {
+    if (!allowEnroll || !state.calendar?.enabled || state.calendar.calendar.status !== "ready" || !calendarReminderActive(item)) return;
+    history = { version: 1, providerAttempted: false, mutations: [] };
+    item.calendar_reminder = history;
+  }
   const previous = history.mutations[history.mutations.length - 1];
-  const active = calendarReminderActive(item);
+  const active = !forceInactive && calendarReminderActive(item);
   const next: CalendarReminderMutation = {
     id: generateId(),
     predecessorId: previous?.id ?? null,
     active,
     title: item.text,
     date: active ? item.date_remind : null,
-    time: previous.time,
-    timeZone: previous.timeZone,
+    time: item.reminder_time ?? previous?.time ?? state.calendar?.defaultTime ?? "09:00",
+    timeZone: item.reminder_time_zone ?? previous?.timeZone ?? state.calendar?.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
   };
   if (previous && previous.active === next.active && previous.title === next.title && previous.date === next.date &&
     previous.time === next.time && previous.timeZone === next.timeZone) return;
@@ -425,7 +429,7 @@ export async function enrollCalendarReminder(app: App, id: string, time: string,
       time,
       timeZone,
     };
-    const history: CalendarReminderHistory = { version: 1, mutations: [mutation] };
+    const history: CalendarReminderHistory = { version: 1, providerAttempted: false, mutations: [mutation] };
     item.calendar_reminder = history;
     item.date_modified = todayStr();
   });
@@ -435,6 +439,8 @@ export async function updateTask(app: App, id: string, patch: Partial<Task>): Pr
   await stateUpdate(app, "edit-item", state => {
     const item = state.items.find(task => task._id === id);
     if (!item) return;
+    const previousMutation = item.calendar_reminder?.mutations[item.calendar_reminder.mutations.length - 1];
+    const wasCalendarArmed = previousMutation?.active ?? calendarReminderActive(item);
     const changed = Object.keys(patch).some(field => {
       const key = field as keyof Task;
       return JSON.stringify(item[key]) !== JSON.stringify(patch[key]);
@@ -443,8 +449,10 @@ export async function updateTask(app: App, id: string, patch: Partial<Task>): Pr
     const { date_remind: _dateRemind, ...otherPatch } = patch;
     Object.assign(item, otherPatch);
     applyReminderDateChange(item, patch);
-    if ("text" in patch || "date_remind" in patch || "status_completion" in patch || "status_note" in patch || "is_deleted" in patch) {
-      appendCalendarMutation(item);
+    if ("text" in patch || "date_remind" in patch || "reminder_time" in patch || "reminder_time_zone" in patch ||
+      "status_completion" in patch || "status_note" in patch || "is_deleted" in patch) {
+      const resetSchedule = "date_remind" in patch || "reminder_time" in patch || "reminder_time_zone" in patch;
+      appendCalendarMutation(item, state, resetSchedule, !resetSchedule && !wasCalendarArmed && calendarReminderActive(item));
     }
     item.date_modified = todayStr();
   });
@@ -479,11 +487,15 @@ export async function saveItemDraft(app: App, base: ItemDraft, draft: ItemDraft,
       patch.tags = mergeDraftTags(base, draft, item);
     }
     if (Object.keys(patch).length === 0) return;
+    const previousMutation = item.calendar_reminder?.mutations[item.calendar_reminder.mutations.length - 1];
+    const wasCalendarArmed = previousMutation?.active ?? calendarReminderActive(item);
     const { date_remind: _dateRemind, ...otherPatch } = patch;
     Object.assign(item, otherPatch);
     applyReminderDateChange(item, patch);
-    if ("text" in patch || "date_remind" in patch || "status_completion" in patch || "status_note" in patch || "is_deleted" in patch) {
-      appendCalendarMutation(item);
+    if ("text" in patch || "date_remind" in patch || "reminder_time" in patch || "reminder_time_zone" in patch ||
+      "status_completion" in patch || "status_note" in patch || "is_deleted" in patch) {
+      const resetSchedule = "date_remind" in patch || "reminder_time" in patch || "reminder_time_zone" in patch;
+      appendCalendarMutation(item, state, resetSchedule, !resetSchedule && !wasCalendarArmed && calendarReminderActive(item));
     }
     item.date_modified = todayStr();
   }, "edit item");
@@ -498,7 +510,7 @@ export async function setTaskStatus(app: App, id: string, status: CompletionStat
     if (!item || item.kind === "note" || item.status_completion === status) return;
     item.status_completion = status;
     item.date_completed = status === "done" ? todayStr() : null;
-    if (status !== "open") appendCalendarMutation(item);
+    if (status !== "open") appendCalendarMutation(item, state);
     item.date_modified = todayStr();
   });
 }
@@ -540,7 +552,7 @@ export async function setTaskReminder(app: App, id: string, date: string | null)
     const task = state.items.find(item => item._id === id);
     if (!task || task.date_remind === date) return;
     applyReminderDateChange(task, { date_remind: date });
-    appendCalendarMutation(task);
+    appendCalendarMutation(task, state, true);
     task.date_modified = todayStr();
   });
 }
@@ -555,7 +567,7 @@ export async function deleteTask(app: App, id: string): Promise<void> {
       task.is_deleted = true;
       task.is_today = false;
       task.deletion_batch_id = batch;
-      appendCalendarMutation(task);
+      appendCalendarMutation(task, state);
       task.date_modified = todayStr();
     }
     root.deleted_member_ids = affected.map(task => task._id);
@@ -587,6 +599,13 @@ export async function purgeTask(app: App, id: string): Promise<number> {
     const ids = new Set([id]);
     if (root.parent_id === null) {
       for (const child of state.items) if (child.parent_id === id) ids.add(child._id);
+    }
+    for (const item of state.items) {
+      if (!ids.has(item._id) || !item.calendar_reminder) continue;
+      const latest = item.calendar_reminder.mutations[item.calendar_reminder.mutations.length - 1];
+      if (latest.active || latest.delivery?.status !== "confirmed") {
+        throw new Error("calendar cancellation must be confirmed before permanent deletion");
+      }
     }
     purged = ids.size;
     state.items = state.items.filter(item => !ids.has(item._id));

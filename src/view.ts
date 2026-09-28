@@ -2587,6 +2587,18 @@ export class TaskEditModal extends ObsidianModal {
     remindInput.value = this.task.date_remind ?? "";
     remindInput.addEventListener("change", () => { this.task.date_remind = remindInput.value || null; });
 
+    const reminderTimeWrap = this.field(contentEl, "Reminder time (optional)");
+    const reminderTimeInput = reminderTimeWrap.createEl("input", { type: "time", cls: "mos-edit-input" });
+    reminderTimeInput.value = this.task.reminder_time ?? "";
+    reminderTimeInput.addEventListener("change", () => { this.task.reminder_time = reminderTimeInput.value || null; });
+    reminderTimeWrap.createEl("p", { cls: "mos-edit-help", text: "Leave blank to use the committed calendar default." });
+
+    const reminderZoneWrap = this.field(contentEl, "Reminder time zone (optional)");
+    const reminderZoneInput = reminderZoneWrap.createEl("input", { type: "text", cls: "mos-edit-input", attr: { placeholder: "America/New_York" } });
+    reminderZoneInput.value = this.task.reminder_time_zone ?? "";
+    reminderZoneInput.addEventListener("change", () => { this.task.reminder_time_zone = reminderZoneInput.value.trim() || null; });
+    reminderZoneWrap.createEl("p", { cls: "mos-edit-help", text: "Use an IANA name. The schedule remains in this zone while you travel." });
+
     // Details uses the new field while mirroring legacy notes for existing consumers.
     const detailsWrap = this.field(contentEl, "Details");
     const detailsInput = detailsWrap.createEl("textarea", { cls: "mos-edit-input mos-edit-textarea" });

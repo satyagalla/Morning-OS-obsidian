@@ -101,7 +101,7 @@ test("schema validation rejects unsupported versions, malformed records, and cyc
   const malformed = task("one");
   malformed.kind = "note";
   assert.throws(
-    () => validateState({ schemaVersion: 2, revision: 0, writtenAt: "x", items: [malformed] }),
+    () => validateState({ schemaVersion: 3, revision: 0, writtenAt: "x", items: [malformed] }),
     /no lifecycle/,
   );
 
@@ -110,7 +110,7 @@ test("schema validation rejects unsupported versions, malformed records, and cyc
   first.parent_id = "second";
   second.parent_id = "first";
   assert.throws(
-    () => validateState({ schemaVersion: 2, revision: 0, writtenAt: "x", items: [first, second] }),
+    () => validateState({ schemaVersion: 3, revision: 0, writtenAt: "x", items: [first, second] }),
     StateValidationError,
   );
 });
@@ -193,7 +193,7 @@ test("schema 1 state is snapshotted before migration and calendar history requir
 
   assert.deepEqual(await store.initialize(), { migrated: true, itemCount: 1 });
   let current = (JSON.parse(await adapter.read(STATE_PATH)) as { schemaVersion: number; items: Task[] });
-  assert.equal(current.schemaVersion, 2);
+  assert.equal(current.schemaVersion, 3);
   assert.equal(current.items[0].calendar_reminder, undefined);
   assert.ok([...adapter.files.values()].some(bytes => {
     try { return (JSON.parse(bytes) as { raw?: string }).raw === original; }
@@ -210,6 +210,23 @@ test("schema 1 state is snapshotted before migration and calendar history requir
   assert.equal(mutations[1].predecessorId, mutations[0].id);
   assert.equal(mutations[2].active, false);
   assert.equal(mutations[2].predecessorId, mutations[1].id);
+});
+
+test("generic reopen and text edits do not re-arm a cancelled calendar occurrence", async () => {
+  const adapter = new MemoryAdapter();
+  const reminder = task("reopen-calendar", "Original");
+  reminder.date_remind = "2030-09-20";
+  adapter.files.set(STATE_PATH, state([reminder]));
+  const app = createApp(adapter) as never;
+  await new StateStore(app).initialize();
+  await enrollCalendarReminder(app, reminder._id, "09:00", "America/New_York");
+  await setTaskStatus(app, reminder._id, "done");
+  await updateTask(app, reminder._id, { status_completion: "open" });
+  await updateTask(app, reminder._id, { text: "Renamed after reopen" });
+  const stored = (JSON.parse(await adapter.read(STATE_PATH)) as { items: Task[] }).items[0];
+  const mutations = stored.calendar_reminder!.mutations;
+  assert.equal(mutations[mutations.length - 1]?.active, false);
+  assert.equal(mutations[mutations.length - 1]?.title, "Renamed after reopen");
 });
 
 test("malformed active state blocks all mutations instead of replacing it", async () => {

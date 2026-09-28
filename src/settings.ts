@@ -5,6 +5,7 @@ import { getStateStore } from "./data/state-store";
 import type { StateSnapshot } from "./data/state-store";
 import { hasActiveEditingSession } from "./editing-session";
 import type { WidgetNoteExport, WidgetSource } from "./widgets";
+import { todayStr } from "./utils";
 import { cloneSettings, SHARED_SETTINGS_KEYS } from "./data/shared-settings";
 import type { SharedSettings } from "./data/shared-settings";
 
@@ -281,6 +282,7 @@ export class MorningOSSettingTab extends PluginSettingTab {
   private renderTabBar(containerEl: HTMLElement) {
     const tabs = [
       { key: "general", label: "General" },
+      { key: "calendar", label: "Calendar (experimental)" },
       { key: "advanced", label: "Advanced" },
     ];
     const bar = containerEl.createDiv({ cls: "mos-settings-tab-bar" });
@@ -327,6 +329,9 @@ export class MorningOSSettingTab extends PluginSettingTab {
         this.renderModesSection(content);
         this.renderAreaBriefingSourcesSection(content);
         break;
+      case "calendar":
+        this.renderCalendarSection(content);
+        break;
     }
   }
 
@@ -346,6 +351,221 @@ export class MorningOSSettingTab extends PluginSettingTab {
           catch (error) { new Notice(`Morning OS: settings initialization failed — ${(error as Error).message}`); }
           this.rerender();
         }));
+  }
+
+  private renderCalendarSection(containerEl: HTMLElement): void {
+    this.sectionHeading(containerEl, "Experimental Google Calendar reminders");
+    containerEl.createEl("p", {
+      cls: "setting-item-description",
+      text: "Single-publisher test mode only. Morning OS remains task authority. Google Calendar clients deliver alerts; dismissing or snoozing an alert never changes an item. Use a disposable vault and the plugin-created dedicated test calendar.",
+    });
+    const stateEl = containerEl.createDiv({ cls: "mos-calendar-settings-state" });
+    stateEl.createEl("p", { cls: "setting-item-description", text: "Loading validated calendar state…" });
+    void this.populateCalendarSection(stateEl);
+  }
+
+  private async populateCalendarSection(containerEl: HTMLElement): Promise<void> {
+    try {
+      const state = await getStateStore(this.app).read();
+      if (!containerEl.isConnected && this.containerEl.isConnected) return;
+      containerEl.empty();
+      const integration = state.calendar;
+      const runtime = this.plugin.calendarStatus();
+      new Setting(containerEl)
+        .setName("Publisher status")
+        .setDesc(`${runtime.message} Shared state: ${integration?.calendar.status ?? "not initialized"}.`)
+        .addButton(button => button.setButtonText("Refresh").onClick(() => this.rerender()));
+
+      if (!integration) {
+        const defaultZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        new Setting(containerEl)
+          .setName("Initialize experimental integration")
+          .setDesc(`Creates syncable protocol identity and selects this device as the only publisher. Default: 09:00 in ${defaultZone}. No login or provider write occurs.`)
+          .addButton(button => button.setButtonText("Initialize").onClick(async () => {
+            button.setDisabled(true);
+            try {
+              await this.plugin.initializeCalendar("09:00", defaultZone);
+              new Notice("Morning OS: experimental calendar integration initialized. Publishing remains disabled.");
+              this.rerender();
+            } catch (error) {
+              new Notice(`Morning OS: calendar setup failed — ${(error as Error).message}`);
+              button.setDisabled(false);
+            }
+          }));
+        return;
+      }
+
+      const isPublisher = integration.publisherDeviceId === this.plugin.calendarDevice();
+      new Setting(containerEl)
+        .setName("Single publishing device")
+        .setDesc(isPublisher ? "This device is selected. Other devices may edit synced items but cannot publish." : "Another device is selected. Publishing is blocked here until you explicitly transfer it.")
+        .addButton(button => button.setButtonText(isPublisher ? "Selected" : "Use this device").setDisabled(isPublisher).onClick(async () => {
+          if (!window.confirm("Transfer calendar publishing to this device? Publishing is disabled during the transfer; confirm the previous device is no longer publishing.")) return;
+          await this.plugin.useThisCalendarPublisher();
+          new Notice("Morning OS: this device is now the selected publisher; publishing remains disabled.");
+          this.rerender();
+        }));
+
+      let defaultTime = integration.defaultTime;
+      let timeZone = integration.timeZone;
+      new Setting(containerEl)
+        .setName("Default reminder time")
+        .setDesc("Date-only reminders use this committed wall time. Saving changes creates causal reschedules for enrolled items.")
+        .addText(text => {
+          text.inputEl.type = "time";
+          text.setValue(defaultTime).onChange(value => { defaultTime = value; });
+        });
+      new Setting(containerEl)
+        .setName("Default IANA time zone")
+        .setDesc("Schedules keep this zone while travelling. Spring-forward gaps are rejected; fall overlaps use the earlier instant.")
+        .addText(text => text.setValue(timeZone).onChange(value => { timeZone = value.trim(); }))
+        .addButton(button => button.setButtonText("Save policy").onClick(async () => {
+          try {
+            await this.plugin.setCalendarTimePolicy(defaultTime, timeZone);
+            new Notice("Morning OS: calendar time policy saved and enrolled reminders rescheduled.");
+            this.rerender();
+          } catch (error) { new Notice(`Morning OS: invalid calendar time policy — ${(error as Error).message}`); }
+        }));
+      try {
+        containerEl.createEl("p", { cls: "setting-item-description", text: `Preview: ${this.plugin.calendarSchedulePreview(todayStr(), defaultTime, timeZone)}` });
+      } catch (error) {
+        containerEl.createEl("p", { cls: "setting-item-description", text: `Preview unavailable: ${(error as Error).message}` });
+      }
+
+      this.renderCalendarAuthentication(containerEl);
+
+      const calendar = integration.calendar;
+      if (calendar.status === "unconfigured" || calendar.status === "conflict") {
+        new Setting(containerEl)
+          .setName("Create dedicated test calendar")
+          .setDesc("Creates exactly one plugin-owned Google calendar. An uncertain result is never retried blindly.")
+          .addButton(button => button.setButtonText("Create test calendar").onClick(async () => {
+            button.setDisabled(true);
+            try {
+              await this.plugin.createCalendarTestCalendar();
+              new Notice("Morning OS: dedicated test calendar created and confirmed.");
+              this.rerender();
+            } catch (error) {
+              new Notice(`Morning OS: calendar creation not confirmed — ${(error as Error).message}`);
+              this.rerender();
+            }
+          }));
+      }
+      if (calendar.status === "creating" || calendar.status === "unknown") {
+        let recoveryId = "";
+        new Setting(containerEl)
+          .setName("Recover uncertain calendar creation")
+          .setDesc("Paste the exact dedicated calendar ID from Google Calendar settings. Ownership is verified; no new calendar is created.")
+          .addText(text => text.setPlaceholder("Dedicated calendar ID").onChange(value => { recoveryId = value.trim(); }))
+          .addButton(button => button.setButtonText("Inspect and recover").onClick(async () => {
+            try {
+              await this.plugin.recoverCalendarTestCalendar(recoveryId);
+              new Notice("Morning OS: dedicated calendar ownership confirmed.");
+              this.rerender();
+            } catch (error) { new Notice(`Morning OS: recovery failed — ${(error as Error).message}`); }
+          }));
+      }
+
+      new Setting(containerEl)
+        .setName("Enroll existing reminders")
+        .setDesc("Creates durable intent for currently active date reminders. Acknowledged Today occurrences are not re-armed.")
+        .addButton(button => button.setButtonText("Preview and enroll").onClick(async () => {
+          const count = state.items.filter(item => !item.calendar_reminder && !item.is_deleted && item.date_remind &&
+            item.status_completion === "open" && (item.kind !== "note" || item.status_note === "active")).length;
+          if (!count) { new Notice("Morning OS: no existing reminders need enrollment."); return; }
+          if (!window.confirm(`Enroll ${count} existing reminder${count === 1 ? "" : "s"} using the committed default policy?`)) return;
+          const enrolled = await this.plugin.enrollCalendarReminders();
+          new Notice(`Morning OS: enrolled ${enrolled} reminder${enrolled === 1 ? "" : "s"}.`);
+          this.rerender();
+        }));
+
+      new Setting(containerEl)
+        .setName("Automatic publishing")
+        .setDesc(integration.enabled ? "Committed enrolled reminder changes reconcile automatically." : "Disabled. Existing Google alerts are not cancelled by disabling.")
+        .addToggle(toggle => toggle.setValue(integration.enabled).onChange(async value => {
+          try {
+            await this.plugin.setCalendarPublishing(value);
+            new Notice(`Morning OS: calendar publishing ${value ? "enabled" : "disabled"}.`);
+            this.rerender();
+          } catch (error) {
+            new Notice(`Morning OS: publishing was not changed — ${(error as Error).message}`);
+            this.rerender();
+          }
+        }));
+
+      new Setting(containerEl)
+        .setName("Cancel owned reminders")
+        .setDesc("Creates non-alerting fence transitions for every currently alerting Morning OS event. Fence placeholders remain in calendar history.")
+        .addButton(button => button.setWarning().setButtonText("Cancel owned reminders").onClick(async () => {
+          if (!window.confirm("Cancel every enrolled Morning OS reminder on the dedicated calendar? Keep publishing enabled until status confirms the fences.")) return;
+          const count = await this.plugin.cancelCalendarReminders();
+          new Notice(`Morning OS: queued ${count} cancellation${count === 1 ? "" : "s"}.`);
+          this.rerender();
+        }));
+      new Setting(containerEl)
+        .setName("Export device acceptance checklist")
+        .setDesc("Writes a sanitized checklist under _generated/exports. It contains no credentials, authorization URLs, calendar IDs, or provider bodies.")
+        .addButton(button => button.setButtonText("Export checklist").onClick(async () => {
+          try {
+            const path = await this.plugin.exportCalendarAcceptanceChecklist();
+            new Notice(`Morning OS: calendar acceptance checklist saved to ${path}`);
+          } catch (error) { new Notice(`Morning OS: could not export checklist — ${(error as Error).message}`); }
+        }));
+      new Setting(containerEl)
+        .setName("Disconnect this device")
+        .setDesc("Disables publishing and clears the device-local relay credential. It does not cancel existing alerts or delete fence evidence.")
+        .addButton(button => button.setWarning().setButtonText("Disconnect").onClick(async () => {
+          if (!window.confirm("Disconnect without cancelling provider alerts? Use Cancel owned reminders first if alerts must be removed.")) return;
+          await this.plugin.disconnectCalendar();
+          new Notice("Morning OS: calendar disconnected on this device.");
+          this.rerender();
+        }));
+    } catch (error) {
+      containerEl.empty();
+      containerEl.createEl("p", { cls: "setting-item-description", text: `Calendar state is invalid; all provider writes are suspended: ${(error as Error).message}` });
+    }
+  }
+
+  private renderCalendarAuthentication(containerEl: HTMLElement): void {
+    let relayOrigin = "";
+    let relayKey = "";
+    new Setting(containerEl)
+      .setName("Prepare Google Calendar login")
+      .setDesc("Enter the maintainer-operated HTTPS relay origin and its access key for this login session. They are saved only in SecretStorage after successful consent; never in plugin settings or vault state.")
+      .addText(text => {
+        text.inputEl.type = "url";
+        text.setPlaceholder("https://calendar-auth.example.com").onChange(value => { relayOrigin = value.trim(); });
+      })
+      .addText(text => {
+        text.inputEl.type = "password";
+        text.inputEl.autocomplete = "off";
+        text.onChange(value => { relayKey = value; });
+      })
+      .addButton(button => button.setButtonText("Prepare Google login").onClick(async () => {
+        try {
+          await this.plugin.startCalendarLogin(relayOrigin, relayKey);
+          relayKey = "";
+          this.rerender();
+        } catch (error) { new Notice(`Morning OS: login could not start — ${(error as Error).message}`); }
+      }));
+    if (this.plugin.calendarLoginUrl) {
+      const link = containerEl.createEl("a", {
+        text: "Open Google consent in your external browser",
+        href: this.plugin.calendarLoginUrl,
+        attr: { target: "_blank", rel: "noopener noreferrer" },
+      });
+      link.addClass("setting-item-description");
+    }
+    new Setting(containerEl)
+      .setName("Restore saved login")
+      .setDesc("Refresh the device-local saved credential without opening the browser.")
+      .addButton(button => button.setButtonText("Restore").onClick(async () => {
+        try {
+          await this.plugin.restoreCalendarLogin();
+          new Notice("Morning OS: saved Google Calendar login restored.");
+          this.rerender();
+        } catch (error) { new Notice(`Morning OS: saved login could not be restored — ${(error as Error).message}`); }
+      }));
   }
 
   private renderDataSafetySection(containerEl: HTMLElement): void {

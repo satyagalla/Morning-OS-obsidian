@@ -143,7 +143,8 @@ test("plugin Area factories register once and removed leaves wait for active dra
 test("runtime reconciliation adopts settings and item bytes without redundant refresh", async () => {
   const { plugin, host, store, settings, counts } = pluginFixture();
   await store.initialize();
-  host.files.set("_generated/data/state.json", JSON.stringify({ schemaVersion: 2, revision: 1, writtenAt: "2026-09-27T12:00:00", items: [] }));
+  host.files.set("_generated/data/state.json", JSON.stringify({ schemaVersion: 3, revision: 1, writtenAt: "2026-09-27T12:00:00", items: [] }));
+  Object.assign(plugin, { calendarPublisher: { queue: () => undefined } });
   plugin.refreshWidgetNotes = async () => undefined;
   const runtime = plugin as unknown as { reconcileExternalState(): Promise<void>; settleDeferredRefresh(): Promise<void> };
   await runtime.reconcileExternalState(); const before = counts().refreshes;
@@ -160,7 +161,8 @@ test("runtime reconciliation adopts settings and item bytes without redundant re
 
 test("deferred item refresh completes after editing even when fingerprint is already adopted", async () => {
   const { plugin, host, store, counts } = pluginFixture(); await store.initialize();
-  host.files.set("_generated/data/state.json", JSON.stringify({ schemaVersion: 2, revision: 1, writtenAt: "2026-09-27T12:00:00", items: [] }));
+  host.files.set("_generated/data/state.json", JSON.stringify({ schemaVersion: 3, revision: 1, writtenAt: "2026-09-27T12:00:00", items: [] }));
+  Object.assign(plugin, { calendarPublisher: { queue: () => undefined } });
   plugin.refreshWidgetNotes = async () => undefined;
   const runtime = plugin as unknown as { reconcileExternalState(): Promise<void>; settleDeferredRefresh(): Promise<void> };
   const close = beginEditingSession(); await runtime.reconcileExternalState();

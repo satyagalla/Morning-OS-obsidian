@@ -11,6 +11,16 @@ import type { SharedSettings } from "./data/shared-settings";
 import { hasActiveEditingSession, onEditingSessionsSettled } from "./editing-session";
 import { canonicalWidgetDestination, WidgetDestinationError, WidgetNoteWriter, renderWidgetNote, selectWidgetContent, validateWidgetDestination } from "./widgets";
 import type { DailyBrief } from "./types";
+import { obsidianCalendarHttp } from "./integrations/calendar/obsidian-http";
+import { ObsidianCalendarCredentialStore } from "./integrations/calendar/secret-store";
+import { CALENDAR_AUTH_ACTION, RelayCalendarAuth } from "./integrations/calendar/relay-auth";
+import { CalendarPublisher } from "./integrations/calendar/publisher";
+import type { CalendarPublisherStatus } from "./integrations/calendar/contracts";
+import { beginCalendarCreation, cancelOwnedCalendarReminders, confirmDedicatedCalendar, enrollExistingCalendarReminders,
+  initializeCalendarIntegration, recordCalendarCreationUnknown, selectCalendarPublisher, setCalendarEnabled,
+  updateCalendarDefaults } from "./integrations/calendar/calendar-state";
+import { createDedicatedGoogleCalendar, recoverDedicatedGoogleCalendar } from "./integrations/calendar/google-transport";
+import { resolveReminderWindow } from "./integrations/calendar/time-policy";
 
 // Undocumented internal API surface used to coordinate with the remotely-save
 // community plugin (if installed) so large archive batches don't race its sync.
@@ -48,6 +58,10 @@ export default class MorningOSPlugin extends Plugin {
   private widgetLastCheckedDate = todayStr();
   widgetLastSuccess = "";
   widgetLastError = "";
+  private calendarAuth: RelayCalendarAuth;
+  private calendarPublisher: CalendarPublisher;
+  private calendarDeviceId = "";
+  calendarLoginUrl = "";
 
   async onload() {
     const savedSettings = (await this.loadData() ?? {}) as Record<string, unknown>;
@@ -116,6 +130,22 @@ export default class MorningOSPlugin extends Plugin {
       new Notice(`Morning OS: item data was not opened for writing — ${(error as Error).message}`);
     }
 
+    const storedDeviceId: unknown = this.app.loadLocalStorage("morning-os-calendar-device-v1");
+    this.calendarDeviceId = typeof storedDeviceId === "string" && /^[a-f0-9]{32}$/.test(storedDeviceId)
+      ? storedDeviceId
+      : Array.from(globalThis.crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, "0")).join("");
+    if (storedDeviceId !== this.calendarDeviceId) this.app.saveLocalStorage("morning-os-calendar-device-v1", this.calendarDeviceId);
+    this.calendarAuth = new RelayCalendarAuth(obsidianCalendarHttp, new ObsidianCalendarCredentialStore(this.app.secretStorage));
+    try { this.calendarAuth.prepareSavedCredential(); }
+    catch (error) { console.error("Morning OS calendar credentials were not loaded:", error); }
+    this.calendarPublisher = new CalendarPublisher(this.app, this.calendarDeviceId, {
+      http: obsidianCalendarHttp,
+      tokenProvider: this.calendarAuth,
+    });
+    this.registerObsidianProtocolHandler(CALENDAR_AUTH_ACTION, params => {
+      void this.completeCalendarLogin(params.state, params.vault);
+    });
+
     // Compatibility repair is inert after the versioned state takes ownership.
     const recoveryAreas = cloneSettings(this.settings.areas);
     const areasRecovery = await recoverRegistryAreas(this.app, recoveryAreas);
@@ -181,7 +211,10 @@ export default class MorningOSPlugin extends Plugin {
       if (!document.hidden) void this.reconcileExternalState();
     }, 15_000));
     this.registerInterval(window.setInterval(() => { void this.refreshDateSensitiveWidgets(); }, 60_000));
-    this.register(getStateStore(this.app).onCommitted(() => this.queueWidgetRefresh()));
+    this.register(getStateStore(this.app).onCommitted(() => {
+      this.queueWidgetRefresh();
+      this.calendarPublisher.queue();
+    }));
     this.register(onEditingSessionsSettled(() => {
       void this.settleDeferredRefresh();
     }));
@@ -194,6 +227,7 @@ export default class MorningOSPlugin extends Plugin {
       callback: () => { void this.refreshWidgetNotes(true); },
     });
     await this.refreshDateSensitiveWidgets();
+    this.calendarPublisher.queue();
   }
 
   sharedSettingsStatus(): { adopted: boolean; error: string } {
@@ -258,6 +292,136 @@ export default class MorningOSPlugin extends Plugin {
       new Notice(`Morning OS: settings were not saved — ${(error as Error).message}`);
     });
     return result;
+  }
+
+  calendarStatus(): CalendarPublisherStatus {
+    return this.calendarPublisher?.status() ?? { state: "disabled", message: "Calendar publisher is not loaded.", updatedAt: 0 };
+  }
+
+  calendarDevice(): string {
+    return this.calendarDeviceId;
+  }
+
+  async initializeCalendar(defaultTime: string, timeZone: string): Promise<void> {
+    await initializeCalendarIntegration(this.app, this.calendarDeviceId, defaultTime, timeZone);
+  }
+
+  async useThisCalendarPublisher(): Promise<void> {
+    await selectCalendarPublisher(this.app, this.calendarDeviceId);
+  }
+
+  async startCalendarLogin(origin: string, relayKey: string): Promise<string> {
+    this.calendarAuth.configure(origin, relayKey);
+    const pending = await this.calendarAuth.start(this.app.vault.getName());
+    this.calendarLoginUrl = pending.authorizationUrl;
+    return pending.authorizationUrl;
+  }
+
+  async completeCalendarLogin(state?: string, vault?: string): Promise<void> {
+    if (!state || !vault) {
+      new Notice("Morning OS: calendar login callback was incomplete.");
+      return;
+    }
+    try {
+      const result = await this.calendarAuth.redeem(state, vault);
+      if (result.status === "pending") new Notice("Morning OS: Google consent has not returned yet.");
+      else {
+        this.calendarLoginUrl = "";
+        new Notice("Morning OS: Google Calendar connected on this device.");
+        this.calendarPublisher.queue();
+      }
+    } catch (error) {
+      new Notice(`Morning OS: calendar login failed — ${(error as Error).message}`);
+    }
+  }
+
+  async restoreCalendarLogin(): Promise<void> {
+    await this.calendarAuth.restore();
+    this.calendarPublisher.queue();
+  }
+
+  async createCalendarTestCalendar(): Promise<void> {
+    const { attemptId, integration } = await beginCalendarCreation(this.app);
+    try {
+      const calendar = await createDedicatedGoogleCalendar(integration, obsidianCalendarHttp, this.calendarAuth);
+      await confirmDedicatedCalendar(this.app, attemptId, calendar.id, calendar.summary);
+    } catch (error) {
+      await recordCalendarCreationUnknown(this.app, attemptId, "Creation outcome requires inspection");
+      throw error;
+    }
+  }
+
+  async recoverCalendarTestCalendar(id: string): Promise<void> {
+    const state = await getStateStore(this.app).read();
+    const integration = state.calendar;
+    const attemptId = integration?.calendar.attemptId;
+    if (!integration || !attemptId) throw new Error("No calendar creation attempt is available for recovery");
+    const calendar = await recoverDedicatedGoogleCalendar(id, integration, obsidianCalendarHttp, this.calendarAuth);
+    await confirmDedicatedCalendar(this.app, attemptId, calendar.id, calendar.summary);
+  }
+
+  async setCalendarPublishing(enabled: boolean): Promise<void> {
+    await setCalendarEnabled(this.app, enabled);
+    if (enabled) this.calendarPublisher.queue();
+  }
+
+  async setCalendarTimePolicy(defaultTime: string, timeZone: string): Promise<void> {
+    await updateCalendarDefaults(this.app, defaultTime, timeZone);
+    this.calendarPublisher.queue();
+  }
+
+  async enrollCalendarReminders(): Promise<number> {
+    const count = await enrollExistingCalendarReminders(this.app);
+    this.calendarPublisher.queue();
+    return count;
+  }
+
+  async cancelCalendarReminders(): Promise<number> {
+    const count = await cancelOwnedCalendarReminders(this.app);
+    this.calendarPublisher.queue();
+    return count;
+  }
+
+  calendarSchedulePreview(date: string, time: string, timeZone: string): string {
+    const window = resolveReminderWindow(date, time, timeZone, Date.now());
+    const ambiguity = window.ambiguity === "earlier" ? " (fall-back overlap: earlier instant)" : "";
+    return `${window.start} → ${window.end}${window.missed ? " (past; will be marked missed)" : ""}${ambiguity}`;
+  }
+
+  async disconnectCalendar(): Promise<void> {
+    await setCalendarEnabled(this.app, false);
+    this.calendarAuth.disconnect();
+    this.calendarLoginUrl = "";
+  }
+
+  async exportCalendarAcceptanceChecklist(): Promise<string> {
+    const state = await getStateStore(this.app).read();
+    const integration = state.calendar;
+    const path = `_generated/exports/calendar-acceptance-${Date.now().toString(36)}.md`;
+    const directory = "_generated/exports";
+    if (!(await this.app.vault.adapter.exists("_generated"))) await this.app.vault.adapter.mkdir("_generated");
+    if (!(await this.app.vault.adapter.exists(directory))) await this.app.vault.adapter.mkdir(directory);
+    const status = this.calendarStatus();
+    const content = [
+      "# Morning OS Calendar acceptance record", "",
+      `Plugin version: ${this.manifest.version}`,
+      `Recorded local day: ${todayStr()}`,
+      `Publisher status: ${status.state}`,
+      `Dedicated calendar confirmed: ${integration?.calendar.status === "ready" && integration.calendar.confirmed ? "yes" : "no"}`,
+      `Experimental publishing enabled: ${integration?.enabled === true ? "yes" : "no"}`,
+      "",
+      "This file deliberately excludes tokens, relay keys, authorization URLs, calendar IDs, event IDs, and provider response bodies.",
+      "", "## Record each result", "",
+      "- [ ] Same experimental build installed on PC and iPhone; record Obsidian, OS, and Google Calendar client versions.",
+      "- [ ] Restore the device-local credential on each device; verify no browser login is needed after restart.",
+      "- [ ] Publish A, edit to B from the other device, replay stale A and stale cancellation; record final alert or conflict.",
+      "- [ ] Exercise offline A→B→C, concurrent sibling edits, initial insert/clear race, and offline cancellation without resurrection.",
+      "- [ ] Terminate/restart around create, update, and cancellation; recover only the original event identity.",
+      "- [ ] Observe one synthetic Google Calendar alert on iPhone and PC after Obsidian closes; snooze/dismiss without changing task state.",
+      "- [ ] Record unresolved cases. Apple Calendar and Thunderbird are not accepted clients unless separately tested.",
+    ].join("\n");
+    await this.app.vault.adapter.write(path, content);
+    return path;
   }
 
   async saveWidgetNotes(): Promise<void> {
@@ -483,6 +647,7 @@ export default class MorningOSPlugin extends Plugin {
           if (await this.app.vault.adapter.read(STATE_PATH) !== bytes) { this.externalRefreshQueued = true; continue; }
           await promoteDueReminders(this.app);
           this.lastStateBytes = bytes;
+          this.calendarPublisher.queue();
           await this.refreshWidgetNotes();
           if (hasActiveEditingSession()) {
             this.refreshDeferredByEditor = true;
@@ -861,5 +1026,8 @@ export default class MorningOSPlugin extends Plugin {
     await this.migrateVault();
   }
 
-  onunload() { /* intentional — no teardown needed beyond Obsidian's built-in deregister */ }
+  onunload() {
+    this.calendarPublisher?.stop();
+    this.calendarAuth?.unload();
+  }
 }
