@@ -1469,6 +1469,87 @@ test("Today child menus update only their selected child membership and priority
   assert.equal([...window.document.querySelectorAll(".mos-ctx-item")].some(button => /Remove from Today/.test(button.textContent ?? "")), false);
 });
 
+test("completed Today roots retain the full menu and can be edited or removed without reopening", async t => {
+  const window = installDom(390);
+  closeDom(t, window);
+  const completed = item("completed-today-root");
+  completed.is_today = true;
+  completed.status_completion = "done";
+  completed.date_completed = todayStr();
+  const open = item("open-today-root");
+  open.is_today = true;
+  const files = new Map([[STATE_PATH, stateBytes([completed, open])]]);
+  const adapter = {
+    exists: async (path: string) => files.has(path) || path.startsWith("_generated"),
+    read: async (path: string) => files.get(path) ?? "",
+    write: async (path: string, value: string) => { files.set(path, value); },
+    mkdir: async () => undefined,
+    list: async () => ({ files: [], folders: [] as string[] }),
+  };
+  const app = Object.assign(new App(), {
+    vault: { adapter, getAbstractFileByPath: (path: string) => new TFile(path) },
+    fileManager: { trashFile: async (file: TFile) => { files.delete(file.path); } },
+  }) as never as App;
+  let settled = deferred<void>();
+  const plugin = viewPlugin({ ...DEFAULT_SETTINGS });
+  plugin.refreshView = () => settled.resolve();
+  const home = Object.create(MorningView.prototype) as unknown as {
+    app: App; registry: Task[]; plugin: typeof plugin; renderTasks: (parent: HTMLElement) => void;
+  };
+  Object.assign(home, { app, registry: [completed, open], plugin });
+  const rendered = window.document.body.createDiv();
+  home.renderTasks(rendered);
+  const rowFor = (id: string): HTMLElement => [...rendered.querySelectorAll<HTMLElement>(".morning-os-task-row")]
+    .find(row => row.querySelector(".morning-os-task-text")?.textContent === id)!;
+  const menuFor = (id: string): HTMLButtonElement[] => {
+    rowFor(id).querySelector<HTMLButtonElement>(".mos-more-btn")!.click();
+    return [...window.document.querySelectorAll<HTMLButtonElement>(".mos-ctx-item")];
+  };
+  const choose = (label: RegExp): void => {
+    const button = menuFor(completed._id).find(candidate => label.test(candidate.textContent ?? ""));
+    assert.ok(button, `expected completed task action ${label}`);
+    button.click();
+  };
+  const state = (): Task[] => (JSON.parse(files.get(STATE_PATH)!) as { items: Task[] }).items;
+  const current = (): Task => state().find(task => task._id === completed._id)!;
+  const openBefore = state().find(task => task._id === open._id)!;
+  assert.deepEqual(menuFor(completed._id).map(button => button.textContent), menuFor(open._id).map(button => button.textContent));
+  assert.equal(rowFor(completed._id).querySelector<HTMLInputElement>('input[type="checkbox"]')!.checked, true);
+
+  choose(/Add subtask/);
+  assert.ok(rendered.querySelector(".mos-subtask-list input"));
+
+  let modal: TaskEditModal | undefined;
+  t.mock.method(TaskEditModal.prototype, "open", function(this: TaskEditModal) {
+    modal = this;
+    this.contentEl = window.document.body.createDiv();
+    this.onOpen();
+  });
+  choose(/Edit metadata/);
+  assert.ok(modal);
+  const details = modal.contentEl.querySelector<HTMLTextAreaElement>("textarea")!;
+  details.value = "Updated completed task details";
+  details.dispatchEvent(new window.Event("input"));
+  modal.contentEl.querySelector<HTMLButtonElement>(".mos-edit-footer .mos-btn-primary")!.click();
+  await settled.promise;
+  assert.equal(current().details, details.value);
+  assert.equal(current().status_completion, "done");
+  assert.equal(current().date_completed, completed.date_completed);
+
+  settled = deferred<void>();
+  choose(/Remove from Today/);
+  await settled.promise;
+  assert.equal(current().is_today, false);
+  assert.equal(current().status_completion, "done");
+
+  settled = deferred<void>();
+  choose(/Delete/);
+  await settled.promise;
+  assert.equal(current().is_deleted, true);
+  assert.equal(current().status_completion, "done");
+  assert.deepEqual(state().find(task => task._id === open._id), openBefore, "other tasks remain unchanged");
+});
+
 test("task and note rows render distinct lifecycle controls and direct menu actions", t => {
   const window = installDom();
   closeDom(t, window);

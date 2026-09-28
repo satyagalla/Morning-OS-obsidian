@@ -421,6 +421,56 @@ export class MorningView extends ItemView {
     }
   }
 
+  private openTodayTaskMenu(task: Task, row: HTMLElement, moreBtn: HTMLElement, ensureChildList: () => HTMLElement) {
+    const menuItems: MenuAction[] = [];
+    if (task.parent_id === null) {
+      menuItems.push({
+        label: "＋ Add subtask",
+        action: () => {
+          const list = ensureChildList();
+          collapsedTasks.delete(task._id);
+          list.removeClass("is-collapsed");
+          row.querySelector<HTMLButtonElement>(".mos-subtask-toggle")?.setText("▾");
+          renderAddTaskInput(list, this.app, "Add subtask…", async (text) => {
+            const child = createChildItem(text, task);
+            const reg = await loadRegistry(this.app);
+            reg.push(child);
+            await saveRegistry(this.app, reg);
+            this.plugin.refreshView();
+          });
+          list.querySelector<HTMLInputElement>(".morning-os-wins-input-row:last-child input")?.focus();
+        },
+      });
+    }
+    menuItems.push(
+      ...buildTodayMembershipActions(this.app, task, this.plugin, () => this.plugin.refreshView()),
+      {
+        label: task.kind === "note" ? (task.status_note === "archived" ? "Unarchive" : "Archive") : "",
+        action: () => {
+          if (task.kind === "note") void setNoteStatus(this.app, task._id, task.status_note === "archived" ? "active" : "archived").then(() => this.plugin.refreshView());
+        },
+      },
+      {
+        label: task.kind === "note" ? "Convert to task" : "Convert to note",
+        action: () => void changeItemKind(this.app, task._id, task.kind === "note" ? "task" : "note").then(() => this.plugin.refreshView()),
+      },
+      {
+        label: "✎ Edit metadata",
+        action: () => {
+          new TaskEditModal(this.app, task, () => {
+            this.plugin.refreshView();
+          }, false, this.plugin.settings.areas, this.plugin.settings.advancedAreaFeatures).open();
+        },
+      },
+      {
+        label: "🗑 Delete",
+        danger: true,
+        action: () => void deleteTask(this.app, task._id).then(() => this.plugin.refreshView()),
+      },
+    );
+    openContextMenu(moreBtn, menuItems.filter(item => item.label));
+  }
+
   private renderRegistryTaskList(parent: HTMLElement, tasks: Task[]) {
     for (const task of tasks) {
       const children = getChildren(this.registry, task._id).filter(child => child.kind === "task" &&
@@ -463,55 +513,7 @@ export class MorningView extends ItemView {
       }
 
       const moreBtn = row.createEl("button", { cls: "mos-more-btn", text: "⋯" });
-      moreBtn.addEventListener("click", () => {
-        const menuItems: MenuAction[] = [];
-        if (task.parent_id === null) {
-          menuItems.push({
-            label: "＋ Add subtask",
-            action: () => {
-              const list = ensureChildList();
-              collapsedTasks.delete(task._id);
-              list.removeClass("is-collapsed");
-              row.querySelector<HTMLButtonElement>(".mos-subtask-toggle")?.setText("▾");
-              renderAddTaskInput(list, this.app, "Add subtask…", async (text) => {
-                const child = createChildItem(text, task);
-                const reg = await loadRegistry(this.app);
-                reg.push(child);
-                await saveRegistry(this.app, reg);
-                this.plugin.refreshView();
-              });
-              list.querySelector<HTMLInputElement>(".morning-os-wins-input-row:last-child input")?.focus();
-            },
-          });
-        }
-        menuItems.push(
-          ...buildTodayMembershipActions(this.app, task, this.plugin, () => this.plugin.refreshView()),
-          {
-            label: task.kind === "note" ? "Archive" : "",
-            action: () => {
-              if (task.kind === "note") void setNoteStatus(this.app, task._id, "archived").then(() => this.plugin.refreshView());
-            },
-          },
-          {
-            label: task.kind === "note" ? "Convert to task" : "Convert to note",
-            action: () => void changeItemKind(this.app, task._id, task.kind === "note" ? "task" : "note").then(() => this.plugin.refreshView()),
-          },
-          {
-            label: "✎ Edit metadata",
-            action: () => {
-              new TaskEditModal(this.app, task, () => {
-                this.plugin.refreshView();
-              }, false, this.plugin.settings.areas, this.plugin.settings.advancedAreaFeatures).open();
-            },
-          },
-          {
-            label: "🗑 Delete",
-            danger: true,
-            action: () => void deleteTask(this.app, task._id).then(() => this.plugin.refreshView()),
-          },
-        );
-        openContextMenu(moreBtn, menuItems.filter(item => item.label));
-      });
+      moreBtn.addEventListener("click", () => this.openTodayTaskMenu(task, row, moreBtn, ensureChildList));
 
       checkbox?.addEventListener("change", () => {
         if (checkbox.checked && this.plugin.settings.requireSubtasksComplete && hasOpenChildren(this.registry, task._id)) {
@@ -576,19 +578,7 @@ export class MorningView extends ItemView {
         row.createSpan({ cls: "mos-notes-badge", attr: { title: "Has notes" }, text: "📝" });
       }
       const moreBtn = row.createEl("button", { cls: "mos-more-btn", text: "⋯" });
-      moreBtn.addEventListener("click", () => {
-        const menuItems: MenuAction[] = [
-          {
-            label: task.kind === "note" ? "Unarchive" : "",
-            action: () => { if (task.kind === "note") void setNoteStatus(this.app, task._id, "active").then(() => this.plugin.refreshView()); },
-          },
-          {
-            label: task.kind === "note" ? "Convert to task" : "Convert to note",
-            action: () => void changeItemKind(this.app, task._id, task.kind === "note" ? "task" : "note").then(() => this.plugin.refreshView()),
-          },
-        ];
-        openContextMenu(moreBtn, menuItems.filter(item => item.label));
-      });
+      moreBtn.addEventListener("click", () => this.openTodayTaskMenu(task, row, moreBtn, ensureChildList));
       checkbox?.addEventListener("change", () => {
         if (checkbox.checked && this.plugin.settings.requireSubtasksComplete && hasOpenChildren(this.registry, task._id)) {
           checkbox.checked = false;
