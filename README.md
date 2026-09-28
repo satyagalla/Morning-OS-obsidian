@@ -45,7 +45,9 @@ The only requirement is that your vault syncs across devices.
 
 ### Home Screen widget notes and sync
 
-Morning OS can export Identity, goals, Today, Inbox, or All tasks to an owned Markdown note for Obsidian's iPhone/iPad Home Screen **View Note** widget. Add and enable an export in **Settings → Morning OS → Widget notes**, then point the widget at that note. These notes are display-only; changing their Markdown or checkboxes does not change a task. See [widget setup](docs/widgets.md) for test-vault installation, iOS requirements, and limitations.
+Morning OS can export Identity, goals, Today, Inbox, or All tasks to an owned Markdown note for Obsidian's iPhone/iPad Home Screen **View Note** widget. Add and enable an export in **Settings → Morning OS → Widget notes**, then bookmark the exported note in Obsidian. On the Home Screen, press and hold the View Note widget, choose **Edit Widget**, and select the vault and bookmarked export. These notes are display-only; changing their Markdown or checkboxes does not change a task. See [widget setup](docs/widgets.md) for test-vault installation, iOS requirements, and limitations.
+
+The exported Markdown file syncing to another device is not enough for Morning OS to recognize it as an export there: the Widget notes list is part of that device's local Morning OS settings (`.obsidian/plugins/morning-os/data.json`). Bookmark and select the synced note manually on that device; it will not appear in **Widget notes** or be refreshed by Morning OS there unless you configure a local export.
 
 Remotely Save transfers vault files through the remote and include/exclude rules you configure. It can transfer `_generated/data/state.json` (the authoritative tasks, notes, Today membership, date reminders, and occurrence acknowledgements), briefing JSON, configured source notes, and widget Markdown notes, but only when your configuration includes those paths. It does not deliver calendar events or run Morning OS while Obsidian is closed.
 
@@ -54,9 +56,29 @@ Remotely Save transfers vault files through the remote and include/exclude rules
 | `_generated/data/state.json` | Authoritative item state. Sync it if tasks must move between devices. |
 | `_generated/briefs/`, configured identity/goals/wins notes, and widget destinations | Source and display content. Widget notes are regenerated representations, not task authority. |
 | `_generated/snapshots/`, `_generated/recovery/`, feedback, legacy files, pending transaction artifacts | Recovery, feedback, or compatibility data. Whether they sync depends on your include/exclude rules; transaction artifacts are neither locks nor device-local storage. |
-| `.obsidian/plugins/morning-os/` | Morning OS settings live here. Transfer depends on whether your sync service includes hidden/plugin configuration folders. |
+| `_generated/data/settings.json` | Explicitly initialized shared Areas, tabs, fields, privacy permissions, source paths, and preferences. Credentials and widget exports are excluded. |
+| `.obsidian/plugins/morning-os/` | Device-local credentials, widget export configuration, and runtime settings. Keep plugin configuration out of sync. |
 
-Check your provider's configured include/exclude rules and hidden-file options rather than assuming every eligible path syncs. Calendar publishing is not available yet: a safe mobile adapter needs provider-enforced idempotency and stale-device conflict handling before it can be enabled.
+#### Remotely Save: share Morning OS settings across devices
+
+Shared settings use the ordinary vault file `_generated/data/settings.json`. Update Morning OS on every device, choose one baseline device, and open **Settings → Morning OS → General → Shared vault settings → Initialize from this device** there. Initialization preserves a credential-free backup. Sync the file before opening the updated plugin on your other devices; they adopt the delivered configuration without seeding defaults.
+
+Configure Remotely Save on **each** device to include your source notes and `_generated/`:
+
+1. Keep **Sync config directory** disabled.
+2. Enable **Sync underscore items**.
+3. If using **Regex of paths to allow**, include:
+
+```regex
+^Essential(?:/|$)
+^_generated(?:/|$)
+```
+
+This is an allowlist: only paths that match are synced. The example includes `Essential/` and all content under `_generated/`, including item state, shared settings, briefs, snapshots, recovery files, feedback, and widget notes. Add regexes for other source folders and widget destinations you use. Install Morning OS and configure Remotely Save separately on every device.
+
+Credentials, widget exports, onboarding, and runtime bookkeeping remain local. Missing or invalid shared settings retain the last-good configuration and block shared edits until the valid file returns. Concurrent edits to the same shared field report conflicts; this does not guarantee lossless offline edits or remote delivery. Test the setup in a disposable two-device vault first. See [shared settings behavior](docs/architecture.md#shared-settings).
+
+Check your provider's configured include/exclude rules and hidden-file options rather than assuming every eligible path syncs. Experimental Google Calendar publishing is available only through **Settings → Morning OS → Calendar (experimental)**, with a dedicated plugin-created test calendar and one selected publisher device. It is not general-use ready; see [calendar setup and acceptance limits](docs/calendar.md). Do not sync OAuth credentials through plugin settings.
 
 [![Morning OS — mobile view](images/mobile.png)](images/mobile.png)
 
